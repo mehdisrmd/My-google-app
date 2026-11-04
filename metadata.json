@@ -1,0 +1,6 @@
+{
+  "name": "ShieldBlock",
+  "description": "Screen word and adult content blocker with strict countdown timer lockdown.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
