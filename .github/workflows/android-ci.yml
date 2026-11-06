@@ -1,19 +1,17 @@
-name: ShieldBlock Android CI & APK Build
+name: Build & Publish Android APK to GitHub Releases
 
 on:
   push:
     branches: [ "main", "master" ]
     tags: [ "v*" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-test:
-    name: Run Robolectric Tests & Build APK
+  build-and-release-apk:
+    name: Build & Release ShieldBlock APK
     runs-on: ubuntu-latest
 
     steps:
@@ -26,13 +24,15 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Accept Android SDK Licenses
+      - name: Accept Android SDK Licenses & Configure SDK
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
           printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n8933bad161af4178b1185d1a37fbf41ea5269c55\n" > "$ANDROID_HOME/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
-          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+            "$SDKMANAGER" "platform-tools" "build-tools;36.0.0" || true
           fi
 
       - name: Setup Gradle
@@ -40,7 +40,7 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Prepare Environment (.env & debug.keystore)
+      - name: Prepare Signing Keystore & Environment
         run: |
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
@@ -67,25 +67,28 @@ jobs:
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest --stacktrace
 
-      - name: Upload Unit Test Report
-        if: always()
+      - name: Build Installable Android APK
+        run: |
+          gradle :app:assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk ShieldBlock.apk
+
+      - name: Upload ShieldBlock APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ShieldBlock-UnitTest-Report
-          path: app/build/reports/tests/testDebugUnitTest/
+          name: ShieldBlock-APK
+          path: ShieldBlock.apk
 
-      - name: Assemble Debug APK
-        run: gradle :app:assembleDebug --stacktrace
-
-      - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ShieldBlock-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
-
-      - name: Publish GitHub Release on Version Tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish APK to GitHub Releases Automatically
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          tag_name: v1.0.${{ github.run_number }}
+          name: "ShieldBlock v1.0.${{ github.run_number }} (Android APK)"
+          body: |
+            ### ShieldBlock Android Release (Build #${{ github.run_number }})
+            Download **`ShieldBlock.apk`** below under **Assets** to install directly on your Android device.
+          files: ShieldBlock.apk
+          draft: false
+          prerelease: false
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
