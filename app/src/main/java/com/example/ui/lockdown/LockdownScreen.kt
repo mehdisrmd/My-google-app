@@ -1,14 +1,18 @@
 package com.example.ui.lockdown
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -19,19 +23,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,12 +46,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,13 +68,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.MotivationalQuoteBannerCard
+import com.example.ui.components.TacticalBreathingStudioCard
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.AmberWarning
-import com.example.ui.theme.CrimsonDark
 import com.example.ui.theme.CrimsonPrimary
+import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.ObsidianBg
-import com.example.ui.theme.ObsidianCard
+import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianSurface
+import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -94,6 +104,9 @@ fun LockdownScreen(
         )
     }
 
+    // Breathing exercise is hidden by default on the lock screen and only opens when the user taps the button
+    var showBreathingExercise by remember { mutableStateOf(false) }
+
     val totalDurationMillis = remember(totalDurationMinutes) {
         TimeUnit.MINUTES.toMillis(totalDurationMinutes.coerceAtLeast(1).toLong())
     }
@@ -111,23 +124,6 @@ fun LockdownScreen(
     }
 
     val isFinished = remainingMillis <= 0L
-
-    val quotes = remember {
-        listOf(
-            "The craving is a wave. Surf it without acting on it, and it will subside.",
-            "Discipline is choosing between what you want now and what you want most.",
-            "Every minute you resist rewires your dopamine pathways toward freedom.",
-            "You are stronger than a temporary impulse. Breathe through it.",
-            "Your future self will thank you for standing firm in this moment."
-        )
-    }
-    var currentQuoteIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(6000L)
-            currentQuoteIndex = (currentQuoteIndex + 1) % quotes.size
-        }
-    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -173,7 +169,7 @@ fun LockdownScreen(
                 Box(
                     modifier = Modifier
                         .scale(if (isFinished) 1f else pulseScale)
-                        .size(88.dp)
+                        .size(84.dp)
                         .clip(CircleShape)
                         .background(
                             if (isFinished) EmeraldShield.copy(alpha = 0.2f)
@@ -190,42 +186,51 @@ fun LockdownScreen(
                         imageVector = if (isFinished) Icons.Default.CheckCircle else Icons.Default.Shield,
                         contentDescription = "Shield Status",
                         tint = if (isFinished) EmeraldShield else CrimsonPrimary,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(44.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 val isPanicLock = triggerWord.contains("Panic", ignoreCase = true)
 
                 Text(
                     text = when {
-                        isFinished -> "Focus Period Complete"
-                        isPanicLock -> "Emergency Panic Shield Active"
-                        else -> "Screen Locked by ShieldBlock"
+                        isFinished -> tr("Focus Period Complete", "پایان زمان قفل محافظتی")
+                        isPanicLock -> tr("Emergency Panic Shield Active", "قفل اضطراری پنیک فعال است")
+                        else -> tr("Screen Locked by X Blocker", "صفحه توسط ایکس بلاکر قفل شد")
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = ObsidianTextPrimary,
                     textAlign = TextAlign.Center
                 )
 
                 Text(
                     text = when {
-                        isFinished -> "You successfully resisted the impulse. Well done!"
-                        isPanicLock -> "Voluntary Panic Mode lock active to protect your clean streak. Breathe through the wave."
-                        else -> "Blocked keyword or restriction detected. Take a break to reset your focus."
+                        isFinished -> tr(
+                            "You successfully resisted the impulse. Don't break the chain!",
+                            "شما با موفقیت بر وسوسه غلبه کردید. زنجیره را نشکن!"
+                        )
+                        isPanicLock -> tr(
+                            "Voluntary Panic Mode lock active to protect your clean streak.",
+                            "قفل اضطراری داوطلبانه برای محافظت از زنجیره روزهای پاک شما فعال است."
+                        )
+                        else -> tr(
+                            "Blocked trigger or restriction detected. Step back and protect your chain.",
+                            "محتوا یا محدودیت غیرمجاز تشخیص داده شد. از زنجیره پاکی خود محافظت کنید."
+                        )
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = ObsidianTextSecondary,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+                    modifier = Modifier.padding(top = 6.dp, bottom = 20.dp)
                 )
 
                 // Countdown Timer Gauge
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(240.dp)
+                    modifier = Modifier.size(220.dp)
                 ) {
                     val progress = if (totalDurationMillis > 0) {
                         (remainingMillis.toFloat() / totalDurationMillis).coerceIn(0f, 1f)
@@ -233,14 +238,14 @@ fun LockdownScreen(
 
                     CircularProgressIndicator(
                         progress = { 1f },
-                        modifier = Modifier.size(240.dp),
-                        color = Color(0xFF1E293B),
+                        modifier = Modifier.size(220.dp),
+                        color = ObsidianBorder,
                         strokeWidth = 14.dp
                     )
 
                     CircularProgressIndicator(
                         progress = { progress },
-                        modifier = Modifier.size(240.dp),
+                        modifier = Modifier.size(220.dp),
                         color = if (isFinished) EmeraldShield else CrimsonPrimary,
                         strokeWidth = 14.dp
                     )
@@ -250,7 +255,7 @@ fun LockdownScreen(
                     ) {
                         if (isFinished) {
                             Text(
-                                text = "UNLOCKED",
+                                text = tr("UNLOCKED", "باز شد"),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Black,
                                 color = EmeraldShield
@@ -265,11 +270,11 @@ fun LockdownScreen(
                                 style = MaterialTheme.typography.displayMedium,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
-                                color = Color.White
+                                color = ObsidianTextPrimary
                             )
 
                             Text(
-                                text = "REMAINING",
+                                text = tr("REMAINING", "زمان باقی‌مانده"),
                                 style = MaterialTheme.typography.labelSmall,
                                 letterSpacing = 2.sp,
                                 color = ObsidianTextSecondary,
@@ -279,13 +284,14 @@ fun LockdownScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Detection trigger details card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, ObsidianBorder)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
@@ -300,9 +306,9 @@ fun LockdownScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Strict Lock Activated",
+                                text = tr("Strict Lock Activated", "قفل سخت‌گیرانه فعال شد"),
                                 style = MaterialTheme.typography.titleSmall,
-                                color = Color.White,
+                                color = ObsidianTextPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -314,12 +320,12 @@ fun LockdownScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Trigger keyword:",
+                                text = tr("Trigger reason:", "دلیل فعال‌سازی:"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ObsidianTextSecondary
                             )
                             Text(
-                                text = triggerWord.ifEmpty { "Adult Content" },
+                                text = triggerWord.ifEmpty { "Protected Content" },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                                 color = CrimsonPrimary
@@ -333,7 +339,7 @@ fun LockdownScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Lock duration:",
+                                text = tr("Lock duration:", "مدت قفل:"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ObsidianTextSecondary
                             )
@@ -341,46 +347,70 @@ fun LockdownScreen(
                                 text = "$totalDurationMinutes min",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White
+                                color = ObsidianTextPrimary
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Rotating Mindful Recovery Quote
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                // Motivational "Don't Break the Chain" & Famous Quotes Card
+                MotivationalQuoteBannerCard()
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Button to Open / Hide Breathing Exercise (Not shown by default until tapped!)
+                OutlinedButton(
+                    onClick = { showBreathingExercise = !showBreathingExercise },
                     shape = RoundedCornerShape(14.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.3f))
+                    border = BorderStroke(1.5.dp, CyanTelemetry),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = CyanTelemetry.copy(alpha = 0.10f),
+                        contentColor = CyanTelemetry
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("toggle_lockdown_breathing_button")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SelfImprovement,
-                            contentDescription = null,
-                            tint = Color(0xFF818CF8),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = quotes[currentQuoteIndex],
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFE2E8F0)
-                        )
+                    Icon(
+                        imageVector = Icons.Default.Air,
+                        contentDescription = null,
+                        tint = CyanTelemetry,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (showBreathingExercise) {
+                            tr("Hide Breathing Exercise", "بستن تمرین تنفس")
+                        } else {
+                            tr("Open Breathing Exercise (4-7-8 / Box)", "باز کردن تمرین تنفس و آرام‌سازی")
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = CyanTelemetry
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = if (showBreathingExercise) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = CyanTelemetry
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = showBreathingExercise,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TacticalBreathingStudioCard()
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Mindful Breathing / Urge Surfing Exercise
-                MindfulBreathingCard(isFinished = isFinished)
-
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(22.dp))
 
                 if (isFinished) {
                     Button(
@@ -391,99 +421,27 @@ fun LockdownScreen(
                             .testTag("dismiss_lock_button"),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = EmeraldShield,
-                            contentColor = Color.White
+                            contentColor = Color.Black
                         ),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(14.dp)
                     ) {
                         Text(
-                            text = "Return to ShieldBlock",
+                            text = tr("Return to X Blocker", "بازگشت به ایکس بلاکر"),
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Black
                         )
                     }
                 } else {
                     Text(
-                        text = "Phone is locked to prevent relapse. Wait for timer to finish.",
+                        text = tr(
+                            "Phone is locked to protect your clean streak. Wait for timer to finish.",
+                            "گوشی برای محافظت از زنجیره پاکی شما قفل شده است. تا پایان تایمر صبر کنید."
+                        ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = ObsidianTextSecondary,
                         textAlign = TextAlign.Center
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun MindfulBreathingCard(isFinished: Boolean) {
-    var phase by remember { mutableStateOf("Breathe In") }
-    val scale = remember { Animatable(0.7f) }
-
-    LaunchedEffect(isFinished) {
-        if (isFinished) return@LaunchedEffect
-        while (true) {
-            phase = "Inhale Deeply (4s)"
-            scale.animateTo(1.2f, animationSpec = tween(4000, easing = LinearEasing))
-            phase = "Hold (4s)"
-            delay(4000L)
-            phase = "Exhale Slowly (4s)"
-            scale.animateTo(0.7f, animationSpec = tween(4000, easing = LinearEasing))
-        }
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF24304D)),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .scale(scale.value)
-                        .clip(CircleShape)
-                        .background(EmeraldShield.copy(alpha = 0.6f))
-                )
-                Icon(
-                    imageVector = Icons.Default.SelfImprovement,
-                    contentDescription = "Breathing guide",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Urge Surfing & Breathing",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = EmeraldShield,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = if (isFinished) "Mind cleared & urge conquered" else phase,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                Text(
-                    text = "Cravings typically peak and subside within 3 to 5 minutes.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ObsidianTextSecondary
-                )
             }
         }
     }

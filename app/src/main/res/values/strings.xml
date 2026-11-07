@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">ShieldBlock</string>
-    <string name="accessibility_service_description">ShieldBlock monitors on-screen text and website URLs to protect against adult content and trigger strict focus lockouts when blocked keywords are detected.</string>
+    <string name="app_name">X Blocker</string>
+    <string name="accessibility_service_description">X Blocker monitors on-screen text, website URLs, Instagram Reels, and Telegram Search to protect against unwanted content and trigger focus lockouts.</string>
 </resources>

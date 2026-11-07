@@ -14,6 +14,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class BackupRestoreSummary(
+    val success: Boolean,
+    val keywordsRestored: Int = 0,
+    val appLimitsRestored: Int = 0,
+    val sectionRulesRestored: Int = 0,
+    val focusSlotsRestored: Int = 0,
+    val messageEn: String = "",
+    val messageFa: String = ""
+)
 
 class ShieldRepository(
     private val dao: ShieldDao,
@@ -31,8 +43,16 @@ class ShieldRepository(
         CoroutineScope(Dispatchers.IO).launch {
             seedDefaultKeywordsIfNeeded()
             seedDefaultSectionRulesIfNeeded()
-            seedDefaultAppLimitsIfNeeded()
-            seedDefaultFocusSlotsIfNeeded()
+            removePredefinedExampleLimitsIfAny()
+        }
+    }
+
+    private suspend fun removePredefinedExampleLimitsIfAny() {
+        val all = dao.getEnabledAppUsageLimitsSync()
+        for (limit in all) {
+            if (limit.lastModifiedTimestamp == 0L) {
+                dao.deleteAppUsageLimit(limit.packageName)
+            }
         }
     }
 
@@ -48,75 +68,6 @@ class ShieldRepository(
         }
     }
 
-    suspend fun seedDefaultAppLimitsIfNeeded() {
-        if (dao.getAppUsageLimitCount() > 0) return
-        val limits = listOf(
-            AppUsageLimit(
-                packageName = "com.instagram.android",
-                appName = "Instagram",
-                dailyLimitMinutes = 120, // 2 hours
-                isEnabled = true,
-                lastModifiedTimestamp = 0L
-            ),
-            AppUsageLimit(
-                packageName = "org.telegram.messenger",
-                appName = "Telegram",
-                dailyLimitMinutes = 60, // 1 hour
-                isEnabled = false,
-                lastModifiedTimestamp = 0L
-            ),
-            AppUsageLimit(
-                packageName = "com.google.android.youtube",
-                appName = "YouTube",
-                dailyLimitMinutes = 90,
-                isEnabled = false,
-                lastModifiedTimestamp = 0L
-            ),
-            AppUsageLimit(
-                packageName = "com.android.chrome",
-                appName = "Chrome",
-                dailyLimitMinutes = 120,
-                isEnabled = false,
-                lastModifiedTimestamp = 0L
-            )
-        )
-        for (lim in limits) {
-            dao.insertAppUsageLimit(lim)
-        }
-    }
-
-    suspend fun seedDefaultFocusSlotsIfNeeded() {
-        if (dao.getFocusSlotCount() > 0) return
-        val defaultSlots = listOf(
-            FocusScheduleSlot(
-                title = "Morning Deep Work",
-                startHour = 9,
-                startMinute = 0,
-                endHour = 10,
-                endMinute = 30,
-                daysOfWeekCsv = "1,2,3,4,5",
-                isEnabled = false,
-                autoTriggerLockdown = true
-            ),
-            FocusScheduleSlot(
-                title = "Afternoon Focus Sprint",
-                startHour = 14,
-                startMinute = 0,
-                endHour = 15,
-                endMinute = 30,
-                daysOfWeekCsv = "1,2,3,4,5",
-                isEnabled = false,
-                autoTriggerLockdown = true
-            )
-        )
-        dao.insertFocusSlots(defaultSlots)
-    }
-
-    /**
-     * Resets the entire application (preferences, usage counters, cooldowns, incidents,
-     * custom rules, app limits, and focus slots) back to a clean factory state so the user
-     * can test the app from scratch.
-     */
     suspend fun resetEntireAppFromScratch() {
         preferences.resetAllPreferencesToFreshScratch()
         dao.clearIncidents()
@@ -127,8 +78,213 @@ class ShieldRepository(
 
         seedDefaultKeywordsIfNeeded()
         seedDefaultSectionRulesIfNeeded()
-        seedDefaultAppLimitsIfNeeded()
-        seedDefaultFocusSlotsIfNeeded()
+    }
+
+    /**
+     * Exports all user information (Preferences, Clean Streak, Urges Defeated, Personal Pledge,
+     * Keywords/Domains, App Usage Limits, Section Block Rules, and Smart Focus Slots) to JSON.
+     */
+    suspend fun exportFullBackupJson(): String {
+        val root = JSONObject()
+        root.put("backupFormatVersion", 1)
+        root.put("appName", "X Blocker")
+        root.put("exportedAtEpochMs", System.currentTimeMillis())
+        root.put("preferences", preferences.exportPreferencesToJson())
+
+        val keywordsArr = JSONArray()
+        for (kw in dao.getAllKeywordsSync()) {
+            keywordsArr.put(
+                JSONObject().apply {
+                    put("text", kw.text)
+                    put("category", kw.category.name)
+                    put("isEnabled", kw.isEnabled)
+                    put("isRegex", kw.isRegex)
+                }
+            )
+        }
+        root.put("keywords", keywordsArr)
+
+        val limitsArr = JSONArray()
+        for (limit in dao.getAllAppUsageLimitsSync()) {
+            limitsArr.put(
+                JSONObject().apply {
+                    put("packageName", limit.packageName)
+                    put("appName", limit.appName)
+                    put("dailyLimitMinutes", limit.dailyLimitMinutes)
+                    put("isEnabled", limit.isEnabled)
+                    put("lastModifiedTimestamp", limit.lastModifiedTimestamp)
+                }
+            )
+        }
+        root.put("appLimits", limitsArr)
+
+        val sectionsArr = JSONArray()
+        for (rule in dao.getAllSectionRulesSync()) {
+            sectionsArr.put(
+                JSONObject().apply {
+                    put("targetPackage", rule.targetPackage)
+                    put("sectionName", rule.sectionName)
+                    put("triggerPattern", rule.triggerPattern)
+                    put("viewIdPattern", rule.viewIdPattern)
+                    put("isEnabled", rule.isEnabled)
+                }
+            )
+        }
+        root.put("sectionRules", sectionsArr)
+
+        val focusArr = JSONArray()
+        for (slot in dao.getAllFocusSlotsSync()) {
+            focusArr.put(
+                JSONObject().apply {
+                    put("title", slot.title)
+                    put("startHour", slot.startHour)
+                    put("startMinute", slot.startMinute)
+                    put("endHour", slot.endHour)
+                    put("endMinute", slot.endMinute)
+                    put("daysOfWeekCsv", slot.daysOfWeekCsv)
+                    put("isEnabled", slot.isEnabled)
+                }
+            )
+        }
+        root.put("focusSlots", focusArr)
+
+        return root.toString(2)
+    }
+
+    /**
+     * Restores all user information from a JSON backup string.
+     */
+    suspend fun importFullBackupJson(rawJson: String): BackupRestoreSummary {
+        return try {
+            val root = JSONObject(rawJson.trim())
+            val prefsObj = root.optJSONObject("preferences")
+            if (prefsObj != null) {
+                preferences.importPreferencesFromJson(prefsObj)
+            }
+
+            var kwCount = 0
+            val keywordsArr = root.optJSONArray("keywords")
+            if (keywordsArr != null && keywordsArr.length() > 0) {
+                val restoredKeywords = mutableListOf<BlockedKeyword>()
+                for (i in 0 until keywordsArr.length()) {
+                    val item = keywordsArr.optJSONObject(i) ?: continue
+                    val text = item.optString("text", "").trim()
+                    if (text.isEmpty()) continue
+                    val catName = item.optString("category", BlockedCategory.CUSTOM_KEYWORD.name)
+                    val category = runCatching { BlockedCategory.valueOf(catName) }
+                        .getOrDefault(BlockedCategory.CUSTOM_KEYWORD)
+                    restoredKeywords.add(
+                        BlockedKeyword(
+                            text = text,
+                            category = category,
+                            isEnabled = item.optBoolean("isEnabled", true),
+                            isRegex = item.optBoolean("isRegex", false)
+                        )
+                    )
+                }
+                if (restoredKeywords.isNotEmpty()) {
+                    dao.clearAllKeywords()
+                    dao.insertKeywords(restoredKeywords)
+                    kwCount = restoredKeywords.size
+                }
+            }
+
+            var limitCount = 0
+            val limitsArr = root.optJSONArray("appLimits")
+            if (limitsArr != null) {
+                val restoredLimits = mutableListOf<AppUsageLimit>()
+                for (i in 0 until limitsArr.length()) {
+                    val item = limitsArr.optJSONObject(i) ?: continue
+                    val pkg = item.optString("packageName", "").trim()
+                    val name = item.optString("appName", "").trim()
+                    if (pkg.isEmpty() || name.isEmpty()) continue
+                    restoredLimits.add(
+                        AppUsageLimit(
+                            packageName = pkg,
+                            appName = name,
+                            dailyLimitMinutes = item.optInt("dailyLimitMinutes", 30).coerceIn(1, 1440),
+                            isEnabled = item.optBoolean("isEnabled", true),
+                            lastModifiedTimestamp = item.optLong("lastModifiedTimestamp", System.currentTimeMillis())
+                        )
+                    )
+                }
+                dao.clearAllAppUsageLimits()
+                if (restoredLimits.isNotEmpty()) {
+                    dao.insertAppUsageLimits(restoredLimits)
+                    limitCount = restoredLimits.size
+                }
+            }
+
+            var sectionCount = 0
+            val sectionsArr = root.optJSONArray("sectionRules")
+            if (sectionsArr != null && sectionsArr.length() > 0) {
+                val restoredSections = mutableListOf<SectionBlockRule>()
+                for (i in 0 until sectionsArr.length()) {
+                    val item = sectionsArr.optJSONObject(i) ?: continue
+                    val targetPkg = item.optString("targetPackage", "").trim()
+                    val secName = item.optString("sectionName", "").trim()
+                    val trig = item.optString("triggerPattern", "").trim()
+                    if (targetPkg.isEmpty() || secName.isEmpty() || trig.isEmpty()) continue
+                    restoredSections.add(
+                        SectionBlockRule(
+                            targetPackage = targetPkg,
+                            sectionName = secName,
+                            triggerPattern = trig,
+                            viewIdPattern = item.optString("viewIdPattern", ""),
+                            isEnabled = item.optBoolean("isEnabled", true)
+                        )
+                    )
+                }
+                if (restoredSections.isNotEmpty()) {
+                    dao.clearAllSectionRules()
+                    dao.insertSectionRules(restoredSections)
+                    sectionCount = restoredSections.size
+                }
+            }
+
+            var focusCount = 0
+            val focusArr = root.optJSONArray("focusSlots")
+            if (focusArr != null) {
+                val restoredFocus = mutableListOf<FocusScheduleSlot>()
+                for (i in 0 until focusArr.length()) {
+                    val item = focusArr.optJSONObject(i) ?: continue
+                    val title = item.optString("title", "").trim()
+                    if (title.isEmpty()) continue
+                    restoredFocus.add(
+                        FocusScheduleSlot(
+                            title = title,
+                            startHour = item.optInt("startHour", 9).coerceIn(0, 23),
+                            startMinute = item.optInt("startMinute", 0).coerceIn(0, 59),
+                            endHour = item.optInt("endHour", 11).coerceIn(0, 23),
+                            endMinute = item.optInt("endMinute", 0).coerceIn(0, 59),
+                            daysOfWeekCsv = item.optString("daysOfWeekCsv", "1,2,3,4,5,6,7"),
+                            isEnabled = item.optBoolean("isEnabled", true)
+                        )
+                    )
+                }
+                dao.clearAllFocusSlots()
+                if (restoredFocus.isNotEmpty()) {
+                    dao.insertFocusSlots(restoredFocus)
+                    focusCount = restoredFocus.size
+                }
+            }
+
+            BackupRestoreSummary(
+                success = true,
+                keywordsRestored = kwCount,
+                appLimitsRestored = limitCount,
+                sectionRulesRestored = sectionCount,
+                focusSlotsRestored = focusCount,
+                messageEn = "Backup restored! ($kwCount rules, $limitCount app limits, $sectionCount section guards, $focusCount focus slots & streak data)",
+                messageFa = "پشتیبان با موفقیت بازیابی شد! ($kwCount قانون، $limitCount محدودیت برنامه، $sectionCount محافظ بخش و اطلاعات روزهای پاک)"
+            )
+        } catch (e: Exception) {
+            BackupRestoreSummary(
+                success = false,
+                messageEn = "Invalid backup JSON format: ${e.localizedMessage ?: "Parse error"}",
+                messageFa = "فرمت فایل پشتیبان نامعتبر است. لطفاً یک فایل یا متن JSON معتبر انتخاب کنید."
+            )
+        }
     }
 
     suspend fun getActiveKeywordsSync(): List<BlockedKeyword> {
@@ -160,9 +316,6 @@ class ShieldRepository(
         dao.insertKeyword(keyword)
     }
 
-    /**
-     * Batch import multiple words or domains separated by comma, newline, or space.
-     */
     suspend fun addCustomKeywordsBatch(rawText: String, isDomain: Boolean): Int {
         val tokens = rawText.split(Regex("[,\\n\\r]+"))
             .map { it.trim().lowercase() }
@@ -192,7 +345,6 @@ class ShieldRepository(
         dao.deleteKeywordById(id)
     }
 
-    // App Usage Limit CRUD with strict 2-hour cooldown enforcement
     suspend fun saveAppUsageLimit(
         limit: AppUsageLimit,
         nowMs: Long = System.currentTimeMillis()
@@ -215,7 +367,6 @@ class ShieldRepository(
         nowMs: Long = System.currentTimeMillis()
     ): Boolean {
         val existing = dao.getAppUsageLimitByPackage(limit.packageName) ?: limit
-        // If turning OFF an active limit, enforce the 2-hour cooldown rule
         if (existing.isEnabled && existing.isCooldownActive(nowMs)) {
             return false
         }
@@ -240,7 +391,6 @@ class ShieldRepository(
         return true
     }
 
-    // Section Block Rule CRUD
     suspend fun saveSectionRule(rule: SectionBlockRule) {
         dao.insertSectionRule(rule)
     }
@@ -253,7 +403,6 @@ class ShieldRepository(
         dao.deleteSectionRuleById(id)
     }
 
-    // Smart Focus Schedule Slot CRUD
     suspend fun saveFocusSlot(slot: FocusScheduleSlot): Long {
         return dao.insertFocusSlot(slot)
     }

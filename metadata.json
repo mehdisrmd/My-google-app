@@ -1,6 +1,6 @@
 {
-  "name": "ShieldBlock",
-  "description": "Screen word and adult content blocker with strict countdown timer lockdown.",
+  "name": "X Blocker",
+  "description": "X Blocker: English & Persian content blocker, Instagram Reels & Telegram Search section guard, app limits, Smart Focus, and GitHub auto-updater.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

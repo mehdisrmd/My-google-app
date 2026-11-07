@@ -1,260 +1,258 @@
 package com.example.notification
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
-import com.example. data.preferences.ShieldPreferences
+import com.example.ShieldApplication
 import com.example.ui.lockdown.LockdownActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+/**
+ * Manages:
+ * 1. Persistent live countdown notification during an active X Blocker lockdown.
+ * 2. Always-On Quick Panic SOS Notification Bar control so the user can trigger
+ *    Emergency Panic Mode or Instant Self-Lockdown from any app at any time.
+ */
 object LockdownNotificationManager {
-    const val CHANNEL_ID = "shield_lockdown_channel"
-    const val GUARD_CHANNEL_ID = "shield_always_on_panic_channel"
+    private const val CHANNEL_ID_LOCKDOWN = "x_blocker_lockdown_channel_v2"
+    private const val CHANNEL_ID_ALWAYS_ON_PANIC = "x_blocker_panic_sos_channel_v2"
+    private const val NOTIFICATION_ID_LOCKDOWN = 4001
+    private const val NOTIFICATION_ID_ALWAYS_ON_PANIC = 4002
 
-    private const val NOTIFICATION_ID = 1001
-    private const val GUARD_NOTIFICATION_ID = 1002
+    const val ACTION_OPEN_MAIN_DASHBOARD = "com.example.action.OPEN_MAIN_DASHBOARD"
+    const val ACTION_OPEN_PANIC_MODE = "com.example.action.OPEN_PANIC_MODE"
+    const val ACTION_QUICK_EMERGENCY_LOCK = "com.example.action.QUICK_EMERGENCY_LOCK"
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var countdownJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.Default)
+
+    fun hasNotificationPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
 
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return
 
-            // 1. High-priority Lockdown Countdown Channel
             val lockdownChannel = NotificationChannel(
-                CHANNEL_ID,
-                "Lockdown Countdown",
-                NotificationManager.IMPORTANCE_HIGH
+                CHANNEL_ID_LOCKDOWN,
+                "X Blocker Lockdown Timer",
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Displays active countdown timer while phone screen is in lockdown"
+                description = "Displays remaining lockdown time while X Blocker is active"
                 setShowBadge(true)
-                enableVibration(true)
-            }
-            notificationManager.createNotificationChannel(lockdownChannel)
-
-            // 2. Always-On Shield & Panic SOS Quick Action Channel (Low importance so it doesn't chime repeatedly)
-            val guardChannel = NotificationChannel(
-                GUARD_CHANNEL_ID,
-                "Always-On Panic SOS & Shield Status",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Keeps an emergency Panic SOS button and instant lock action in your notification bar at all times"
-                setShowBadge(false)
+                setSound(null, null)
                 enableVibration(false)
             }
-            notificationManager.createNotificationChannel(guardChannel)
+
+            val panicChannel = NotificationChannel(
+                CHANNEL_ID_ALWAYS_ON_PANIC,
+                "X Blocker Emergency Panic SOS Bar",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Always-on notification bar shortcut for instant Emergency Panic Mode & Self-Lockdown"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
+
+            nm.createNotificationChannel(lockdownChannel)
+            nm.createNotificationChannel(panicChannel)
         }
     }
 
     /**
-     * Posts or updates the persistent Always-On notification containing the
-     * "🚨 PANIC SOS" button and "🔒 Instant Lock" button so the user always has
-     * 1-tap emergency access from any app via the notification shade.
+     * Posts or refreshes the persistent Always-On Emergency Panic SOS notification in the status bar.
+     * Returns true if posted successfully, or false if notification permission is missing.
      */
-    fun showOrUpdateAlwaysOnPanicNotification(context: Context) {
-        try {
-            createNotificationChannel(context)
-            val prefs = ShieldPreferences(context.applicationContext)
-            val isProtected = prefs.getIsProtectionEnabled()
-            val streakDays = prefs.getStreakDays()
-            val urgesDefeated = prefs.getUrgesDefeatedCount()
-            val lockMins = prefs.getLockDurationMinutes()
+    fun showOrUpdateAlwaysOnPanicNotification(context: Context): Boolean {
+        createNotificationChannel(context)
+        if (!hasNotificationPermission(context)) {
+            return false
+        }
 
-            // Main content tap -> opens app dashboard
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return false
+            val app = runCatching { ShieldApplication.instance }.getOrNull()
+            val prefs = app?.preferences
+            val isProtectionOn = prefs?.getIsProtectionEnabled() ?: true
+            val streakDays = prefs?.getStreakDays() ?: 0
+            val urgesDefeated = prefs?.getUrgesDefeatedCount() ?: 0
+            val lockMins = prefs?.getLockDurationMinutes() ?: 5
+
+            // 1. Tap body -> Open X Blocker Dashboard
             val openAppIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = ACTION_OPEN_MAIN_DASHBOARD
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-            val pendingOpenApp = PendingIntent.getActivity(
+            val openAppPendingIntent = PendingIntent.getActivity(
                 context,
-                200,
+                201,
                 openAppIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // Action 1: 🚨 PANIC SOS -> opens MainActivity directly into Emergency Panic Mode Dialog
-            val panicIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // 2. Action 1 -> Open Emergency Panic Mode SOS Dialog & Breathing Studio
+            val panicSosIntent = Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_PANIC_MODE
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(MainActivity.EXTRA_OPEN_PANIC_MODE, true)
             }
-            val pendingPanic = PendingIntent.getActivity(
+            val panicSosPendingIntent = PendingIntent.getActivity(
                 context,
-                201,
-                panicIntent,
+                202,
+                panicSosIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // Action 2: 🔒 INSTANT LOCK -> immediately locks the screen for the configured duration
+            // 3. Action 2 -> Instant Emergency Self-Lockdown right from the notification shade
             val quickLockIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = ACTION_QUICK_EMERGENCY_LOCK
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(MainActivity.EXTRA_QUICK_EMERGENCY_LOCK, true)
             }
-            val pendingQuickLock = PendingIntent.getActivity(
+            val quickLockPendingIntent = PendingIntent.getActivity(
                 context,
-                202,
+                203,
                 quickLockIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val statusPrefix = if (isProtected) "🛡️ Shield Active" else "⚠️ Shield Paused"
-            val title = "$statusPrefix • ${streakDays}d Clean Streak"
-            val shortText = "Feeling an urge? Tap 🚨 PANIC SOS below for immediate help."
-            val expandedText = "Clean Streak: $streakDays days • Urges Defeated: $urgesDefeated\n" +
-                    "Use the buttons below anytime to open Emergency Panic Relief or lock your screen immediately."
-
-            val notification = NotificationCompat.Builder(context, GUARD_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle(title)
-                .setContentText(shortText)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
+            val statusLabel = if (isProtectionOn) "Shield Active" else "Shield Paused"
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID_ALWAYS_ON_PANIC)
+                .setSmallIcon(R.drawable.ic_stat_x_shield)
+                .setContentTitle("X Blocker • $statusLabel (${streakDays}d Clean)")
+                .setContentText("Feeling an urge? Don't break the chain! Tap PANIC SOS or LOCK NOW ($urgesDefeated urges beat).")
+                .setStyle(
+                    NotificationCompat.BigTextStyle().bigText(
+                        "Don't break the chain! Streak: ${streakDays}d • Urges Defeated: $urgesDefeated. Tap PANIC SOS for breathing & pledge relief, or LOCK NOW (${lockMins}m) to block your screen immediately."
+                    )
+                )
                 .setOngoing(true)
-                .setAutoCancel(false)
                 .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .setContentIntent(pendingOpenApp)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setCategory(NotificationCompat.CATEGORY_STATUS)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(openAppPendingIntent)
                 .addAction(
-                    R.drawable.ic_launcher_foreground,
-                    "🚨 PANIC SOS",
-                    pendingPanic
+                    R.drawable.ic_stat_x_shield,
+                    "PANIC SOS",
+                    panicSosPendingIntent
                 )
                 .addAction(
-                    R.drawable.ic_launcher_foreground,
-                    "🔒 LOCK (${lockMins}M)",
-                    pendingQuickLock
+                    R.drawable.ic_stat_x_shield,
+                    "LOCK NOW (${lockMins}m)",
+                    quickLockPendingIntent
                 )
                 .build()
 
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(GUARD_NOTIFICATION_ID, notification)
+            nm.notify(NOTIFICATION_ID_ALWAYS_ON_PANIC, notification)
+            true
+        } catch (_: SecurityException) {
+            false
         } catch (_: Exception) {
-            // Ignore in environments where notification service is unavailable
+            false
         }
     }
 
-    fun startLockdownNotification(context: Context, endTimeEpoch: Long, triggerWord: String) {
+    fun startLockdownNotification(
+        context: Context,
+        endTimeEpoch: Long,
+        triggerWord: String
+    ) {
         createNotificationChannel(context)
-        // Ensure always-on panic notification is also kept up to date
-        showOrUpdateAlwaysOnPanicNotification(context)
         countdownJob?.cancel()
 
+        val appContext = context.applicationContext
         countdownJob = scope.launch {
-            val notificationManager =
-                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return@launch
 
-            // Panic SOS PendingIntent also available during lockdown
-            val panicIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra(MainActivity.EXTRA_OPEN_PANIC_MODE, true)
+            val tapIntent = Intent(appContext, LockdownActivity::class.java).apply {
+                action = "com.example.action.OPEN_ACTIVE_LOCKDOWN"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-            val pendingPanic = PendingIntent.getActivity(
-                context,
-                203,
-                panicIntent,
+            val pendingIntent = PendingIntent.getActivity(
+                appContext,
+                204,
+                tapIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            while (isActive) {
-                val now = System.currentTimeMillis()
-                val left = (endTimeEpoch - now).coerceAtLeast(0L)
-
-                if (left <= 0L) {
-                    val finishIntent = Intent(context, LockdownActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    }
-                    val pendingFinish = PendingIntent.getActivity(
-                        context,
-                        0,
-                        finishIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-
-                    val finishNotification = NotificationCompat.Builder(context, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
-                        .setContentTitle("🛡️ Focus Period Complete!")
-                        .setContentText("You resisted the urge. Tap to return to ShieldBlock.")
-                        .setOngoing(false)
-                        .setAutoCancel(true)
-                        .setContentIntent(pendingFinish)
-                        .setPriority(NotificationCompat.PRIORITY_HIGH)
-                        .addAction(
-                            R.drawable.ic_launcher_foreground,
-                            "🚨 PANIC SOS",
-                            pendingPanic
-                        )
-                        .build()
-
-                    notificationManager.notify(NOTIFICATION_ID, finishNotification)
-                    showOrUpdateAlwaysOnPanicNotification(context)
+            while (true) {
+                val remaining = (endTimeEpoch - System.currentTimeMillis()).coerceAtLeast(0L)
+                if (remaining <= 0L) {
+                    nm.cancel(NOTIFICATION_ID_LOCKDOWN)
+                    showOrUpdateAlwaysOnPanicNotification(appContext)
                     break
                 }
 
-                val minutes = TimeUnit.MILLISECONDS.toMinutes(left)
-                val seconds = TimeUnit.MILLISECONDS.toSeconds(left) % 60
-                val formattedTime = String.format(Locale.ROOT, "%02d:%02d", minutes, seconds)
+                if (hasNotificationPermission(appContext)) {
+                    val mins = TimeUnit.MILLISECONDS.toMinutes(remaining)
+                    val secs = TimeUnit.MILLISECONDS.toSeconds(remaining) % 60
+                    val timeText = String.format(Locale.ROOT, "%02d:%02d", mins, secs)
 
-                val tapIntent = Intent(context, LockdownActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    try {
+                        val notification = NotificationCompat.Builder(appContext, CHANNEL_ID_LOCKDOWN)
+                            .setSmallIcon(R.drawable.ic_stat_x_shield)
+                            .setContentTitle("X Blocker Active • $timeText left")
+                            .setContentText("Trigger: $triggerWord • Don't break the chain! Stay strong.")
+                            .setOngoing(true)
+                            .setOnlyAlertOnce(true)
+                            .setSilent(true)
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setCategory(NotificationCompat.CATEGORY_ALARM)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setContentIntent(pendingIntent)
+                            .build()
+
+                        nm.notify(NOTIFICATION_ID_LOCKDOWN, notification)
+                    } catch (_: Exception) {
+                    }
                 }
-                val pendingTap = PendingIntent.getActivity(
-                    context,
-                    0,
-                    tapIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
 
-                val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_launcher_foreground)
-                    .setContentTitle("🔒 ShieldBlock Lockdown Active")
-                    .setContentText("Remaining: $formattedTime | Trigger: $triggerWord")
-                    .setStyle(
-                        NotificationCompat.BigTextStyle().bigText(
-                            "Lockdown in progress: $formattedTime remaining.\n" +
-                                    "Trigger: \"$triggerWord\". Phone is locked to protect your focus."
-                        )
-                    )
-                    .setOngoing(true)
-                    .setOnlyAlertOnce(true)
-                    .setContentIntent(pendingTap)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_ALARM)
-                    .addAction(
-                        R.drawable.ic_launcher_foreground,
-                        "🔒 RETURN TO LOCK SCREEN",
-                        pendingTap
-                    )
-                    .build()
-
-                notificationManager.notify(NOTIFICATION_ID, notification)
                 delay(1000L)
             }
         }
     }
 
-    fun cancelLockdownNotification(context: Context) {
+    fun cancelNotification(context: Context) {
         countdownJob?.cancel()
         countdownJob = null
-        val notificationManager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.cancel(NOTIFICATION_ID)
-        // Keep the Always-On Panic SOS notification visible in the notification bar!
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        nm?.cancel(NOTIFICATION_ID_LOCKDOWN)
         showOrUpdateAlwaysOnPanicNotification(context)
     }
 }

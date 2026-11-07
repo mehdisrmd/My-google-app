@@ -33,6 +33,8 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private var lastScanTime = 0L
     private val scanThrottleMs = 150L
+    private var lastSectionExitTime = 0L
+    private val sectionExitCooldownMs = 1200L
 
     // Foreground tracking for daily app usage limit
     private var currentForegroundPkg: String? = null
@@ -158,7 +160,7 @@ class ShieldAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 1. App Usage Tracking & Restriction Check (ignore transient systemui / keyboard packages from resetting active app)
+        // 1. App Usage Tracking & Restriction Check
         if (!com.example.util.AppPackageResolver.isTransientSystemPackage(sourcePackage, applicationContext.packageName)) {
             handleAppUsageTracking(sourcePackage, event.eventType, preferences)
         }
@@ -172,7 +174,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         val rootNode = rootInActiveWindow ?: return
 
         serviceScope.launch {
-            // 2. In-App Section Blocker Check (Instagram Reels, Telegram Search, YouTube Shorts)
+            // 2. In-App Section Blocker Check (Instagram Reels, Telegram Search Box, YouTube Shorts)
             val sectionRules = cachedSectionRules
             if (sectionRules.isNotEmpty()) {
                 val matchedSection = TextContentScanner.scanForSectionRule(
@@ -181,12 +183,31 @@ class ShieldAccessibilityService : AccessibilityService() {
                     currentPackage = sourcePackage
                 )
                 if (matchedSection != null) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                    onBlockedWordDetected(
-                        matchedWord = "Section: ${matchedSection.sectionName}",
-                        sourcePackage = sourcePackage
-                    )
+                    val nowSection = System.currentTimeMillis()
+                    if (nowSection - lastSectionExitTime >= sectionExitCooldownMs) {
+                        lastSectionExitTime = nowSection
+                        if (preferences.getIsSectionExitOnlyMode()) {
+                            // Stop ONLY that specific section (e.g., exit Instagram Reels or close Telegram Search box)
+                            // without blocking or closing the entire Instagram / Telegram app!
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                            triggerVibration()
+                            serviceScope.launch(Dispatchers.IO) {
+                                app.repository.recordIncident(
+                                    matchedWord = "Section Stopped: ${matchedSection.sectionName}",
+                                    sourceApp = sourcePackage,
+                                    durationMinutes = 0
+                                )
+                            }
+                        } else {
+                            // Full Lockdown Mode if user disabled Section-Exit-Only mode
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                            performGlobalAction(GLOBAL_ACTION_HOME)
+                            onBlockedWordDetected(
+                                matchedWord = "Section: ${matchedSection.sectionName}",
+                                sourcePackage = sourcePackage
+                            )
+                        }
+                    }
                     return@launch
                 }
             }
@@ -240,7 +261,6 @@ class ShieldAccessibilityService : AccessibilityService() {
             it.isEnabled && com.example.util.AppPackageResolver.matchesAppLimit(it, sourcePackage, this)
         }
         if (limit != null) {
-            // Also record usage against the canonical limit package so UI progress bars stay in sync
             val usedMinutes = maxOf(
                 preferences.getTodayAppUsageMinutes(sourcePackage, limit.appName),
                 preferences.getTodayAppUsageMinutes(limit.packageName, limit.appName)

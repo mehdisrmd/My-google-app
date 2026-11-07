@@ -18,6 +18,9 @@ interface ShieldDao {
     @Query("SELECT * FROM blocked_keywords ORDER BY id DESC")
     fun getAllKeywords(): Flow<List<BlockedKeyword>>
 
+    @Query("SELECT * FROM blocked_keywords ORDER BY id ASC")
+    suspend fun getAllKeywordsSync(): List<BlockedKeyword>
+
     @Query("SELECT * FROM blocked_keywords WHERE isEnabled = 1")
     fun getEnabledKeywords(): Flow<List<BlockedKeyword>>
 
@@ -45,6 +48,9 @@ interface ShieldDao {
     @Query("SELECT * FROM block_incidents ORDER BY timestamp DESC")
     fun getAllIncidents(): Flow<List<BlockIncident>>
 
+    @Query("SELECT * FROM block_incidents ORDER BY timestamp DESC")
+    suspend fun getAllIncidentsSync(): List<BlockIncident>
+
     @Query("SELECT COUNT(*) FROM block_incidents")
     fun getIncidentCount(): Flow<Int>
 
@@ -58,6 +64,9 @@ interface ShieldDao {
     @Query("SELECT * FROM app_usage_limits ORDER BY appName ASC")
     fun getAllAppUsageLimits(): Flow<List<AppUsageLimit>>
 
+    @Query("SELECT * FROM app_usage_limits ORDER BY appName ASC")
+    suspend fun getAllAppUsageLimitsSync(): List<AppUsageLimit>
+
     @Query("SELECT * FROM app_usage_limits WHERE isEnabled = 1")
     suspend fun getEnabledAppUsageLimitsSync(): List<AppUsageLimit>
 
@@ -70,6 +79,9 @@ interface ShieldDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAppUsageLimit(limit: AppUsageLimit)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAppUsageLimits(limits: List<AppUsageLimit>)
+
     @Update
     suspend fun updateAppUsageLimit(limit: AppUsageLimit)
 
@@ -79,6 +91,9 @@ interface ShieldDao {
     // Section Block Rules
     @Query("SELECT * FROM section_block_rules ORDER BY id ASC")
     fun getAllSectionRules(): Flow<List<SectionBlockRule>>
+
+    @Query("SELECT * FROM section_block_rules ORDER BY id ASC")
+    suspend fun getAllSectionRulesSync(): List<SectionBlockRule>
 
     @Query("SELECT * FROM section_block_rules WHERE isEnabled = 1")
     suspend fun getEnabledSectionRulesSync(): List<SectionBlockRule>
@@ -101,6 +116,9 @@ interface ShieldDao {
     // Smart Focus Schedule Slots
     @Query("SELECT * FROM focus_schedule_slots ORDER BY startHour ASC, startMinute ASC")
     fun getAllFocusSlots(): Flow<List<FocusScheduleSlot>>
+
+    @Query("SELECT * FROM focus_schedule_slots ORDER BY startHour ASC, startMinute ASC")
+    suspend fun getAllFocusSlotsSync(): List<FocusScheduleSlot>
 
     @Query("SELECT * FROM focus_schedule_slots WHERE isEnabled = 1")
     suspend fun getEnabledFocusSlotsSync(): List<FocusScheduleSlot>

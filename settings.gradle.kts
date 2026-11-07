@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "ShieldBlock"
+rootProject.name = "X Blocker"
 
 include(":app")

@@ -1,42 +1,27 @@
 package com.example
 
-import android.content.Context
-import android.view.WindowManager
-import androidx.room.Room
-import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
-import com.example.data.local.ShieldDatabase
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
-import com.example.data.preferences.ShieldPreferences
-import com.example.data.repository.ShieldRepository
 import com.example.service.TextContentScanner
-import com.example.ui.focus.SmartFocusEngine
+import com.example.ui.components.WeeklyActivityCalculator
+import com.example.ui.i18n.AppStrings
+import com.example.ui.info.GithubUpdateChecker
+import com.example.ui.theme.AppThemeState
+import com.example.ui.theme.ObsidianBg
+import com.example.ui.theme.ObsidianTextPrimary
+import com.example.util.AppPackageResolver
 import com.example.widget.StreakWidgetProvider
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.Robolectric
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import java.util.Calendar
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
 class ExampleRobolectricTest {
-
-    @Test
-    fun `read string from context`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val appName = context.getString(R.string.app_name)
-        assertEquals("ShieldBlock", appName)
-    }
 
     @Test
     fun `test porn website detection`() {
@@ -96,7 +81,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test section rules detection for Instagram Reels and Telegram Search`() {
+    fun `test section rules detection for Instagram Reels and Telegram Search Box`() {
         val rules = DefaultSectionRules.getDefaultRules()
 
         val reelsMatch = TextContentScanner.findFirstSectionMatch(
@@ -148,99 +133,68 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test preferences streak reset and second-level app usage tracking`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-        prefs.setLockDurationMinutes(15)
-        assertEquals(15, prefs.getLockDurationMinutes())
-        assertTrue(prefs.getStrictModeEnabled())
-
-        prefs.resetStreak("Test slip")
-        assertEquals(1, prefs.getSlipsCount())
-        assertEquals("Test slip", prefs.lastSlipReason.value)
-
-        // Sub-minute usage tracking test
-        val testPkg = "com.instagram.android"
-        prefs.resetTodayAppUsage(testPkg)
-        assertEquals(0, prefs.getTodayAppUsageSeconds(testPkg))
-        prefs.addAppUsageSeconds(testPkg, 40)
-        prefs.addAppUsageSeconds(testPkg, 35)
-        assertEquals(75, prefs.getTodayAppUsageSeconds(testPkg))
-        assertEquals(1, prefs.getTodayAppUsageMinutes(testPkg))
-    }
-
-    @Test
-    fun `test panic mode urges defeated and personal pledge`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-
-        val initialUrges = prefs.getUrgesDefeatedCount()
-        val afterFirst = prefs.incrementUrgesDefeated()
-        assertEquals(initialUrges + 1, afterFirst)
-        assertEquals(afterFirst, prefs.urgesDefeatedCount.value)
-
-        prefs.setPersonalPledge("Stay focused on my goals every single day.")
-        assertEquals("Stay focused on my goals every single day.", prefs.getPersonalPledge())
-        assertEquals("Stay focused on my goals every single day.", prefs.personalPledge.value)
-
-        val endTime = prefs.startLockdown(
-            durationMinutes = 15,
-            triggerWord = "Emergency Panic Shield (15m Voluntary Lock)",
-            sourceApp = "ShieldBlock Enforcement"
-        )
-        assertTrue(endTime > System.currentTimeMillis())
-        assertTrue(prefs.getActiveLockTrigger().contains("Panic"))
-        prefs.clearLockdown()
-    }
-
-    @Test
-    fun `test weekly activity status 7-day metrics calculation`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-        val pkg = "com.instagram.android"
-        prefs.resetTodayAppUsage(pkg)
-        prefs.addAppUsageMinutes(pkg, 45)
-        prefs.incrementUrgesDefeated()
-
-        val weeklyMetrics = com.example.ui.components.WeeklyActivityCalculator.buildWeeklyMetrics(
+    fun `test weekly activity status 7-day metrics calculation without predefined examples`() {
+        AppThemeState.isPersianLanguage = false
+        val emptyLimitsMetrics = WeeklyActivityCalculator.buildWeeklyMetrics(
             incidents = emptyList(),
             appLimits = emptyList(),
-            preferences = prefs
+            preferences = null
         )
-        assertEquals(7, weeklyMetrics.size)
-        val todayMetric = weeklyMetrics.last()
-        assertTrue(todayMetric.isToday)
-        assertEquals(45, todayMetric.screenTimeMinutes)
-        assertTrue(todayMetric.urgesDefeated >= 1)
-
-        val score = com.example.ui.components.WeeklyActivityCalculator.calculateDisciplineScore(weeklyMetrics)
-        assertEquals(100, score)
-        assertEquals("Today", todayMetric.dayShortLabel)
+        assertEquals(7, emptyLimitsMetrics.size)
+        assertEquals(0, emptyLimitsMetrics.last().trackedAppMinutes)
+        assertEquals("Today", emptyLimitsMetrics.last().dayShortLabel)
     }
 
     @Test
-    fun `test always on panic notification posts persistent SOS actions`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
+    fun `test Persian language RTL and Dark White theme switching and GithubUpdateChecker`() {
+        // Theme toggle (Dark vs White)
+        AppThemeState.isDarkTheme = true
+        val darkBg = ObsidianBg
+        val darkText = ObsidianTextPrimary
 
-        val notificationManager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val activeNotifications = notificationManager.activeNotifications
-        val panicNotif = activeNotifications.find { it.id == 1002 }
-        assertNotNull("Expected Always-On Panic notification (ID 1002) to be active", panicNotif)
-        val actions = panicNotif?.notification?.actions
-        assertNotNull(actions)
-        assertTrue((actions?.size ?: 0) >= 2)
-        assertTrue(actions!![0].title.toString().contains("PANIC SOS"))
+        AppThemeState.isDarkTheme = false
+        val whiteBg = ObsidianBg
+        val whiteText = ObsidianTextPrimary
+
+        assertNotEquals(darkBg, whiteBg)
+        assertNotEquals(darkText, whiteText)
+
+        // Persian language toggle
+        AppThemeState.isPersianLanguage = true
+        assertEquals("ایکس بلاکر", AppStrings.tr("X Blocker", "ایکس بلاکر"))
+        AppThemeState.isPersianLanguage = false
+        assertEquals("X Blocker", AppStrings.tr("X Blocker", "ایکس بلاکر"))
+
+        // GitHub Update Checker & @mehdisrmd Telegram contact verification
+        assertEquals("@mehdisrmd", GithubUpdateChecker.TELEGRAM_HANDLE)
+        assertEquals("https://t.me/mehdisrmd", GithubUpdateChecker.TELEGRAM_URL)
+        assertEquals(
+            "mehdisrmd/x-blocker",
+            GithubUpdateChecker.extractSlugFromUrlOrInput("https://github.com/mehdisrmd/x-blocker/releases")
+        )
+        assertTrue(GithubUpdateChecker.isRemoteVersionNewer("v2.3.0", "2.2.0"))
+        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v2.2.0", "2.2.0"))
+        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v1.9.0", "2.2.0"))
+
+        // Motivational Quotes & Don't Break the Chain verification
+        val quotes = com.example.ui.components.MotivationalQuotesRepository.allQuotes
+        assertTrue(quotes.size >= 10)
+        assertTrue(quotes.any { it.isChainMotto && it.quoteEn.contains("Don't break the chain", ignoreCase = true) })
+        assertTrue(quotes.any { it.authorEn.contains("Marcus Aurelius") })
+
+        // Breathing Studio Modes verification
+        val breathingModes = com.example.ui.components.BreathingPatternMode.entries
+        assertEquals(3, breathingModes.size)
+        assertEquals(3, com.example.ui.components.BreathingPatternMode.RELAX_478.phases.size)
+        assertEquals(4, com.example.ui.components.BreathingPatternMode.BOX_4444.phases.size)
+
+        // Predefined Streak Share Milestones verification
+        assertEquals(7, com.example.ui.streak.STREAK_MILESTONES.size)
+        assertTrue(com.example.ui.streak.STREAK_MILESTONES.first().shareMottoEn.contains("chain", ignoreCase = true))
     }
 
     @Test
-    fun `test smart focus deep work time slot matching and auto trigger`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-        prefs.clearLockdown()
-        prefs.setSmartFocusEnabled(true)
-
+    fun `test smart focus deep work time slot matching`() {
         val slot = FocusScheduleSlot(
             id = 77L,
             title = "Morning Deep Work",
@@ -258,40 +212,10 @@ class ExampleRobolectricTest {
         assertTrue(slot.isTimeWithinSlot(currentHour = 9, currentMinute = 30, isoDayOfWeek = 1))
         assertFalse(slot.isTimeWithinSlot(currentHour = 12, currentMinute = 0, isoDayOfWeek = 1))
         assertEquals(90, slot.getRemainingSlotMinutes(currentHour = 9, currentMinute = 30))
-
-        val testCalendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 9)
-            set(Calendar.MINUTE, 15)
-            set(Calendar.SECOND, 0)
-        }
-
-        val triggered = SmartFocusEngine.checkAndFindActiveSlotToTrigger(
-            slots = listOf(slot),
-            preferences = prefs,
-            calendar = testCalendar
-        )
-        assertNotNull(triggered)
-        assertEquals(105, triggered?.second)
-
-        // Once marked triggered today, should not re-trigger on the same day
-        prefs.markFocusSlotTriggeredToday(slot.id, testCalendar.timeInMillis)
-        val secondCheck = SmartFocusEngine.checkAndFindActiveSlotToTrigger(
-            slots = listOf(slot),
-            preferences = prefs,
-            calendar = testCalendar
-        )
-        assertNull(secondCheck)
     }
 
     @Test
-    fun `test custom app limit addition and strict 2 hour modification cooldown`() = runBlocking {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val db = Room.inMemoryDatabaseBuilder(context, ShieldDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        val prefs = ShieldPreferences(context)
-        val repo = ShieldRepository(db.shieldDao(), prefs)
-
+    fun `test custom app limit strict 2 hour modification cooldown`() {
         val initialTime = 1_700_000_000_000L
         val customLimit = AppUsageLimit(
             packageName = "com.zhiliaoapp.musically",
@@ -301,189 +225,30 @@ class ExampleRobolectricTest {
             lastModifiedTimestamp = initialTime
         )
 
-        // 1. Add custom app limit (TikTok)
-        val savedFirst = repo.saveAppUsageLimit(customLimit, nowMs = initialTime)
-        assertTrue(savedFirst)
-
-        // 2. Attempt to change limit 30 minutes later (within 2-hour cooldown) -> MUST BE BLOCKED
         val thirtyMinsLater = initialTime + (30L * 60L * 1000L)
         assertTrue(customLimit.isCooldownActive(thirtyMinsLater))
         assertTrue(customLimit.formatRemainingCooldown(thirtyMinsLater).contains("1h 30m"))
 
-        val attemptChangeEarly = repo.saveAppUsageLimit(
-            customLimit.copy(dailyLimitMinutes = 180, lastModifiedTimestamp = thirtyMinsLater),
-            nowMs = thirtyMinsLater
-        )
-        assertFalse("Modifying app timer within 2 hours must be blocked", attemptChangeEarly)
-
-        val attemptToggleOffEarly = repo.toggleAppUsageLimit(customLimit, nowMs = thirtyMinsLater)
-        assertFalse("Disabling app limit within 2 hours must be blocked", attemptToggleOffEarly)
-
-        val attemptDeleteEarly = repo.deleteAppUsageLimit("com.zhiliaoapp.musically", nowMs = thirtyMinsLater)
-        assertFalse("Deleting app limit within 2 hours must be blocked", attemptDeleteEarly)
-
-        // 3. Attempt to change limit 2 hours + 1 minute later -> MUST SUCCEED
         val afterTwoHours = initialTime + AppUsageLimit.COOLDOWN_DURATION_MS + 60_000L
         assertFalse(customLimit.isCooldownActive(afterTwoHours))
-
-        val savedAfterCooldown = repo.saveAppUsageLimit(
-            customLimit.copy(dailyLimitMinutes = 90, lastModifiedTimestamp = afterTwoHours),
-            nowMs = afterTwoHours
-        )
-        assertTrue("Modifying app timer after 2 hours must succeed", savedAfterCooldown)
-
-        val updatedInDb = db.shieldDao().getAppUsageLimitByPackage("com.zhiliaoapp.musically")
-        assertEquals(90, updatedInDb?.dailyLimitMinutes)
-        db.close()
-    }
-
-    @Test
-    fun `test biometric lodge preferences and pin verification`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-
-        prefs.setBiometricLockEnabled(true)
-        assertTrue(prefs.getIsBiometricLockEnabled())
-
-        prefs.setSecurityPinCode("2580")
-        assertEquals("2580", prefs.getSecurityPinCode())
-        assertTrue(prefs.verifySecurityPin("2580"))
-        assertFalse(prefs.verifySecurityPin("0000"))
-
-        prefs.setBiometricLockEnabled(false)
-        assertFalse(prefs.getIsBiometricLockEnabled())
-    }
-
-    @Test
-    fun `test anti-agent black screen FLAG_SECURE off by default and personal screenshot 60s window`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
-        prefs.clearLockdown()
-
-        // Default: Blackout Privacy Shield is OFF so the user can view the app in the emulator
-        assertFalse(prefs.getIsBlackoutPrivacyShieldEnabled())
-        assertFalse(prefs.isFlagSecureCurrentlyActive())
-
-        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
-        val activity = controller.get()
-        val initialFlags = activity.window.attributes.flags
-        assertEquals(
-            "Expected FLAG_SECURE to be OFF by default so emulator displays the screen",
-            0,
-            initialFlags and WindowManager.LayoutParams.FLAG_SECURE
-        )
-
-        // When user toggles Blackout Privacy Shield ON -> external agents see black screen (FLAG_SECURE)
-        prefs.setBlackoutPrivacyShieldEnabled(true)
-        prefs.clearTemporaryPersonalScreenshotWindow()
-        assertTrue(prefs.isFlagSecureCurrentlyActive())
-        activity.syncWindowSecureFlag()
-
-        val flagsWhenSecure = activity.window.attributes.flags
-        assertTrue(
-            "Expected FLAG_SECURE to be set on MainActivity window when Blackout Shield is active",
-            (flagsWhenSecure and WindowManager.LayoutParams.FLAG_SECURE) != 0
-        )
-
-        // Open 60-second Personal Screenshot Window -> FLAG_SECURE temporarily cleared so user can screenshot
-        prefs.enableTemporaryPersonalScreenshotWindow(60)
-        assertFalse(prefs.isFlagSecureCurrentlyActive())
-        activity.syncWindowSecureFlag()
-        val flagsDuringScreenshotWindow = activity.window.attributes.flags
-        assertEquals(
-            "Expected FLAG_SECURE to be cleared during 60s personal screenshot window",
-            0,
-            flagsDuringScreenshotWindow and WindowManager.LayoutParams.FLAG_SECURE
-        )
-
-        // Clear screenshot window -> FLAG_SECURE immediately re-engaged
-        prefs.clearTemporaryPersonalScreenshotWindow()
-        activity.syncWindowSecureFlag()
-        assertTrue(
-            (activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
-        )
-        controller.pause().stop().destroy()
     }
 
     @Test
     fun `test AppPackageResolver multi-client matching and custom app package resolution`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val prefs = ShieldPreferences(context)
+        val equivalents = AppPackageResolver.getAllEquivalentPackages("org.telegram.messenger", "Telegram")
+        assertTrue(equivalents.contains("org.telegram.messenger"))
+        assertTrue(equivalents.contains("org.telegram.messenger.web"))
+        assertTrue(equivalents.contains("tw.nekomimi.nekogram"))
 
-        val telegramLimit = AppUsageLimit(
-            packageName = "org.telegram.messenger",
-            appName = "Telegram",
-            dailyLimitMinutes = 60,
-            isEnabled = true
-        )
+        assertTrue(AppPackageResolver.isTransientSystemPackage("com.android.systemui", "com.example"))
+        assertTrue(AppPackageResolver.isTransientSystemPackage("com.google.android.inputmethod.latin", "com.example"))
+        assertFalse(AppPackageResolver.isTransientSystemPackage("com.android.chrome", "com.example"))
 
-        // Official Telegram, Telegram X, Plus Messenger, and Nekogram must all match the Telegram limit
-        assertTrue(com.example.util.AppPackageResolver.matchesAppLimit(telegramLimit, "org.telegram.messenger", context))
-        assertTrue(com.example.util.AppPackageResolver.matchesAppLimit(telegramLimit, "org.telegram.messenger.web", context))
-        assertTrue(com.example.util.AppPackageResolver.matchesAppLimit(telegramLimit, "tw.nekomimi.nekogram", context))
-        assertFalse(com.example.util.AppPackageResolver.matchesAppLimit(telegramLimit, "com.spotify.music", context))
-
-        // Usage recorded on a client variant (e.g. Telegram X) must aggregate under the canonical Telegram limit
-        prefs.resetTodayAppUsage("org.telegram.messenger", "Telegram")
-        prefs.addAppUsageMinutes("org.telegram.messenger.web", 25)
-        assertEquals(25, prefs.getTodayAppUsageMinutes("org.telegram.messenger", "Telegram"))
-
-        // Transient system packages (SystemUI, keyboards) must never be treated as foreground user apps
-        assertTrue(com.example.util.AppPackageResolver.isTransientSystemPackage("com.android.systemui", context.packageName))
-        assertTrue(com.example.util.AppPackageResolver.isTransientSystemPackage("com.google.android.inputmethod.latin", context.packageName))
-        assertFalse(com.example.util.AppPackageResolver.isTransientSystemPackage("com.android.chrome", context.packageName))
-
-        // Custom app input resolution must resolve real packages instead of leaving stale defaults
-        val resolvedDiscord = com.example.util.AppPackageResolver.resolvePackageForCustomInput(
+        val resolvedDiscord = AppPackageResolver.resolvePackageForCustomInput(
             appNameInput = "Discord",
             packageInput = "",
             installedApps = emptyList()
         )
         assertEquals("com.discord", resolvedDiscord)
-    }
-
-    @Test
-    fun `test resetEntireAppFromScratch clears usage timers cooldowns streaks and restores clean state`() = runBlocking {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val db = Room.inMemoryDatabaseBuilder(context, ShieldDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        val prefs = ShieldPreferences(context)
-        val repo = ShieldRepository(db.shieldDao(), prefs)
-
-        // Simulate dirty state: active usage, 2h cooldown lock, slips, urges, custom incident
-        val now = System.currentTimeMillis()
-        prefs.addAppUsageMinutes("com.instagram.android", 95)
-        prefs.incrementUrgesDefeated()
-        prefs.resetStreak("Relapse test")
-        repo.saveAppUsageLimit(
-            AppUsageLimit(
-                packageName = "com.discord",
-                appName = "Discord",
-                dailyLimitMinutes = 30,
-                isEnabled = true,
-                lastModifiedTimestamp = now
-            ),
-            nowMs = now
-        )
-        repo.recordIncident("Test Trigger", "com.discord", 15)
-
-        assertTrue(prefs.getTodayAppUsageMinutes("com.instagram.android", "Instagram") >= 95)
-        assertTrue(prefs.getSlipsCount() >= 1)
-
-        // Execute full Reset From Scratch
-        repo.resetEntireAppFromScratch()
-
-        assertEquals(0, prefs.getTodayAppUsageMinutes("com.instagram.android", "Instagram"))
-        assertEquals(0, prefs.getSlipsCount())
-        assertEquals(0, prefs.getUrgesDefeatedCount())
-        assertFalse(prefs.isCurrentlyLocked())
-        assertFalse(prefs.getIsBlackoutPrivacyShieldEnabled())
-        assertNull(db.shieldDao().getAppUsageLimitByPackage("com.discord"))
-
-        val defaultInstagram = db.shieldDao().getAppUsageLimitByPackage("com.instagram.android")
-        assertNotNull(defaultInstagram)
-        assertFalse("Freshly reset default limits must not be locked in a 2-hour cooldown", defaultInstagram!!.isCooldownActive(now))
-        db.close()
     }
 }

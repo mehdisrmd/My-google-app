@@ -70,23 +70,24 @@ jobs:
       - name: Build Installable Android APK
         run: |
           gradle :app:assembleDebug --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk ShieldBlock.apk
+          cp app/build/outputs/apk/debug/app-debug.apk X-Blocker.apk
 
-      - name: Upload ShieldBlock APK Artifact
+      - name: Upload X Blocker APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ShieldBlock-APK
-          path: ShieldBlock.apk
+          name: X-Blocker-APK
+          path: X-Blocker.apk
 
       - name: Publish APK to GitHub Releases Automatically
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "ShieldBlock v1.0.${{ github.run_number }} (Android APK)"
+          tag_name: v2.1.${{ github.run_number }}
+          name: "X Blocker v2.1.${{ github.run_number }} (Android APK)"
           body: |
-            ### ShieldBlock Android Release (Build #${{ github.run_number }})
-            Download **`ShieldBlock.apk`** below under **Assets** to install directly on your Android device.
-          files: ShieldBlock.apk
+            ### X Blocker Android Release (v2.1.${{ github.run_number }})
+            - **Developer Telegram:** [@mehdisrmd](https://t.me/mehdisrmd)
+            - **Download:** Tap **`X-Blocker.apk`** below under **Assets** to install directly on your Android device.
+          files: X-Blocker.apk
           draft: false
           prerelease: false
           generate_release_notes: true

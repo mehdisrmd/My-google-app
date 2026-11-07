@@ -2,10 +2,9 @@ package com.example.ui.security
 
 import android.app.KeyguardManager
 import android.content.Context
-import android.hardware.biometrics.BiometricManager
-import android.hardware.biometrics.BiometricPrompt
-import android.os.Build
-import android.os.CancellationSignal
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,12 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,24 +34,19 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -63,9 +54,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import com.example.data.preferences.ShieldPreferences
-import com.example.ui.theme.AmberWarning
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
@@ -75,286 +65,115 @@ import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
+import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
-import kotlinx.coroutines.delay
 
-object BiometricAuthHelper {
-
-    fun isHardwareBiometricAvailable(context: Context): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val bm = context.getSystemService(BiometricManager::class.java)
-                val res = bm?.canAuthenticate(
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK or
-                            BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-                res == BiometricManager.BIOMETRIC_SUCCESS
-            } else {
-                val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-                km?.isKeyguardSecure == true
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    fun triggerSystemBiometricPrompt(
-        context: Context,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                val executor = ContextCompat.getMainExecutor(context)
-                val builder = BiometricPrompt.Builder(context)
-                    .setTitle("ShieldBlock Biometric Lodge")
-                    .setSubtitle("Verify your identity to unlock ShieldBlock controls")
-                    .setDescription("Use fingerprint, face unlock, or enter your 4-digit Shield PIN below.")
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    builder.setAllowedAuthenticators(
-                        BiometricManager.Authenticators.BIOMETRIC_WEAK or
-                                BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                    )
-                } else {
-                    builder.setNegativeButton(
-                        "Use Shield PIN",
-                        executor
-                    ) { _, _ -> }
-                }
-
-                val prompt = builder.build()
-                val cancellationSignal = CancellationSignal()
-                prompt.authenticate(
-                    cancellationSignal,
-                    executor,
-                    object : BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
-                            super.onAuthenticationSucceeded(result)
-                            onSuccess()
-                        }
-
-                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                            super.onAuthenticationError(errorCode, errString)
-                            onError(errString?.toString() ?: "Use your 4-digit Shield PIN below")
-                        }
-
-                        override fun onAuthenticationFailed() {
-                            super.onAuthenticationFailed()
-                            onError("Biometric not recognized. Try again or use PIN.")
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                onError("Biometric sensor unavailable in this environment. Use your 4-digit PIN below.")
-            }
-        } else {
-            onError("Use your 4-digit Shield PIN to unlock.")
-        }
-    }
-}
-
+/**
+ * Full-screen Biometric Lodge & PIN Security Gate that blocks access to X Blocker
+ * until the user authenticates via OS Biometric / Device Credential or their Security PIN.
+ * Uses a custom built-in PIN keypad without any DEL or CTRL buttons.
+ */
 @Composable
 fun BiometricLockOverlay(
     preferences: ShieldPreferences,
-    onUnlocked: () -> Unit
+    onUnlocked: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var enteredPin by remember { mutableStateOf("") }
-    var statusMessage by remember {
-        mutableStateOf("Verify with Biometrics or enter your 4-digit Shield PIN")
-    }
-    var isError by remember { mutableStateOf(false) }
+    var pinInput by remember { mutableStateOf("") }
+    var errorText by remember { mutableStateOf<String?>(null) }
 
-    // Attempt system biometric prompt automatically when overlay appears if hardware is enrolled
-    LaunchedEffect(Unit) {
-        if (BiometricAuthHelper.isHardwareBiometricAvailable(context)) {
-            BiometricAuthHelper.triggerSystemBiometricPrompt(
-                context = context,
-                onSuccess = onUnlocked,
-                onError = { msg ->
-                    statusMessage = msg
-                }
+    val deviceCredentialLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            onUnlocked()
+        } else {
+            errorText = tr(
+                "Biometric / Device authentication cancelled. Use PIN pad below or retry.",
+                "احراز هویت لغو شد. رمز پین را وارد کنید یا دوباره تلاش کنید."
             )
         }
     }
 
+    val triggerBiometricOrDeviceCredential = {
+        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        @Suppress("DEPRECATION")
+        val intent: Intent? = keyguardManager?.createConfirmDeviceCredentialIntent(
+            tr("X Blocker Biometric Lock", "قفل بیومتریک ایکس بلاکر"),
+            tr("Authenticate with Fingerprint, Face, or Device PIN to unlock X Blocker", "برای باز کردن ایکس بلاکر با اثر انگشت یا رمز دستگاه احراز هویت کنید")
+        )
+        if (intent != null) {
+            deviceCredentialLauncher.launch(intent)
+        } else {
+            onUnlocked()
+        }
+    }
+
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(ObsidianBg)
-            .padding(24.dp)
-            .testTag("biometric_lock_overlay"),
+            .padding(20.dp)
+            .testTag("biometric_lodge_overlay"),
         contentAlignment = Alignment.Center
     ) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(28.dp),
-            border = BorderStroke(1.5.dp, EmeraldShield.copy(alpha = 0.55f))
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.5.dp, CyanTelemetry.copy(alpha = 0.6f))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(64.dp)
                         .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    EmeraldShield.copy(alpha = 0.3f),
-                                    CyanTelemetry.copy(alpha = 0.08f)
-                                )
-                            )
-                        )
-                        .border(2.dp, EmeraldShield, CircleShape),
+                        .background(CyanTelemetry.copy(alpha = 0.15f))
+                        .border(2.dp, CyanTelemetry, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
-                        contentDescription = "Biometric Lodge",
-                        tint = EmeraldShield,
-                        modifier = Modifier.size(40.dp)
+                        contentDescription = "Biometric Lock",
+                        tint = CyanTelemetry,
+                        modifier = Modifier.size(36.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
                 Text(
-                    text = "Biometric Lodge Active",
-                    style = MaterialTheme.typography.headlineSmall,
+                    text = tr("Biometric Security Gate", "درگاه امنیتی بیومتریک"),
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Black,
-                    color = Color.White
+                    color = ObsidianTextPrimary
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
-
                 Text(
-                    text = statusMessage,
+                    text = tr(
+                        "Authenticate with Fingerprint / Biometrics or enter your Security PIN (Default: 0000).",
+                        "با اثر انگشت یا وارد کردن رمز پین (پیش‌فرض: 0000) قفل برنامه را باز کنید."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (isError) CrimsonPrimary else ObsidianTextSecondary,
+                    color = ObsidianTextSecondary,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // PIN Dots Indicator
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val targetLength = preferences.getSecurityPinCode().length.coerceAtLeast(4)
-                    repeat(targetLength) { index ->
-                        val filled = index < enteredPin.length
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (filled) EmeraldShield else ObsidianCard
-                                )
-                                .border(
-                                    1.5.dp,
-                                    if (filled) EmeraldShield else ObsidianBorder,
-                                    CircleShape
-                                )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Numeric Keypad
-                val rows = listOf(
-                    listOf("1", "2", "3"),
-                    listOf("4", "5", "6"),
-                    listOf("7", "8", "9"),
-                    listOf("CLR", "0", "DEL")
-                )
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    rows.forEach { rowKeys ->
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            rowKeys.forEach { key ->
-                                Surface(
-                                    onClick = {
-                                        isError = false
-                                        when (key) {
-                                            "CLR" -> enteredPin = ""
-                                            "DEL" -> {
-                                                if (enteredPin.isNotEmpty()) {
-                                                    enteredPin = enteredPin.dropLast(1)
-                                                }
-                                            }
-                                            else -> {
-                                                val maxLen = preferences.getSecurityPinCode().length.coerceAtLeast(4)
-                                                if (enteredPin.length < maxLen) {
-                                                    enteredPin += key
-                                                    if (enteredPin.length == maxLen) {
-                                                        if (preferences.verifySecurityPin(enteredPin)) {
-                                                            onUnlocked()
-                                                        } else {
-                                                            isError = true
-                                                            statusMessage = "Incorrect PIN. Default is 0000 unless changed."
-                                                            enteredPin = ""
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .size(width = 76.dp, height = 52.dp)
-                                        .testTag("biometric_pin_key_$key"),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = ObsidianCard,
-                                    border = BorderStroke(1.dp, ObsidianBorder)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = key,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontFamily = JetBrainsMonoFontFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (key == "CLR" || key == "DEL") AmberWarning else Color.White
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(18.dp))
-
                 Button(
-                    onClick = {
-                        BiometricAuthHelper.triggerSystemBiometricPrompt(
-                            context = context,
-                            onSuccess = onUnlocked,
-                            onError = { msg ->
-                                statusMessage = msg
-                            }
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("trigger_biometric_prompt_button"),
+                    onClick = triggerBiometricOrDeviceCredential,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = EmeraldShield,
+                        containerColor = CyanTelemetry,
                         contentColor = Color.Black
                     ),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("biometric_authenticate_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
@@ -363,43 +182,306 @@ fun BiometricLockOverlay(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Scan Biometrics (Fingerprint / Face)",
+                        text = tr("Unlock with Biometrics / Device Auth", "بازگشایی با اثر انگشت / قفل گوشی"),
                         fontWeight = FontWeight.Bold
                     )
+                }
+
+                // Masked PIN Display Box
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ObsidianCard,
+                    border = BorderStroke(1.dp, if (errorText != null) CrimsonPrimary else CyanTelemetry.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("biometric_pin_input")
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val masked = if (pinInput.isEmpty()) {
+                            tr("Tap numbers below (PIN)", "اعداد پین را لمس کنید")
+                        } else {
+                            "● ".repeat(pinInput.length).trim()
+                        }
+                        Text(
+                            text = masked,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            color = if (pinInput.isEmpty()) ObsidianTextSecondary else CyanTelemetry
+                        )
+                    }
+                }
+
+                // Clean In-App Numeric Keypad (Digits 0-9 + Clear + OK — NO DEL and NO CTRL buttons)
+                CleanNumericKeypad(
+                    onDigitClick = { digit ->
+                        if (pinInput.length < 6) {
+                            pinInput += digit
+                            errorText = null
+                        }
+                    },
+                    onClearAll = {
+                        pinInput = ""
+                        errorText = null
+                    },
+                    onConfirm = {
+                        if (preferences.verifySecurityPin(pinInput)) {
+                            onUnlocked()
+                        } else {
+                            errorText = tr("Incorrect Security PIN. Try again.", "رمز پین اشتباه است. دوباره تلاش کنید.")
+                        }
+                    }
+                )
+
+                errorText?.let { err ->
+                    Text(
+                        text = err,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = CrimsonPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        if (preferences.verifySecurityPin(pinInput)) {
+                            onUnlocked()
+                        } else {
+                            errorText = tr("Incorrect Security PIN. Try again.", "رمز پین اشتباه است. دوباره تلاش کنید.")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = EmeraldShield,
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("biometric_pin_unlock_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(tr("Unlock with Security PIN", "بازگشایی با رمز پین"), fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
+/**
+ * Custom In-App Keyboard / Keypad without any DEL or CTRL buttons.
+ */
+@Composable
+fun CleanNumericKeypad(
+    onDigitClick: (String) -> Unit,
+    onClearAll: () -> Unit,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val rows = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("CLR", "0", "OK")
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("clean_numeric_keypad"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        rows.forEach { rowKeys ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowKeys.forEach { key ->
+                    val isAction = key == "CLR" || key == "OK"
+                    Surface(
+                        onClick = {
+                            when (key) {
+                                "CLR" -> onClearAll()
+                                "OK" -> onConfirm()
+                                else -> onDigitClick(key)
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = when (key) {
+                            "OK" -> EmeraldShield.copy(alpha = 0.22f)
+                            "CLR" -> IndigoAccent.copy(alpha = 0.18f)
+                            else -> ObsidianCard
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            when (key) {
+                                "OK" -> EmeraldShield
+                                "CLR" -> IndigoAccent
+                                else -> ObsidianBorder
+                            }
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("keypad_btn_${key.lowercase()}")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = when (key) {
+                                    "CLR" -> tr("CLEAR", "پاک")
+                                    "OK" -> tr("OK", "تایید")
+                                    else -> key
+                                },
+                                style = if (isAction) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleMedium,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Black,
+                                color = when (key) {
+                                    "OK" -> EmeraldShield
+                                    "CLR" -> IndigoAccent
+                                    else -> ObsidianTextPrimary
+                                },
+                                fontSize = if (isAction) 11.sp else 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen solid black curtain rendered when the app enters background / Recents
+ * so no external screen-reader or AI agent can inspect the preview frame.
+ */
+@Composable
+fun BlackoutPrivacyCurtain() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .testTag("anti_agent_blackout_curtain"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Default.VisibilityOff,
+                contentDescription = "Black Screen Privacy Active",
+                tint = Color(0xFF1E293B),
+                modifier = Modifier.size(48.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "X BLOCKER • BLACKOUT PRIVACY SHIELD",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                color = Color(0xFF1E293B)
+            )
+        }
+    }
+}
+
+/**
+ * Dashboard Card for Biometric Lodge & Simplified Anti-Agent Black Screen Shield (FLAG_SECURE).
+ */
 @Composable
 fun BiometricAndPrivacyDashboardSection(
     preferences: ShieldPreferences,
     isBiometricLockEnabled: Boolean,
     isBlackoutPrivacyShieldEnabled: Boolean,
-    screenshotTempUnlockUntil: Long,
     onToggleBiometricLock: (Boolean) -> Unit,
     onLockAppNow: () -> Unit,
     onToggleBlackoutShield: (Boolean) -> Unit,
-    onAllowScreenshot60s: () -> Unit
+    modifier: Modifier = Modifier
 ) {
     var showChangePinDialog by remember { mutableStateOf(false) }
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    LaunchedEffect(screenshotTempUnlockUntil) {
-        while (screenshotTempUnlockUntil > System.currentTimeMillis()) {
-            nowMs = System.currentTimeMillis()
-            delay(1000L)
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. Simplified Anti-Agent Screenshot Block (Single ON/OFF Button + Clear Explanation)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("blackout_privacy_shield_card"),
+            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(
+                1.dp,
+                if (isBlackoutPrivacyShieldEnabled) EmeraldShield.copy(alpha = 0.5f) else ObsidianBorder
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isBlackoutPrivacyShieldEnabled) EmeraldShield.copy(alpha = 0.18f)
+                                else ObsidianCard
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = if (isBlackoutPrivacyShieldEnabled) EmeraldShield else ObsidianTextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = tr("Anti-Agent & Screenshot Blocker", "ضد اسکرین‌شات و مخفی‌ساز صفحه"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = tr(
+                                "Turn ON so AI agents, screen recorders, and screenshots only see a black screen (FLAG_SECURE). Turn OFF to allow normal screen viewing and screenshots.",
+                                "با روشن کردن این گزینه، هوش مصنوعی، ضبط‌کننده‌های صفحه و اسکرین‌شات فقط یک صفحه سیاه می‌بینند. برای مشاهده عادی و گرفتن اسکرین‌شات آن را خاموش بگذارید."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = isBlackoutPrivacyShieldEnabled,
+                    onCheckedChange = onToggleBlackoutShield,
+                    modifier = Modifier.testTag("blackout_privacy_shield_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = EmeraldShield
+                    )
+                )
+            }
         }
-        nowMs = System.currentTimeMillis()
-    }
 
-    val isTempScreenshotWindowOpen = screenshotTempUnlockUntil > nowMs
-    val remainingScreenshotSec = ((screenshotTempUnlockUntil - nowMs) / 1000L).coerceAtLeast(0L)
-    val isFlagSecureActive = isBlackoutPrivacyShieldEnabled && !isTempScreenshotWindowOpen
-
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Card 1: Biometric Lodge (App & Settings Lock)
+        // 2. Biometric Lodge (App Access Gate) Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -408,10 +490,15 @@ fun BiometricAndPrivacyDashboardSection(
             shape = RoundedCornerShape(18.dp),
             border = BorderStroke(
                 1.dp,
-                if (isBiometricLockEnabled) EmeraldShield.copy(alpha = 0.5f) else ObsidianBorder
+                if (isBiometricLockEnabled) CyanTelemetry.copy(alpha = 0.5f) else ObsidianBorder
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -419,55 +506,37 @@ fun BiometricAndPrivacyDashboardSection(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (isBiometricLockEnabled) EmeraldShield.copy(alpha = 0.2f)
-                                    else IndigoAccent.copy(alpha = 0.18f)
-                                ),
+                                .background(CyanTelemetry.copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Fingerprint,
-                                contentDescription = "Biometric Lodge",
-                                tint = if (isBiometricLockEnabled) EmeraldShield else IndigoAccent,
+                                contentDescription = null,
+                                tint = CyanTelemetry,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
-
                         Spacer(modifier = Modifier.width(12.dp))
-
                         Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Biometric Lodge",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isBiometricLockEnabled) EmeraldShield.copy(alpha = 0.18f)
-                                    else ObsidianCard
-                                ) {
-                                    Text(
-                                        text = if (isBiometricLockEnabled) "PROTECTED" else "OFF",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        color = if (isBiometricLockEnabled) EmeraldShield else ObsidianTextSecondary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
                             Text(
-                                text = "Require Fingerprint / Face or Shield PIN to enter app & edit limits",
+                                text = tr("Biometric Lock Gate", "قفل بیومتریک برنامه"),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = ObsidianTextPrimary
+                            )
+                            Text(
+                                text = tr(
+                                    "Require Fingerprint / Biometrics or PIN to open X Blocker",
+                                    "نیاز به اثر انگشت یا رمز پین برای ورود به ایکس بلاکر"
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ObsidianTextSecondary
                             )
@@ -477,15 +546,13 @@ fun BiometricAndPrivacyDashboardSection(
                     Switch(
                         checked = isBiometricLockEnabled,
                         onCheckedChange = onToggleBiometricLock,
-                        modifier = Modifier.testTag("biometric_lock_switch"),
+                        modifier = Modifier.testTag("biometric_lodge_switch"),
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.Black,
-                            checkedTrackColor = EmeraldShield
+                            checkedTrackColor = CyanTelemetry
                         )
                     )
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -493,11 +560,11 @@ fun BiometricAndPrivacyDashboardSection(
                 ) {
                     OutlinedButton(
                         onClick = { showChangePinDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, ObsidianBorder),
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("configure_biometric_pin_button"),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, ObsidianBorder)
+                            .testTag("biometric_change_pin_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Key,
@@ -507,182 +574,33 @@ fun BiometricAndPrivacyDashboardSection(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Set PIN (${preferences.getSecurityPinCode().map { '*' }.joinToString("")})",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                            maxLines = 1
+                            text = tr("Set PIN (${preferences.getSecurityPinCode()})", "تنظیم پین (${preferences.getSecurityPinCode()})"),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = ObsidianTextPrimary
                         )
                     }
 
-                    OutlinedButton(
+                    Button(
                         onClick = onLockAppNow,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = IndigoAccent,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("lock_app_now_button"),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.5f))
+                            .testTag("biometric_lock_now_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Lock,
                             contentDescription = null,
-                            tint = EmeraldShield,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Lock Lodge Now",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldShield,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-        }
-
-        // Card 2: Anti-Agent Blackout Shield (FLAG_SECURE) & Personal Screenshot Control
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("blackout_privacy_shield_card"),
-            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(
-                1.dp,
-                if (isFlagSecureActive) CyanTelemetry.copy(alpha = 0.5f) else AmberWarning.copy(alpha = 0.6f)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (isFlagSecureActive) CyanTelemetry.copy(alpha = 0.18f)
-                                    else AmberWarning.copy(alpha = 0.18f)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isFlagSecureActive) Icons.Default.VisibilityOff else Icons.Default.CameraAlt,
-                                contentDescription = "Anti-Agent Blackout Shield",
-                                tint = if (isFlagSecureActive) CyanTelemetry else AmberWarning,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Anti-Agent Black Screen Shield",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                            Text(
-                                text = if (isFlagSecureActive) {
-                                    "BLACKOUT ACTIVE (FLAG_SECURE): External agents, AI screen readers & recorders see a 100% BLACK SCREEN."
-                                } else if (isTempScreenshotWindowOpen) {
-                                    "Personal Screenshot Window Open (${remainingScreenshotSec}s left) — Auto-relocks to Blackout Shield."
-                                } else {
-                                    "Personal Screenshot Mode ON — Background curtain still blacks out Recent Apps."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isFlagSecureActive) ObsidianTextSecondary else AmberWarning
-                            )
-                        }
-                    }
-
-                    Switch(
-                        checked = isBlackoutPrivacyShieldEnabled,
-                        onCheckedChange = onToggleBlackoutShield,
-                        modifier = Modifier.testTag("blackout_privacy_shield_switch"),
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = CyanTelemetry
-                        )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Status & Personal Screenshot Action Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = ObsidianCard,
-                        border = BorderStroke(1.dp, ObsidianBorder),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = null,
-                                tint = if (isFlagSecureActive) EmeraldShield else AmberWarning,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isFlagSecureActive) {
-                                    "Agents see: PURE BLACK"
-                                } else {
-                                    "Screenshots: ALLOWED"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isFlagSecureActive) EmeraldShield else AmberWarning,
-                                maxLines = 1
-                            )
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = onAllowScreenshot60s,
-                        modifier = Modifier.testTag("allow_screenshot_60s_button"),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            if (isTempScreenshotWindowOpen) AmberWarning else CyanTelemetry.copy(alpha = 0.5f)
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CameraAlt,
-                            contentDescription = null,
-                            tint = if (isTempScreenshotWindowOpen) AmberWarning else CyanTelemetry,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isTempScreenshotWindowOpen) {
-                                "Screenshot (${remainingScreenshotSec}s)"
-                            } else {
-                                "Take Screenshot (60s)"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1
+                            text = tr("Lock App Now", "قفل فوری برنامه"),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -691,113 +609,73 @@ fun BiometricAndPrivacyDashboardSection(
     }
 
     if (showChangePinDialog) {
-        ChangeSecurityPinDialog(
-            currentPin = preferences.getSecurityPinCode(),
-            onDismiss = { showChangePinDialog = false },
-            onSavePin = { newPin ->
-                preferences.setSecurityPinCode(newPin)
-                showChangePinDialog = false
+        var newPin by remember { mutableStateOf(preferences.getSecurityPinCode()) }
+        AlertDialog(
+            onDismissRequest = { showChangePinDialog = false },
+            containerColor = ObsidianSurface,
+            title = {
+                Text(
+                    text = tr("Update Biometric PIN", "تغییر رمز پین بیومتریک"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = ObsidianTextPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = tr("Use the keypad below to set a 4 to 6 digit Security PIN:", "یک رمز پین ۴ تا ۶ رقمی با صفحه کلید زیر تعیین کنید:"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ObsidianCard,
+                        border = BorderStroke(1.dp, CyanTelemetry),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = newPin.ifEmpty { "----" },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Black,
+                            color = CyanTelemetry,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                    CleanNumericKeypad(
+                        onDigitClick = { d ->
+                            if (newPin.length < 6) newPin += d
+                        },
+                        onClearAll = { newPin = "" },
+                        onConfirm = {
+                            if (newPin.length >= 4) {
+                                preferences.setSecurityPinCode(newPin)
+                                showChangePinDialog = false
+                            }
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPin.length >= 4) {
+                            preferences.setSecurityPinCode(newPin)
+                            showChangePinDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldShield)
+                ) {
+                    Text(tr("Save PIN", "ذخیره پین"), color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangePinDialog = false }) {
+                    Text(tr("Cancel", "انصراف"), color = ObsidianTextSecondary)
+                }
             }
         )
-    }
-}
-
-@Composable
-private fun ChangeSecurityPinDialog(
-    currentPin: String,
-    onDismiss: () -> Unit,
-    onSavePin: (String) -> Unit
-) {
-    var newPin by remember { mutableStateOf(currentPin) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = ObsidianSurface,
-        title = {
-            Text(
-                text = "Configure Biometric Lodge PIN",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Set a 4-digit security PIN used alongside Fingerprint/Face authentication to unlock ShieldBlock:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ObsidianTextSecondary
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = newPin,
-                    onValueChange = { input ->
-                        newPin = input.filter { it.isDigit() }.take(4)
-                    },
-                    label = { Text("4-Digit PIN Code") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("security_pin_input"),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = EmeraldShield,
-                        unfocusedBorderColor = ObsidianBorder,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    )
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (newPin.length == 4) {
-                        onSavePin(newPin)
-                    }
-                },
-                enabled = newPin.length == 4,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = EmeraldShield,
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier.testTag("save_security_pin_button")
-            ) {
-                Text("Save PIN", fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = ObsidianTextSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-fun BlackoutPrivacyCurtain() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .testTag("blackout_privacy_curtain"),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Shield,
-                contentDescription = "Privacy Blackout Shield",
-                tint = EmeraldShield.copy(alpha = 0.4f),
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "SHIELDBLOCK PRIVACY BLACKOUT",
-                style = MaterialTheme.typography.labelMedium,
-                fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                color = Color.White.copy(alpha = 0.4f)
-            )
-        }
     }
 }

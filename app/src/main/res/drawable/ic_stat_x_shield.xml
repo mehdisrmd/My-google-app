@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- Shield outline & body -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5L12,1zM12,3.18l7,3.12v4.7c0,4.54 -3.02,8.82 -7,10.02 -3.98,-1.2 -7,-5.48 -7,-10.02V6.3L12,3.18z" />
+    <!-- Bold X with Lock center emblem -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.17,7.76L7.76,9.17 10.59,12 7.76,14.83 9.17,16.24 12,13.41 14.83,16.24 16.24,14.83 13.41,12 16.24,9.17 14.83,7.76 12,10.59 9.17,7.76z" />
+</vector>

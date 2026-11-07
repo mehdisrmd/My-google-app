@@ -30,9 +30,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -87,6 +85,7 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.ui.focus.AddFocusSlotDialog
 import com.example.ui.focus.SmartFocusSlotsList
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
@@ -96,6 +95,7 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
+import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import com.example.util.AppPackageResolver
 import kotlinx.coroutines.delay
@@ -128,9 +128,11 @@ fun AppLimitsAndSectionsScreen(
     var showAddSectionDialog by remember { mutableStateOf(false) }
     var showAddFocusSlotDialog by remember { mutableStateOf(false) }
     var cooldownNoticeMessage by remember { mutableStateOf<String?>(null) }
+    var refreshNoticeMessage by remember { mutableStateOf<String?>(null) }
 
     val usageRefreshTick by preferences.usageRefreshTrigger.collectAsStateWithLifecycle()
     val isSmartFocusEnabled by preferences.isSmartFocusEnabled.collectAsStateWithLifecycle()
+    val isSectionExitOnlyMode by preferences.isSectionExitOnlyMode.collectAsStateWithLifecycle()
     var hasUsageStatsPerm by remember {
         mutableStateOf(ShieldPreferences.hasUsageStatsPermission(context))
     }
@@ -148,6 +150,7 @@ fun AppLimitsAndSectionsScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasUsageStatsPerm = ShieldPreferences.hasUsageStatsPermission(context)
                 nowMs = System.currentTimeMillis()
+                preferences.refreshLiveUsageStats()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -162,18 +165,47 @@ fun AppLimitsAndSectionsScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            Text(
-                text = "App Limits, Sections & Smart Focus",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-            Text(
-                text = "Enforce daily app limits (with 2h lock cooldown), block sections, or schedule Deep Work locks",
-                style = MaterialTheme.typography.bodySmall,
-                color = ObsidianTextSecondary,
-                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tr("App Limits, Sections & Smart Focus", "محدودیت برنامه‌ها، بخش‌ها و تمرکز هوشمند"),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = tr(
+                            "Daily app limits (2h cooldown), stop Instagram Reels / Telegram Search, or schedule Deep Work",
+                            "محدودیت روزانه (با قفل ۲ ساعته)، توقف ریلز اینستاگرام و جستجوی تلگرام، یا زمان‌بندی تمرکز"
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        nowMs = System.currentTimeMillis()
+                        preferences.refreshLiveUsageStats()
+                        refreshNoticeMessage = tr(
+                            "Usage counters & timers refreshed!",
+                            "آمار مصرف و تایمرها بروزرسانی شدند!"
+                        )
+                    },
+                    modifier = Modifier.testTag("refresh_all_limits_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Usage",
+                        tint = CyanTelemetry
+                    )
+                }
+            }
 
             TabRow(
                 selectedTabIndex = selectedTab,
@@ -186,9 +218,9 @@ fun AppLimitsAndSectionsScreen(
                     modifier = Modifier.testTag("limits_tab_apps"),
                     text = {
                         Text(
-                            text = "Limits (${appLimits.size})",
+                            text = tr("Limits (${appLimits.size})", "محدودیت (${appLimits.size})"),
                             fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 0) Color.White else ObsidianTextSecondary,
+                            color = if (selectedTab == 0) ObsidianTextPrimary else ObsidianTextSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -201,9 +233,9 @@ fun AppLimitsAndSectionsScreen(
                     modifier = Modifier.testTag("limits_tab_sections"),
                     text = {
                         Text(
-                            text = "Sections (${sectionRules.size})",
+                            text = tr("Sections (${sectionRules.size})", "بخش‌ها (${sectionRules.size})"),
                             fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 1) Color.White else ObsidianTextSecondary,
+                            color = if (selectedTab == 1) ObsidianTextPrimary else ObsidianTextSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -216,9 +248,9 @@ fun AppLimitsAndSectionsScreen(
                     modifier = Modifier.testTag("limits_tab_focus"),
                     text = {
                         Text(
-                            text = "Smart Focus (${focusSlots.size})",
+                            text = tr("Smart Focus (${focusSlots.size})", "تمرکز (${focusSlots.size})"),
                             fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 2) Color.White else ObsidianTextSecondary,
+                            color = if (selectedTab == 2) ObsidianTextPrimary else ObsidianTextSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -229,13 +261,44 @@ fun AppLimitsAndSectionsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            refreshNoticeMessage?.let { msg ->
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = EmeraldShield.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, EmeraldShield),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                        .testTag("refresh_notice_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldShield,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { refreshNoticeMessage = null }) {
+                            Text(tr("OK", "تایید"), color = EmeraldShield, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             cooldownNoticeMessage?.let { msg ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 10.dp)
                         .testTag("cooldown_warning_banner"),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF281912)),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, AmberWarning)
                 ) {
@@ -260,11 +323,11 @@ fun AppLimitsAndSectionsScreen(
                             Text(
                                 text = msg,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color.White
+                                color = ObsidianTextPrimary
                             )
                         }
                         TextButton(onClick = { cooldownNoticeMessage = null }) {
-                            Text("OK", color = AmberWarning, fontWeight = FontWeight.Bold)
+                            Text(tr("OK", "باشه"), color = AmberWarning, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -277,7 +340,7 @@ fun AppLimitsAndSectionsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF231718)),
+                            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.5f))
                         ) {
@@ -301,13 +364,16 @@ fun AppLimitsAndSectionsScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(
-                                            text = "Sync OS Screen Time (Optional)",
+                                            text = tr("Sync OS Screen Time (Optional)", "همگام‌سازی زمان مصرف سیستم (اختیاری)"),
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color.White
+                                            color = ObsidianTextPrimary
                                         )
                                         Text(
-                                            text = "Grant Usage Access for system-wide app usage detection alongside Accessibility tracking",
+                                            text = tr(
+                                                "Grant Usage Access for system-wide app usage detection alongside Accessibility tracking",
+                                                "اعطای دسترسی Usage Access برای تشخیص دقیق زمان استفاده از برنامه‌ها"
+                                            ),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = ObsidianTextSecondary
                                         )
@@ -319,7 +385,7 @@ fun AppLimitsAndSectionsScreen(
                                     colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Text("Grant", color = Color.Black, fontWeight = FontWeight.Bold)
+                                    Text(tr("Grant", "اعطا"), color = Color.Black, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -332,27 +398,41 @@ fun AppLimitsAndSectionsScreen(
                         nowMs = nowMs,
                         onToggle = { limit ->
                             if (limit.isEnabled && limit.isCooldownActive(nowMs)) {
-                                cooldownNoticeMessage =
-                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before disabling ${limit.appName}'s limit."
+                                cooldownNoticeMessage = tr(
+                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before disabling ${limit.appName}'s limit.",
+                                    "قفل ۲ ساعته فعال است: باید ${limit.formatRemainingCooldown(nowMs)} صبر کنید تا محدودیت ${limit.appName} را غیرفعال کنید."
+                                )
                             } else {
                                 onToggleAppLimit(limit)
                             }
                         },
                         onEditLimit = { limit ->
                             if (limit.isCooldownActive(nowMs)) {
-                                cooldownNoticeMessage =
-                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before changing ${limit.appName}'s timer."
+                                cooldownNoticeMessage = tr(
+                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before changing ${limit.appName}'s timer.",
+                                    "قفل ۲ ساعته فعال است: باید ${limit.formatRemainingCooldown(nowMs)} صبر کنید تا تایمر ${limit.appName} را تغییر دهید."
+                                )
                             } else {
                                 editingAppLimit = limit
                             }
                         },
                         onDelete = { limit ->
                             if (limit.isCooldownActive(nowMs)) {
-                                cooldownNoticeMessage =
-                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before removing ${limit.appName}'s limit."
+                                cooldownNoticeMessage = tr(
+                                    "2-Hour Cooldown Active: You must wait ${limit.formatRemainingCooldown(nowMs)} before removing ${limit.appName}'s limit.",
+                                    "قفل ۲ ساعته فعال است: باید ${limit.formatRemainingCooldown(nowMs)} صبر کنید تا محدودیت ${limit.appName} را حذف کنید."
+                                )
                             } else {
                                 onDeleteAppLimit(limit.packageName)
                             }
+                        },
+                        onRefreshUsage = { limit ->
+                            preferences.resetTodayAppUsage(limit.packageName, limit.appName)
+                            nowMs = System.currentTimeMillis()
+                            refreshNoticeMessage = tr(
+                                "${limit.appName} usage timer refreshed & reset to 0m 0s!",
+                                "تایمر مصرف ${limit.appName} بروزرسانی و صفر شد (0m 0s)!"
+                            )
                         },
                         onTriggerUsageLockdown = onTriggerUsageLockdown
                     )
@@ -361,11 +441,12 @@ fun AppLimitsAndSectionsScreen(
                 1 -> {
                     SectionRulesList(
                         sectionRules = sectionRules,
+                        isSectionExitOnlyMode = isSectionExitOnlyMode,
+                        onToggleSectionExitMode = { exitOnly ->
+                            preferences.setSectionExitOnlyMode(exitOnly)
+                        },
                         onToggle = onToggleSectionRule,
-                        onDelete = onDeleteSectionRule,
-                        onTestSectionBlock = { rule ->
-                            onTriggerUsageLockdown("Section Blocked: ${rule.sectionName}", preferences.getLockDurationMinutes())
-                        }
+                        onDelete = onDeleteSectionRule
                     )
                 }
 
@@ -469,6 +550,7 @@ fun AppLimitsList(
     onToggle: (AppUsageLimit) -> Unit,
     onEditLimit: (AppUsageLimit) -> Unit,
     onDelete: (AppUsageLimit) -> Unit,
+    onRefreshUsage: (AppUsageLimit) -> Unit,
     onTriggerUsageLockdown: (appName: String, limitMinutes: Int) -> Unit
 ) {
     val context = LocalContext.current
@@ -478,11 +560,41 @@ fun AppLimitsList(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "No app usage restrictions set yet. Tap + to add Chrome, Settings, Instagram, Telegram, or any installed app.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = ObsidianTextSecondary
-            )
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, ObsidianBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HourglassBottom,
+                        contentDescription = null,
+                        tint = CyanTelemetry,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Text(
+                        text = tr("No App Limits Added Yet", "هنوز هیچ محدودیتی برای برنامه‌ها اضافه نشده است"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = tr(
+                            "Tap the + button below to add Instagram, Telegram, YouTube, Chrome, or any installed app.",
+                            "روی دکمه + در پایین صفحه بزنید تا اینستاگرام، تلگرام، یوتیوب یا هر برنامه نصب‌شده را اضافه کنید."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary
+                    )
+                }
+            }
         }
     } else {
         LazyColumn(
@@ -491,7 +603,7 @@ fun AppLimitsList(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(appLimits, key = { it.packageName }) { limit ->
-                val usedSeconds = remember(usageRefreshTick, limit.packageName, limit.appName) {
+                val usedSeconds = remember(usageRefreshTick, nowMs, limit.packageName, limit.appName) {
                     preferences.getTodayAppUsageSeconds(limit.packageName, limit.appName)
                 }
                 val isInstalledOnDevice = remember(context, limit.packageName, limit.appName) {
@@ -510,7 +622,7 @@ fun AppLimitsList(
                         .fillMaxWidth()
                         .testTag("app_limit_card_${limit.packageName}"),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isLimitExceeded) Color(0xFF241416) else ObsidianSurface
+                        containerColor = ObsidianSurface
                     ),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(
@@ -536,14 +648,14 @@ fun AppLimitsList(
                                         .clip(RoundedCornerShape(10.dp))
                                         .background(
                                             if (isLimitExceeded) CrimsonPrimary.copy(alpha = 0.2f)
-                                            else Color(0xFF1E293B)
+                                            else ObsidianCard
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.HourglassBottom,
                                         contentDescription = null,
-                                        tint = if (isLimitExceeded) CrimsonPrimary else Color.White,
+                                        tint = if (isLimitExceeded) CrimsonPrimary else CyanTelemetry,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -559,7 +671,7 @@ fun AppLimitsList(
                                             text = limit.appName,
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color.White,
+                                            color = ObsidianTextPrimary,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -572,7 +684,7 @@ fun AppLimitsList(
                                             }
                                         ) {
                                             Text(
-                                                text = if (isInstalledOnDevice) "INSTALLED" else "PRE-BLOCK",
+                                                text = if (isInstalledOnDevice) tr("INSTALLED", "نصب‌شده") else tr("PRE-BLOCK", "پیش‌مسدود"),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontFamily = JetBrainsMonoFontFamily,
                                                 fontSize = 9.sp,
@@ -585,7 +697,10 @@ fun AppLimitsList(
                                         }
                                     }
                                     Text(
-                                        text = "Limit: ${limit.dailyLimitMinutes / 60}h ${limit.dailyLimitMinutes % 60}m/day • ${limit.packageName}",
+                                        text = tr(
+                                            "Limit: ${limit.dailyLimitMinutes / 60}h ${limit.dailyLimitMinutes % 60}m/day • ${limit.packageName}",
+                                            "محدودیت: ${limit.dailyLimitMinutes / 60} ساعت و ${limit.dailyLimitMinutes % 60} دقیقه • ${limit.packageName}"
+                                        ),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = ObsidianTextSecondary,
                                         maxLines = 1,
@@ -663,9 +778,15 @@ fun AppLimitsList(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = if (isOnCooldown) {
-                                            "Timer Locked (2h Cooldown): Wait $cooldownLabel to change"
+                                            tr(
+                                                "Timer Locked (2h Cooldown): Wait $cooldownLabel to change",
+                                                "تایمر قفل است (قفل ۲ ساعته): $cooldownLabel صبر کنید"
+                                            )
                                         } else {
-                                            "Timer Unlocked: Editable (Locks for 2h after change)"
+                                            tr(
+                                                "Timer Unlocked: Editable (Locks for 2h after change)",
+                                                "تایمر باز است: قابل ویرایش (پس از تغییر ۲ ساعت قفل می‌شود)"
+                                            )
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         fontFamily = JetBrainsMonoFontFamily,
@@ -684,12 +805,15 @@ fun AppLimitsList(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Today's used: ${usedMinutes}m ${usedSeconds % 60}s / ${limit.dailyLimitMinutes}m",
+                                text = tr(
+                                    "Today's used: ${usedMinutes}m ${usedSeconds % 60}s / ${limit.dailyLimitMinutes}m",
+                                    "مصرف امروز: ${usedMinutes}m ${usedSeconds % 60}s از ${limit.dailyLimitMinutes}m"
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (isLimitExceeded) CrimsonPrimary else ObsidianTextSecondary
                             )
                             Text(
-                                text = if (isLimitExceeded) "TIME LIMIT EXCEEDED — LOCKED" else "${(progress * 100).toInt()}%",
+                                text = if (isLimitExceeded) tr("TIME LIMIT EXCEEDED — LOCKED", "پایان زمان — قفل شد") else "${(progress * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isLimitExceeded) CrimsonPrimary else EmeraldShield
@@ -710,66 +834,33 @@ fun AppLimitsList(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // Interactive Verification & Live Enforcement Controls
+                        // Action Controls: Refresh / Reset Usage Button (Always Enabled & Working) + Open App
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             OutlinedButton(
-                                onClick = {
-                                    preferences.addAppUsageMinutes(limit.packageName, 30)
-                                    val updatedMinutes = preferences.getTodayAppUsageMinutes(limit.packageName, limit.appName)
-                                    if (updatedMinutes >= limit.dailyLimitMinutes && limit.isEnabled) {
-                                        onTriggerUsageLockdown(limit.appName, limit.dailyLimitMinutes)
-                                    }
-                                },
+                                onClick = { onRefreshUsage(limit) },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .testTag("simulate_usage_${limit.packageName}"),
+                                    .testTag("reset_usage_${limit.packageName}"),
                                 shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                border = BorderStroke(1.dp, ObsidianBorder)
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.6f))
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = null,
-                                    tint = AmberWarning,
-                                    modifier = Modifier.size(14.dp)
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Usage",
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "+30m Test",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    onTriggerUsageLockdown(limit.appName, limit.dailyLimitMinutes)
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("test_block_now_${limit.packageName}"),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.55f))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Security,
-                                    contentDescription = null,
-                                    tint = CrimsonPrimary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Test Lock",
+                                    text = tr("Refresh / Reset Timer", "بروزرسانی / صفر کردن تایمر"),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = ObsidianTextPrimary,
                                     maxLines = 1,
                                     softWrap = false
                                 )
@@ -790,7 +881,7 @@ fun AppLimitsList(
                                         .weight(1f)
                                         .testTag("open_limited_app_${limit.packageName}"),
                                     shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                     border = BorderStroke(1.dp, CyanTelemetry.copy(alpha = 0.5f))
                                 ) {
                                     Icon(
@@ -801,29 +892,11 @@ fun AppLimitsList(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Open App",
+                                        text = tr("Open App", "باز کردن برنامه"),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = CyanTelemetry,
                                         maxLines = 1,
                                         softWrap = false
-                                    )
-                                }
-                            }
-
-                            if (usedSeconds > 0 && !isOnCooldown) {
-                                IconButton(
-                                    onClick = {
-                                        preferences.resetTodayAppUsage(limit.packageName, limit.appName)
-                                    },
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .testTag("reset_usage_${limit.packageName}")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "Reset Usage",
-                                        tint = ObsidianTextSecondary,
-                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
@@ -838,15 +911,66 @@ fun AppLimitsList(
 @Composable
 fun SectionRulesList(
     sectionRules: List<SectionBlockRule>,
+    isSectionExitOnlyMode: Boolean = true,
+    onToggleSectionExitMode: (Boolean) -> Unit = {},
     onToggle: (SectionBlockRule) -> Unit,
-    onDelete: (Long) -> Unit,
-    onTestSectionBlock: (SectionBlockRule) -> Unit = {}
+    onDelete: (Long) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("section_exit_mode_card"),
+                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
+                        Text(
+                            text = tr("Stop Section Only (Do Not Block Whole App)", "توقف فقط همان بخش (بدون بستن کل برنامه)"),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = tr(
+                                "When ON, entering Instagram Reels or Telegram Search Box immediately backs out of that section while letting you use the rest of Instagram or Telegram normally.",
+                                "وقتی روشن باشد، فقط هنگام ورود به ریلز اینستاگرام یا باکس جستجوی تلگرام از آن بخش خارج می‌شود و کل برنامه را مسدود نمی‌کند."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+
+                    Switch(
+                        checked = isSectionExitOnlyMode,
+                        onCheckedChange = onToggleSectionExitMode,
+                        modifier = Modifier.testTag("section_exit_only_mode_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = EmeraldShield
+                        )
+                    )
+                }
+            }
+        }
+
         items(sectionRules, key = { it.id }) { rule ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -889,7 +1013,7 @@ fun SectionRulesList(
                                     text = rule.sectionName,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (rule.isEnabled) Color.White else ObsidianTextSecondary
+                                    color = if (rule.isEnabled) ObsidianTextPrimary else ObsidianTextSecondary
                                 )
                                 Text(
                                     text = "Package: ${rule.targetPackage}",
@@ -897,7 +1021,10 @@ fun SectionRulesList(
                                     color = ObsidianTextSecondary
                                 )
                                 Text(
-                                    text = "Detects: \"${rule.triggerPattern}\"",
+                                    text = tr(
+                                        "Stops only this section when opened • Pattern: \"${rule.triggerPattern}\"",
+                                        "فقط همین بخش را متوقف می‌کند • الگو: \"${rule.triggerPattern}\""
+                                    ),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = AmberWarning
                                 )
@@ -923,33 +1050,6 @@ fun SectionRulesList(
                                 )
                             )
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedButton(
-                        onClick = { onTestSectionBlock(rule) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("test_section_rule_${rule.id}"),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        border = BorderStroke(1.dp, ObsidianBorder)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Test \"${rule.sectionName}\" Lockdown",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
@@ -981,7 +1081,7 @@ fun AddAppLimitDialog(
             if (firstInstalled != null) {
                 Pair(firstInstalled.appName, firstInstalled.packageName)
             } else {
-                Pair("TikTok", "com.zhiliaoapp.musically")
+                Pair("Instagram", "com.instagram.android")
             }
         }
     }
@@ -1019,10 +1119,10 @@ fun AddAppLimitDialog(
         containerColor = ObsidianSurface,
         title = {
             Text(
-                text = if (initialLimit != null) "Edit App Time Limit" else "Add App to Daily Limitations",
+                text = if (initialLimit != null) tr("Edit App Time Limit", "ویرایش محدودیت زمانی برنامه") else tr("Add App to Daily Limitations", "افزودن برنامه به محدودیت روزانه"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = ObsidianTextPrimary
             )
         },
         text = {
@@ -1049,7 +1149,10 @@ fun AddAppLimitDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Strict 2-Hour Rule: Once saved, you must wait 2 hours before changing or disabling this app's timer.",
+                            text = tr(
+                                "Strict 2-Hour Rule: Once saved, you must wait 2 hours before changing or disabling this app's timer.",
+                                "قانون قفل ۲ ساعته: پس از ذخیره، باید حداقل ۲ ساعت صبر کنید تا بتوانید تایمر این برنامه را تغییر دهید."
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = AmberWarning
                         )
@@ -1059,7 +1162,6 @@ fun AddAppLimitDialog(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 if (initialLimit == null) {
-                    // Selected App Summary Banner
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = ObsidianCard,
@@ -1068,10 +1170,10 @@ fun AddAppLimitDialog(
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                             Text(
-                                text = "Selected: ${selectedAppName.ifBlank { "None" }}",
+                                text = tr("Selected: ${selectedAppName.ifBlank { "None" }}", "انتخاب شده: ${selectedAppName.ifBlank { "هیچکدام" }}"),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = ObsidianTextPrimary
                             )
                             Text(
                                 text = "Package: ${selectedPackage.ifBlank { "Auto-resolved on save" }}",
@@ -1087,7 +1189,7 @@ fun AddAppLimitDialog(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        label = { Text("Search installed or popular apps...") },
+                        label = { Text(tr("Search installed or popular apps...", "جستجوی برنامه‌های نصب‌شده یا محبوب...")) },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1096,8 +1198,8 @@ fun AddAppLimitDialog(
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = CyanTelemetry,
                             unfocusedBorderColor = ObsidianBorder,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
+                            focusedTextColor = ObsidianTextPrimary,
+                            unfocusedTextColor = ObsidianTextPrimary
                         )
                     )
 
@@ -1105,7 +1207,7 @@ fun AddAppLimitDialog(
 
                     if (filteredInstalledApps.isNotEmpty()) {
                         Text(
-                            text = "Installed on This Device (${filteredInstalledApps.size}):",
+                            text = tr("Installed on This Device (${filteredInstalledApps.size}):", "نصب‌شده روی این دستگاه (${filteredInstalledApps.size}):"),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = EmeraldShield
@@ -1147,7 +1249,7 @@ fun AddAppLimitDialog(
                                         Text(
                                             text = appInfo.appName,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.9f)
+                                            color = if (isSelected) Color.White else ObsidianTextPrimary
                                         )
                                     }
                                 }
@@ -1158,7 +1260,7 @@ fun AddAppLimitDialog(
                     }
 
                     Text(
-                        text = "Popular Social & Media Presets (Multi-Client):",
+                        text = tr("Popular Social & Media Presets:", "برنامه‌های محبوب:"),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = ObsidianTextSecondary
@@ -1209,10 +1311,10 @@ fun AddAppLimitDialog(
                             modifier = Modifier.testTag("custom_app_toggle_chip")
                         ) {
                             Text(
-                                text = "+ Custom App",
+                                text = tr("+ Custom App", "+ برنامه دلخواه"),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                color = if (showCustomInput) Color.White else ObsidianTextPrimary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                             )
                         }
@@ -1231,30 +1333,30 @@ fun AddAppLimitDialog(
                                     installedApps = installedApps
                                 )
                             },
-                            label = { Text("App Name (e.g. Discord, Chrome, Settings)") },
+                            label = { Text(tr("App Name (e.g. Discord, Chrome)", "نام برنامه")) },
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("custom_app_name_input"),
                             shape = RoundedCornerShape(10.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
+                                focusedTextColor = ObsidianTextPrimary,
+                                unfocusedTextColor = ObsidianTextPrimary
                             )
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = selectedPackage,
                             onValueChange = { selectedPackage = it },
-                            label = { Text("Package Name (auto-filled or custom)") },
+                            label = { Text(tr("Package Name (auto-filled or custom)", "نام پکیج")) },
                             singleLine = true,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("custom_app_package_input"),
                             shape = RoundedCornerShape(10.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
+                                focusedTextColor = ObsidianTextPrimary,
+                                unfocusedTextColor = ObsidianTextPrimary
                             )
                         )
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1264,17 +1366,20 @@ fun AddAppLimitDialog(
                         text = "App: ${initialLimit.appName} (${initialLimit.packageName})",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = ObsidianTextPrimary
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
 
                 val totalMinutes = (limitHours * 60).roundToInt().coerceAtLeast(15)
                 Text(
-                    text = "Daily Limit: ${totalMinutes / 60}h ${totalMinutes % 60}m ($totalMinutes mins)",
+                    text = tr(
+                        "Daily Limit: ${totalMinutes / 60}h ${totalMinutes % 60}m ($totalMinutes mins)",
+                        "محدودیت روزانه: ${totalMinutes / 60} ساعت و ${totalMinutes % 60} دقیقه"
+                    ),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = ObsidianTextPrimary
                 )
 
                 Slider(
@@ -1302,7 +1407,10 @@ fun AddAppLimitDialog(
                     val existing = existingLimits.find { it.packageName == cleanPkg }
                     if (existing != null && existing.isCooldownActive(nowMs)) {
                         onCooldownBlocked(
-                            "2-Hour Cooldown Active: Wait ${existing.formatRemainingCooldown(nowMs)} before modifying ${existing.appName}'s limit."
+                            tr(
+                                "2-Hour Cooldown Active: Wait ${existing.formatRemainingCooldown(nowMs)} before modifying ${existing.appName}'s limit.",
+                                "قفل ۲ ساعته فعال است: ${existing.formatRemainingCooldown(nowMs)} صبر کنید."
+                            )
                         )
                     } else {
                         val totalMinutes = (limitHours * 60).roundToInt().coerceAtLeast(15)
@@ -1320,12 +1428,12 @@ fun AddAppLimitDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
                 modifier = Modifier.testTag("save_app_limit_button")
             ) {
-                Text("Lock Limit (2h Cooldown)", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(tr("Lock Limit (2h Cooldown)", "ذخیره محدودیت (قفل ۲ ساعته)"), color = Color.White, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = ObsidianTextSecondary)
+                Text(tr("Cancel", "انصراف"), color = ObsidianTextSecondary)
             }
         }
     )
@@ -1345,10 +1453,10 @@ fun AddSectionRuleDialog(
         containerColor = ObsidianSurface,
         title = {
             Text(
-                text = "Add Section Blocker Rule",
+                text = tr("Add Section Blocker Rule", "افزودن قانون مسدودسازی بخش"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = ObsidianTextPrimary
             )
         },
         text = {
@@ -1358,7 +1466,10 @@ fun AddSectionRuleDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    text = "Block specific tabs or sections inside apps (e.g. Reels in Instagram or Search in Telegram):",
+                    text = tr(
+                        "Stop specific tabs or sections inside apps (e.g. Reels in Instagram or Search Box in Telegram):",
+                        "توقف بخش‌های خاص داخل برنامه‌ها (مثل ریلز اینستاگرام یا باکس جستجوی تلگرام):"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
@@ -1368,12 +1479,12 @@ fun AddSectionRuleDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Section Name (e.g. Instagram Reels)") },
+                    label = { Text(tr("Section Name (e.g. Instagram Reels)", "نام بخش")) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedTextColor = ObsidianTextPrimary,
+                        unfocusedTextColor = ObsidianTextPrimary
                     )
                 )
 
@@ -1382,13 +1493,13 @@ fun AddSectionRuleDialog(
                 OutlinedTextField(
                     value = pkg,
                     onValueChange = { pkg = it },
-                    label = { Text("App Package Name") },
+                    label = { Text(tr("App Package Name", "نام پکیج برنامه")) },
                     placeholder = { Text("e.g. org.telegram.messenger") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedTextColor = ObsidianTextPrimary,
+                        unfocusedTextColor = ObsidianTextPrimary
                     )
                 )
 
@@ -1397,13 +1508,13 @@ fun AddSectionRuleDialog(
                 OutlinedTextField(
                     value = pattern,
                     onValueChange = { pattern = it },
-                    label = { Text("Trigger text or section keyword") },
+                    label = { Text(tr("Trigger text or section keyword", "کلمه کلیدی یا شناسه بخش")) },
                     placeholder = { Text("e.g. reels or search") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedTextColor = ObsidianTextPrimary,
+                        unfocusedTextColor = ObsidianTextPrimary
                     )
                 )
             }
@@ -1424,12 +1535,12 @@ fun AddSectionRuleDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary)
             ) {
-                Text("Add Section", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(tr("Add Section", "افزودن بخش"), color = Color.White, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = ObsidianTextSecondary)
+                Text(tr("Cancel", "انصراف"), color = ObsidianTextSecondary)
             }
         }
     )

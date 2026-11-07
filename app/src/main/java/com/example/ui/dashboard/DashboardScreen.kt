@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,8 +38,11 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -80,9 +84,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockIncident
 import com.example.data.model.FocusScheduleSlot
+import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.security.BiometricAndPrivacyDashboardSection
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonDark
@@ -93,8 +99,8 @@ import com.example.ui.theme.IndigoAccent
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
-import com.example.ui.theme.ObsidianElevated
 import com.example.ui.theme.ObsidianSurface
+import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import kotlin.math.roundToInt
 
@@ -113,16 +119,18 @@ fun DashboardScreen(
     totalKeywordsCount: Int,
     incidents: List<BlockIncident> = emptyList(),
     appLimits: List<AppUsageLimit> = emptyList(),
+    sectionRules: List<SectionBlockRule> = emptyList(),
     focusSlots: List<FocusScheduleSlot> = emptyList(),
     isSmartFocusEnabled: Boolean = true,
     isBiometricLockEnabled: Boolean = false,
-    isBlackoutPrivacyShieldEnabled: Boolean = true,
-    screenshotTempUnlockUntil: Long = 0L,
+    isBlackoutPrivacyShieldEnabled: Boolean = false,
     preferences: ShieldPreferences? = null,
     usageRefreshTrigger: Long = 0L,
     onToggleProtection: (Boolean) -> Unit,
     onChangeDuration: (Int) -> Unit,
     onToggleStrictMode: (Boolean) -> Unit,
+    onToggleSectionRule: (SectionBlockRule) -> Unit = {},
+    onAddSectionRule: (SectionBlockRule) -> Unit = {},
     onToggleSmartFocusMaster: (Boolean) -> Unit = {},
     onToggleFocusSlot: (FocusScheduleSlot) -> Unit = {},
     onAddFocusSlot: (FocusScheduleSlot) -> Unit = {},
@@ -130,7 +138,6 @@ fun DashboardScreen(
     onToggleBiometricLock: (Boolean) -> Unit = {},
     onLockAppNow: () -> Unit = {},
     onToggleBlackoutShield: (Boolean) -> Unit = {},
-    onAllowScreenshot60s: () -> Unit = {},
     onOpenTestSandbox: () -> Unit,
     onOpenPanicMode: () -> Unit = {},
     onResetAppFromScratch: () -> Unit = {},
@@ -166,7 +173,6 @@ fun DashboardScreen(
         }
     }
 
-    // Refresh permissions automatically whenever user returns from system Settings
     val checkPermissions = {
         isAccessibilityEnabled = ShieldPreferences.isAccessibilityServiceEnabled(context)
         hasOverlayPermission = ShieldPreferences.hasOverlayPermission(context)
@@ -193,12 +199,12 @@ fun DashboardScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // App Title & Master Shield Switch (Aurora Glass Hero)
+        // App Title & Master Shield Switch (X Blocker Hero)
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
             shape = RoundedCornerShape(24.dp),
-            border = androidx.compose.foundation.BorderStroke(
+            border = BorderStroke(
                 1.5.dp,
                 if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.45f) else CrimsonPrimary.copy(alpha = 0.55f)
             )
@@ -257,10 +263,10 @@ fun DashboardScreen(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "ShieldBlock",
+                                    text = tr("X Blocker", "ایکس بلاکر"),
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Black,
-                                    color = Color.White
+                                    color = ObsidianTextPrimary
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
@@ -269,7 +275,7 @@ fun DashboardScreen(
                                     else CrimsonPrimary.copy(alpha = 0.2f)
                                 ) {
                                     Text(
-                                        text = if (isProtectionEnabled) "AEGIS ON" else "PAUSED",
+                                        text = if (isProtectionEnabled) tr("ACTIVE", "فعال") else tr("PAUSED", "متوقف"),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Bold,
@@ -280,7 +286,11 @@ fun DashboardScreen(
                             }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (isProtectionEnabled) "Real-time AI & Accessibility Guard Active" else "Protection Paused — Tap to Resume",
+                                text = if (isProtectionEnabled) {
+                                    tr("Real-time Content & Section Guard Active", "محافظ هوشمند محتوا و بخش‌ها فعال است")
+                                } else {
+                                    tr("Protection Paused — Tap to Resume", "محافظت متوقف است — برای فعال‌سازی ضربه بزنید")
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                                 color = ObsidianTextSecondary
@@ -317,7 +327,7 @@ fun DashboardScreen(
                 .testTag("dashboard_panic_mode_card"),
             colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
             shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.85f))
+            border = BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.85f))
         ) {
             Box(
                 modifier = Modifier
@@ -365,15 +375,15 @@ fun DashboardScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Emergency Panic Mode (SOS)",
+                                    text = tr("Emergency Panic Mode (SOS)", "حالت اضطراری پنیک (SOS)"),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = ObsidianTextPrimary
                                 )
                                 Text(
-                                    text = "Instant self-lockdown & 4-7-8 urge relief",
+                                    text = tr("Instant self-lockdown & 4-7-8 urge relief", "قفل فوری خودکار و تمرین تنفس ضد وسوسه"),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFFFB3C6)
+                                    color = CrimsonPrimary
                                 )
                             }
                         }
@@ -388,7 +398,7 @@ fun DashboardScreen(
                             modifier = Modifier.testTag("dashboard_panic_button")
                         ) {
                             Text(
-                                text = "PANIC",
+                                text = tr("PANIC", "پنیک"),
                                 fontWeight = FontWeight.Black,
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
@@ -398,13 +408,30 @@ fun DashboardScreen(
                     }
 
                     // Always-On Notification Bar SOS Indicator
+                    var notificationFeedbackBanner by remember { mutableStateOf<String?>(null) }
                     Surface(
                         onClick = {
-                            com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                val posted = com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
+                                notificationFeedbackBanner = if (posted) {
+                                    tr(
+                                        "Emergency Panic SOS notification is pinned & active in your Notification Bar!",
+                                        "اعلان اضطراری پنیک در نوار اعلان گوشی شما فعال و سنجاق شد!"
+                                    )
+                                } else {
+                                    tr(
+                                        "Enable Notification permission below so the Panic SOS bar can appear.",
+                                        "لطفاً دسترسی اعلان (Notifications) را فعال کنید."
+                                    )
+                                }
+                            }
                         },
                         shape = RoundedCornerShape(10.dp),
                         color = ObsidianCard.copy(alpha = 0.85f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+                        border = BorderStroke(1.dp, if (hasNotificationPermission) EmeraldShield.copy(alpha = 0.5f) else AmberWarning),
+                        modifier = Modifier.testTag("dashboard_pin_notification_bar_button")
                     ) {
                         Row(
                             modifier = Modifier
@@ -422,27 +449,40 @@ fun DashboardScreen(
                                 Icon(
                                     imageVector = Icons.Default.NotificationsActive,
                                     contentDescription = null,
-                                    tint = EmeraldShield,
+                                    tint = if (hasNotificationPermission) EmeraldShield else AmberWarning,
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Panic SOS button pinned in Notification Bar",
+                                    text = if (hasNotificationPermission) {
+                                        tr("Panic SOS button pinned in Notification Bar (Tap to sync)", "دکمه اضطراری در نوار اعلان فعال است (برای بروزرسانی ضربه بزنید)")
+                                    } else {
+                                        tr("Tap here to allow Panic SOS Notification Bar", "برای فعال‌سازی دکمه پنیک در نوار اعلان اینجا بزنید")
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = ObsidianTextSecondary
                                 )
                             }
                             Text(
-                                text = "ALWAYS ON",
+                                text = if (hasNotificationPermission) tr("ALWAYS ON", "همیشه فعال") else tr("ALLOW", "فعال‌سازی"),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                color = EmeraldShield,
+                                color = if (hasNotificationPermission) EmeraldShield else AmberWarning,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 softWrap = false
                             )
                         }
+                    }
+
+                    notificationFeedbackBanner?.let { msg ->
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldShield
+                        )
                     }
                 }
             }
@@ -454,29 +494,39 @@ fun DashboardScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             StatCard(
-                title = "CLEAN STREAK",
+                title = tr("CLEAN STREAK", "روزهای پاک"),
                 value = "${streakDays}d",
-                subtitle = "Self-mastery",
+                subtitle = tr("Don't break chain", "زنجیره را نشکن"),
                 accentColor = EmeraldShield,
                 modifier = Modifier.weight(1f)
             )
             StatCard(
-                title = "BLOCKS",
+                title = tr("BLOCKS", "مسدودسازی"),
                 value = "$incidentCount",
-                subtitle = "Triggers stopped",
+                subtitle = tr("Triggers stopped", "موارد متوقف‌شده"),
                 accentColor = CrimsonPrimary,
                 modifier = Modifier.weight(1f)
             )
             StatCard(
-                title = "ACTIVE RULES",
+                title = tr("ACTIVE RULES", "قوانین فعال"),
                 value = "$totalKeywordsCount",
-                subtitle = "EN + FA shield",
+                subtitle = tr("EN + FA shield", "محافظ فارسی/انگلیسی"),
                 accentColor = CyanTelemetry,
                 modifier = Modifier.weight(1f)
             )
         }
 
-        // 7-Day Weekly Activity Status Bento Card
+        // Motivational "Don't Break the Chain" & Famous Quotes Banner
+        com.example.ui.components.MotivationalQuoteBannerCard(streakDays = streakDays)
+
+        // MIDDLE MENU: Dedicated Instagram Reels & Telegram Search Box Section Blocker (Stop Section Only!)
+        MiddleSectionBlockerCard(
+            sectionRules = sectionRules,
+            onToggleSectionRule = onToggleSectionRule,
+            onAddSectionRule = onAddSectionRule
+        )
+
+        // 7-Day Weekly Activity Status Bento Card (No predefined example apps)
         val effectivePrefs = remember(context, preferences) {
             preferences ?: ShieldPreferences(context)
         }
@@ -497,16 +547,14 @@ fun DashboardScreen(
             onStartFocusSessionNow = onStartFocusSessionNow
         )
 
-        // Biometric Lodge & Anti-Agent Black Screen Shield (FLAG_SECURE) Controls
+        // Biometric Lodge & Simplified Anti-Agent Screenshot Blocker (FLAG_SECURE)
         BiometricAndPrivacyDashboardSection(
             preferences = effectivePrefs,
             isBiometricLockEnabled = isBiometricLockEnabled,
             isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
-            screenshotTempUnlockUntil = screenshotTempUnlockUntil,
             onToggleBiometricLock = onToggleBiometricLock,
             onLockAppNow = onLockAppNow,
-            onToggleBlackoutShield = onToggleBlackoutShield,
-            onAllowScreenshot60s = onAllowScreenshot60s
+            onToggleBlackoutShield = onToggleBlackoutShield
         )
 
         // Permission Setup Warning Banner
@@ -558,7 +606,7 @@ fun DashboardScreen(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
             shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+            border = BorderStroke(1.dp, ObsidianBorder)
         ) {
             Row(
                 modifier = Modifier
@@ -590,13 +638,13 @@ fun DashboardScreen(
 
                     Column {
                         Text(
-                            text = "Strict Lock Mode",
+                            text = tr("Strict Lock Mode", "حالت قفل سخت‌گیرانه"),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = ObsidianTextPrimary
                         )
                         Text(
-                            text = "Cannot bypass or dismiss until timer reaches 0",
+                            text = tr("Cannot bypass or dismiss until timer reaches 0", "عدم امکان دور زدن یا بستن قفل تا پایان زمان"),
                             style = MaterialTheme.typography.bodySmall,
                             color = ObsidianTextSecondary
                         )
@@ -621,158 +669,6 @@ fun DashboardScreen(
             }
         }
 
-        // Safe Simulator / Testing Arena Card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpenTestSandbox() }
-                .testTag("open_sandbox_card"),
-            colors = CardDefaults.cardColors(containerColor = ObsidianCard),
-            shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.5f))
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF6366F1).copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Color(0xFF818CF8),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column {
-                        Text(
-                            text = "Test Blocker / Simulator",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Test English/Persian keywords & Section Blockers safely",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ObsidianTextSecondary
-                        )
-                    }
-                }
-
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Open test",
-                    tint = Color(0xFF818CF8)
-                )
-            }
-        }
-
-        // Reset App & Test From Scratch Card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showResetFromScratchDialog = true }
-                .testTag("reset_app_from_scratch_button"),
-            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, CyanTelemetry.copy(alpha = 0.45f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(CyanTelemetry.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Reset App From Scratch",
-                                tint = CyanTelemetry,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column {
-                            Text(
-                                text = "Test App From Scratch (Reset All)",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Clear all timers, 2h cooldowns, usage logs, streaks & custom rules to start fresh",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ObsidianTextSecondary
-                            )
-                        }
-                    }
-
-                    Button(
-                        onClick = { showResetFromScratchDialog = true },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = CyanTelemetry,
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text(
-                            text = "Reset",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-
-                if (resetSuccessBannerVisible) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = EmeraldShield.copy(alpha = 0.16f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldShield),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("reset_from_scratch_success_banner")
-                    ) {
-                        Text(
-                            text = "Fresh Start Complete! All app limits, 2h cooldowns, Smart Focus slots, streaks, and logs have been reset.",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldShield,
-                            modifier = Modifier.padding(10.dp)
-                        )
-                    }
-                }
-            }
-        }
-
         // Informational Privacy Note
         Row(
             modifier = Modifier
@@ -788,58 +684,21 @@ fun DashboardScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "100% On-Device Protection. Your screen text is never transmitted or saved.",
+                text = tr(
+                    "100% On-Device Protection. Your screen text is never transmitted or saved.",
+                    "محافظت ۱۰۰٪ روی دستگاه شما. هیچ متنی از صفحه شما به بیرون ارسال یا ذخیره نمی‌شود."
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 color = ObsidianTextSecondary
             )
         }
     }
 
-    if (showResetFromScratchDialog) {
-        AlertDialog(
-            onDismissRequest = { showResetFromScratchDialog = false },
-            containerColor = ObsidianSurface,
-            title = {
-                Text(
-                    text = "Reset App & Start From Scratch?",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            },
-            text = {
-                Text(
-                    text = "This will wipe all accumulated usage timers, unlock any active 2-hour cooldowns, clear incident history, reset your clean streak to Day 0, and restore default App Limits, Section Rules, and Smart Focus slots so you can test the entire app from a clean slate.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ObsidianTextSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onResetAppFromScratch()
-                        showResetFromScratchDialog = false
-                        resetSuccessBannerVisible = true
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
-                    modifier = Modifier.testTag("confirm_reset_from_scratch_button")
-                ) {
-                    Text("Reset Everything Now", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetFromScratchDialog = false }) {
-                    Text("Cancel", color = ObsidianTextSecondary)
-                }
-            }
-        )
-    }
-
     if (pendingAntiTamperAction != null) {
         StrictModeCommitmentDialog(
             actionTitle = when (pendingAntiTamperAction) {
-                PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> "Pause Master Shield Protection?"
-                PendingAntiTamperAction.DISABLE_STRICT_MODE -> "Disable Strict Lock Mode?"
+                PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> tr("Pause Master Shield Protection?", "توقف محافظ اصلی برنامه؟")
+                PendingAntiTamperAction.DISABLE_STRICT_MODE -> tr("Disable Strict Lock Mode?", "غیرفعال کردن قفل سخت‌گیرانه؟")
                 null -> ""
             },
             onConfirm = {
@@ -852,6 +711,248 @@ fun DashboardScreen(
             },
             onDismiss = { pendingAntiTamperAction = null }
         )
+    }
+}
+
+/**
+ * Middle Menu Card on the Dashboard for stopping ONLY Instagram Reels or ONLY the Telegram Search Box
+ * without blocking the entire Instagram or Telegram app!
+ */
+@Composable
+fun MiddleSectionBlockerCard(
+    sectionRules: List<SectionBlockRule>,
+    onToggleSectionRule: (SectionBlockRule) -> Unit,
+    onAddSectionRule: (SectionBlockRule) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val instagramReelsRule = sectionRules.find {
+        it.targetPackage.contains("instagram", ignoreCase = true) ||
+            it.sectionName.contains("reels", ignoreCase = true)
+    }
+    val telegramSearchRule = sectionRules.find {
+        it.targetPackage.contains("telegram", ignoreCase = true) ||
+            it.sectionName.contains("telegram", ignoreCase = true)
+    }
+
+    val isInstagramReelsEnabled = instagramReelsRule?.isEnabled ?: true
+    val isTelegramSearchEnabled = telegramSearchRule?.isEnabled ?: true
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("middle_section_blocker_card"),
+        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.55f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(CrimsonPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = tr(
+                                "In-App Section Guard (Stop Section Only)",
+                                "مسدودساز بخش‌های خاص (توقف فقط همان بخش)"
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = tr(
+                                "Does NOT block the whole app — only exits Reels or Search Box when entered!",
+                                "کل برنامه را نمی‌بندد — فقط هنگام ورود به ریلز یا باکس جستجو از آن بخش خارج می‌شود!"
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+            }
+
+            // Option 1: Instagram Reels Section Only
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = ObsidianCard,
+                border = BorderStroke(
+                    1.dp,
+                    if (isInstagramReelsEnabled) EmeraldShield.copy(alpha = 0.5f) else ObsidianBorder
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VideoLibrary,
+                            contentDescription = null,
+                            tint = if (isInstagramReelsEnabled) EmeraldShield else ObsidianTextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = tr(
+                                    "1. Stop Instagram Reels Section Only",
+                                    "۱. توقف فقط بخش Reels اینستاگرام"
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = ObsidianTextPrimary
+                            )
+                            Text(
+                                text = tr(
+                                    "Instagram DMs & Feed work normally; stops ONLY when you enter Reels tab.",
+                                    "چت و فید اینستاگرام عادی کار می‌کند؛ فقط با ورود به تب Reels متوقف می‌شود."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = ObsidianTextSecondary
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isInstagramReelsEnabled,
+                        onCheckedChange = {
+                            if (instagramReelsRule != null) {
+                                onToggleSectionRule(instagramReelsRule)
+                            } else {
+                                onAddSectionRule(
+                                    SectionBlockRule(
+                                        targetPackage = "com.instagram.android",
+                                        sectionName = "Instagram Reels & Explore",
+                                        triggerPattern = "reels|ریلز|clips_viewer",
+                                        viewIdPattern = "clips_viewer|reel_viewer|clips_video_container|clips_tab",
+                                        isEnabled = true
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.testTag("middle_instagram_reels_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = EmeraldShield
+                        )
+                    )
+                }
+            }
+
+            // Option 2: Telegram Search Box Only
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = ObsidianCard,
+                border = BorderStroke(
+                    1.dp,
+                    if (isTelegramSearchEnabled) CyanTelemetry.copy(alpha = 0.5f) else ObsidianBorder
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SearchOff,
+                            contentDescription = null,
+                            tint = if (isTelegramSearchEnabled) CyanTelemetry else ObsidianTextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = tr(
+                                    "2. Stop Telegram Search Box Only",
+                                    "۲. توقف فقط باکس جستجوی تلگرام (Search Box)"
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = ObsidianTextPrimary
+                            )
+                            Text(
+                                text = tr(
+                                    "Telegram chats work normally; stops ONLY when you tap the Search box.",
+                                    "چت‌های تلگرام عادی کار می‌کنند؛ فقط هنگام ورود به باکس جستجو متوقف می‌شود."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = ObsidianTextSecondary
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isTelegramSearchEnabled,
+                        onCheckedChange = {
+                            if (telegramSearchRule != null) {
+                                onToggleSectionRule(telegramSearchRule)
+                            } else {
+                                onAddSectionRule(
+                                    SectionBlockRule(
+                                        targetPackage = "org.telegram.messenger",
+                                        sectionName = "Telegram Search Box",
+                                        triggerPattern = "search|جستجو|global search|جستجوی جهانی|search messages",
+                                        viewIdPattern = "search_src_text|chat_search|search_field",
+                                        isEnabled = true
+                                    )
+                                )
+                            }
+                        },
+                        modifier = Modifier.testTag("middle_telegram_search_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = CyanTelemetry
+                        )
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -881,14 +982,17 @@ private fun StrictModeCommitmentDialog(
                     text = actionTitle,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = ObsidianTextPrimary
                 )
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "Strict Mode is active to protect your clean streak during moments of urge. To confirm this change, type the phrase below:",
+                    text = tr(
+                        "Strict Mode is active to protect your clean streak during moments of urge. To confirm this change, type the phrase below:",
+                        "حالت سخت‌گیرانه برای محافظت از رکورد پاک شما فعال است. برای تایید، عبارت زیر را تایپ کنید:"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
@@ -910,7 +1014,7 @@ private fun StrictModeCommitmentDialog(
                 OutlinedTextField(
                     value = typedPhrase,
                     onValueChange = { typedPhrase = it },
-                    placeholder = { Text("Type phrase to unlock...") },
+                    placeholder = { Text(tr("Type phrase to unlock...", "عبارت را وارد کنید...")) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -919,8 +1023,8 @@ private fun StrictModeCommitmentDialog(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CrimsonPrimary,
                         unfocusedBorderColor = ObsidianBorder,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedTextColor = ObsidianTextPrimary,
+                        unfocusedTextColor = ObsidianTextPrimary
                     )
                 )
             }
@@ -932,12 +1036,12 @@ private fun StrictModeCommitmentDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
                 modifier = Modifier.testTag("strict_mode_confirm_button")
             ) {
-                Text("Confirm Disable", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(tr("Confirm Disable", "تایید غیرفعال‌سازی"), color = Color.White, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Keep Protected", color = EmeraldShield, fontWeight = FontWeight.Bold)
+                Text(tr("Keep Protected", "ادامه محافظت"), color = EmeraldShield, fontWeight = FontWeight.Bold)
             }
         }
     )
@@ -955,7 +1059,7 @@ fun StatCard(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(18.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f))
     ) {
         Box(
             modifier = Modifier
@@ -1017,7 +1121,7 @@ fun LockDurationCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+        border = BorderStroke(1.dp, ObsidianBorder)
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(
@@ -1042,30 +1146,33 @@ fun LockDurationCard(
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "Lock Duration",
+                        text = tr("Lock Duration", "مدت زمان قفل"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = ObsidianTextPrimary
                     )
                 }
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = CrimsonPrimary.copy(alpha = 0.2f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonPrimary)
+                    border = BorderStroke(1.dp, CrimsonPrimary)
                 ) {
                     Text(
-                        text = "$currentMinutes min",
+                        text = tr("$currentMinutes min", "$currentMinutes دقیقه"),
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = ObsidianTextPrimary,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
 
             Text(
-                text = "When explicit content is detected, the phone will stay locked for this duration:",
+                text = tr(
+                    "When explicit content is detected, the phone will stay locked for this duration:",
+                    "هنگام تشخیص محتوای نامناسب، گوشی به این مدت قفل خواهد شد:"
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
@@ -1089,7 +1196,7 @@ fun LockDurationCard(
                             .testTag("preset_${min}_min"),
                         shape = RoundedCornerShape(8.dp),
                         color = if (isSelected) CrimsonPrimary else ObsidianCard,
-                        border = if (isSelected) null else androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+                        border = if (isSelected) null else BorderStroke(1.dp, ObsidianBorder)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
@@ -1107,7 +1214,7 @@ fun LockDurationCard(
 
             // Custom Slider
             Text(
-                text = "Custom Duration Slider (1 to 120 minutes):",
+                text = tr("Custom Duration Slider (1 to 120 minutes):", "تنظیم دستی زمان قفل (۱ تا ۱۲۰ دقیقه):"),
                 style = MaterialTheme.typography.labelSmall,
                 color = ObsidianTextSecondary
             )
@@ -1146,9 +1253,9 @@ fun PermissionRequiredCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF231718)),
+        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
+        border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1160,15 +1267,18 @@ fun PermissionRequiredCard(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Permission Setup Required",
+                    text = tr("Permission Setup Required", "نیاز به فعال‌سازی دسترسی‌ها"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = ObsidianTextPrimary
                 )
             }
 
             Text(
-                text = "To monitor on-screen text across browsers, lock over apps, and show live countdown alerts, ShieldBlock needs:",
+                text = tr(
+                    "To monitor on-screen text across browsers, stop Instagram Reels / Telegram Search, and lock over apps, X Blocker needs:",
+                    "برای پایش متن صفحه، توقف ریلز اینستاگرام و جستجوی تلگرام، ایکس بلاکر به دسترسی‌های زیر نیاز دارد:"
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
@@ -1182,13 +1292,13 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "1. Accessibility Service",
+                        text = tr("1. Accessibility Service", "۱. سرویس دسترسی‌پذیری (Accessibility)"),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = ObsidianTextPrimary
                     )
                     Text(
-                        text = if (isAccessibilityEnabled) "Active & scanning" else "Needed to read on-screen explicit words",
+                        text = if (isAccessibilityEnabled) tr("Active & scanning", "فعال و در حال پایش") else tr("Needed to detect explicit words & sections", "لازم برای تشخیص کلمات و بخش‌ها"),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (isAccessibilityEnabled) EmeraldShield else ObsidianTextSecondary
                     )
@@ -1209,7 +1319,7 @@ fun PermissionRequiredCard(
                         modifier = Modifier.testTag("enable_accessibility_button")
                     ) {
                         Text(
-                            text = "Enable",
+                            text = tr("Enable", "فعال‌سازی"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
@@ -1228,13 +1338,13 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "2. Display Over Other Apps",
+                        text = tr("2. Display Over Other Apps", "۲. نمایش روی سایر برنامه‌ها"),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = ObsidianTextPrimary
                     )
                     Text(
-                        text = if (hasOverlayPermission) "Active & granted" else "Required to display lockdown screen over browsers",
+                        text = if (hasOverlayPermission) tr("Active & granted", "فعال") else tr("Required to display lockdown screen", "لازم برای نمایش صفحه قفل"),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (hasOverlayPermission) EmeraldShield else ObsidianTextSecondary
                     )
@@ -1255,7 +1365,7 @@ fun PermissionRequiredCard(
                         modifier = Modifier.testTag("enable_overlay_button")
                     ) {
                         Text(
-                            text = "Grant",
+                            text = tr("Grant", "اعطا"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
@@ -1274,13 +1384,13 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "3. Stop Battery Optimization",
+                        text = tr("3. Stop Battery Optimization", "۳. لغو بهینه‌سازی باتری"),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White
+                        color = ObsidianTextPrimary
                     )
                     Text(
-                        text = if (isBatteryOptExempt) "Unrestricted background active" else "Prevents Android from killing the scanner",
+                        text = if (isBatteryOptExempt) tr("Unrestricted background active", "فعال در پس‌زمینه") else tr("Prevents Android from killing the scanner", "جلوگیری از بسته شدن خودکار برنامه"),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (isBatteryOptExempt) EmeraldShield else ObsidianTextSecondary
                     )
@@ -1301,7 +1411,7 @@ fun PermissionRequiredCard(
                         modifier = Modifier.testTag("disable_battery_opt_prompt_btn")
                     ) {
                         Text(
-                            text = "Disable",
+                            text = tr("Disable", "لغو"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
@@ -1320,13 +1430,13 @@ fun PermissionRequiredCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "4. Persistent Lockdown Notification",
+                            text = tr("4. Persistent Lockdown Notification", "۴. اعلان دائمی قفل"),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Color.White
+                            color = ObsidianTextPrimary
                         )
                         Text(
-                            text = "Shows remaining lock time in status bar",
+                            text = tr("Shows remaining lock time in status bar", "نمایش زمان باقی‌مانده قفل در نوار اعلان"),
                             style = MaterialTheme.typography.bodySmall,
                             color = ObsidianTextSecondary
                         )
@@ -1346,7 +1456,7 @@ fun PermissionRequiredCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Allow",
+                            text = tr("Allow", "اجازه"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
@@ -1367,7 +1477,7 @@ fun BatteryOptimizationCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(
+        border = BorderStroke(
             1.dp,
             if (isExempt) EmeraldShield.copy(alpha = 0.4f) else AmberWarning.copy(alpha = 0.5f)
         )
@@ -1401,13 +1511,13 @@ fun BatteryOptimizationCard(
 
                     Column {
                         Text(
-                            text = "Battery Optimization",
+                            text = tr("Battery Optimization", "بهینه‌سازی باتری"),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = ObsidianTextPrimary
                         )
                         Text(
-                            text = if (isExempt) "Unrestricted Background (Active)" else "Battery Saver May Kill App",
+                            text = if (isExempt) tr("Unrestricted Background (Active)", "بدون محدودیت در پس‌زمینه (فعال)") else tr("Battery Saver May Kill App", "ذخیره‌ساز باتری ممکن است برنامه را ببندد"),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = if (isExempt) EmeraldShield else AmberWarning
@@ -1421,7 +1531,7 @@ fun BatteryOptimizationCard(
                         color = EmeraldShield.copy(alpha = 0.2f)
                     ) {
                         Text(
-                            text = "EXEMPT",
+                            text = tr("EXEMPT", "معاف"),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = EmeraldShield,
@@ -1436,7 +1546,7 @@ fun BatteryOptimizationCard(
                         modifier = Modifier.testTag("disable_battery_opt_button")
                     ) {
                         Text(
-                            text = "Disable",
+                            text = tr("Disable", "لغو"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
@@ -1448,7 +1558,10 @@ fun BatteryOptimizationCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Android battery savers put background apps to sleep. Disabling battery optimization guarantees ShieldBlock's accessibility scanner never sleeps and remains 100% active.",
+                text = tr(
+                    "Disabling battery optimization guarantees X Blocker's accessibility scanner never sleeps and remains 100% active.",
+                    "غیرفعال کردن بهینه‌سازی باتری تضمین می‌کند سرویس ایکس بلاکر در پس‌زمینه همیشه فعال بماند."
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary
             )
@@ -1462,7 +1575,7 @@ fun AllProtectionsActiveCard() {
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
+        border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
     ) {
         Row(
             modifier = Modifier
@@ -1487,13 +1600,16 @@ fun AllProtectionsActiveCard() {
             Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text(
-                    text = "System Permissions Granted",
+                    text = tr("System Permissions Granted", "تمامی دسترسی‌های سیستم فعال هستند"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = ObsidianTextPrimary
                 )
                 Text(
-                    text = "Accessibility, Overlay, Notifications, and Unrestricted Background are active.",
+                    text = tr(
+                        "Accessibility, Overlay, Notifications, and Unrestricted Background are active.",
+                        "سرویس دسترسی‌پذیری، نمایش روی برنامه‌ها و اجرای پس‌زمینه فعال هستند."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = EmeraldShield
                 )

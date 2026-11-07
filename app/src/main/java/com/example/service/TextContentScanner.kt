@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.model.BlockedCategory
 import com.example.data.model.BlockedKeyword
@@ -28,12 +29,25 @@ object TextContentScanner {
             )
         }
         if (applicable.isEmpty()) return null
-        return findMatchingSectionNode(root, applicable, maxDepth = 14, currentDepth = 0)
+
+        // Collect a quick snapshot of all screen text to check if Telegram Search filter tabs are visible
+        val screenSnapshotBuilder = StringBuilder()
+        collectText(root, screenSnapshotBuilder, maxDepth = 10, currentDepth = 0)
+        val screenLower = screenSnapshotBuilder.toString().lowercase(Locale.ROOT)
+
+        return findMatchingSectionNode(
+            node = root,
+            rules = applicable,
+            screenLower = screenLower,
+            maxDepth = 14,
+            currentDepth = 0
+        )
     }
 
     private fun findMatchingSectionNode(
         node: AccessibilityNodeInfo?,
         rules: List<SectionBlockRule>,
+        screenLower: String,
         maxDepth: Int,
         currentDepth: Int
     ): SectionBlockRule? {
@@ -42,6 +56,11 @@ object TextContentScanner {
         val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
         val text = node.text?.toString()?.lowercase(Locale.ROOT) ?: ""
         val desc = node.contentDescription?.toString()?.lowercase(Locale.ROOT) ?: ""
+        val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.lowercase(Locale.ROOT) ?: ""
+        } else {
+            ""
+        }
         val className = node.className?.toString()?.lowercase(Locale.ROOT) ?: ""
 
         val isEditText = className.contains("edittext")
@@ -49,12 +68,79 @@ object TextContentScanner {
         val isSelected = node.isSelected
 
         for (rule in rules) {
-            // 1. Check View ID pattern
+            val isSearchRule = rule.triggerPattern.contains("search", ignoreCase = true) ||
+                rule.sectionName.contains("search", ignoreCase = true)
+            val isInstagramReelsRule = rule.targetPackage.contains("instagram", ignoreCase = true) ||
+                rule.sectionName.contains("reels", ignoreCase = true)
+
+            if (isSearchRule) {
+                // CAREFUL TELEGRAM SEARCH BOX DETECTION:
+                // Must ONLY trigger when the user enters the Search box in Telegram,
+                // NEVER when opening Telegram chat list or typing a normal chat message!
+                val isChatMessageInput = text.contains("message") ||
+                    text.contains("پیام") ||
+                    hint.contains("message") ||
+                    hint.contains("پیام") ||
+                    desc.contains("message")
+
+                val hasExplicitSearchViewId = viewId.isNotEmpty() && (
+                    viewId.contains("search_src_text") ||
+                        viewId.contains("chat_search") ||
+                        viewId.contains("search_field") ||
+                        viewId.contains("search_edit")
+                    )
+
+                val hasTelegramSearchFilterTabsOnScreen =
+                    screenLower.contains("global search") ||
+                        screenLower.contains("جستجوی جهانی") ||
+                        screenLower.contains("search messages") ||
+                        screenLower.contains("recent searches") ||
+                        (screenLower.contains("downloads") && screenLower.contains("links") && screenLower.contains("media")) ||
+                        (screenLower.contains("رسانه") && screenLower.contains("لینک"))
+
+                val editTextHasSearchLabel = isEditText && !isChatMessageInput && (
+                    text.contains("search") ||
+                        text.contains("جستجو") ||
+                        hint.contains("search") ||
+                        hint.contains("جستجو") ||
+                        desc.contains("search") ||
+                        desc.contains("جستجو") ||
+                        viewId.contains("search") ||
+                        (isFocused && hasTelegramSearchFilterTabsOnScreen)
+                    )
+
+                if (hasExplicitSearchViewId || editTextHasSearchLabel || (isEditText && hasTelegramSearchFilterTabsOnScreen && !isChatMessageInput)) {
+                    return rule
+                }
+                continue
+            }
+
+            if (isInstagramReelsRule) {
+                // CAREFUL INSTAGRAM REELS DETECTION:
+                // Must ONLY trigger when the user is actually inside the Reels section/tab,
+                // NEVER when opening Instagram Home/DM where the unselected Reels bottom tab icon sits!
+                if (viewId.isNotEmpty()) {
+                    val isReelsActiveViewerId = viewId.contains("clips_viewer") ||
+                        viewId.contains("reel_viewer") ||
+                        viewId.contains("clips_video_container") ||
+                        viewId.contains("clips_swipe_refresh")
+                    val isReelsBottomTabSelected = viewId.contains("clips_tab") && isSelected
+                    if (isReelsActiveViewerId || isReelsBottomTabSelected) {
+                        return rule
+                    }
+                }
+                // Or if the selected Reels tab / active Reels header is selected
+                val matchesReelsLabel = text == "reels" || text == "ریلز" || desc == "reels" || desc == "ریلز"
+                if (matchesReelsLabel && isSelected) {
+                    return rule
+                }
+                continue
+            }
+
+            // 1. Generic Section Rule: Check View ID pattern
             if (rule.viewIdPattern.isNotBlank() && viewId.isNotEmpty()) {
                 val viewMatches = matchesPatternSafely(viewId, rule.viewIdPattern)
                 if (viewMatches) {
-                    // If the viewId is a bottom navigation tab (like clips_tab or shorts_tab),
-                    // only trigger when that tab is actually selected!
                     val isTabId = viewId.contains("tab")
                     if (!isTabId || isSelected) {
                         return rule
@@ -62,33 +148,15 @@ object TextContentScanner {
                 }
             }
 
-            // 2. Check Trigger Pattern on node text / contentDescription
+            // 2. Generic Section Rule: Check Trigger Pattern on node text / contentDescription
             if (rule.triggerPattern.isNotBlank()) {
                 val textMatches = text.isNotEmpty() && matchesPatternSafely(text, rule.triggerPattern)
                 val descMatches = desc.isNotEmpty() && matchesPatternSafely(desc, rule.triggerPattern)
 
                 if (textMatches || descMatches) {
-                    val isSearchRule = rule.triggerPattern.contains("search", ignoreCase = true) ||
-                        rule.sectionName.contains("search", ignoreCase = true)
-
-                    if (isSearchRule) {
-                        // For search section rules (like Telegram Search), trigger when the search
-                        // input EditText is visible/focused or when Global Search headers appear,
-                        // rather than on the unselected toolbar magnifying glass button.
-                        val isGlobalSearchHeader = text.contains("global search") ||
-                            text.contains("جستجوی جهانی") ||
-                            text.contains("search messages")
-                        if (isEditText || isFocused || isSelected || isGlobalSearchHeader) {
-                            return rule
-                        }
-                    } else {
-                        // For tab/feed rules (like Instagram Reels or YouTube Shorts),
-                        // if this node is a clickable tab/button with only a contentDescription,
-                        // require it to be selected or active header text.
-                        val isUnselectedTabIcon = descMatches && !textMatches && node.isClickable && !isSelected
-                        if (!isUnselectedTabIcon) {
-                            return rule
-                        }
+                    val isUnselectedTabIcon = descMatches && !textMatches && node.isClickable && !isSelected
+                    if (!isUnselectedTabIcon) {
+                        return rule
                     }
                 }
             }
@@ -97,7 +165,7 @@ object TextContentScanner {
         val childCount = node.childCount
         for (i in 0 until childCount) {
             val child = node.getChild(i) ?: continue
-            val match = findMatchingSectionNode(child, rules, maxDepth, currentDepth + 1)
+            val match = findMatchingSectionNode(child, rules, screenLower, maxDepth, currentDepth + 1)
             if (match != null) return match
         }
         return null
@@ -227,9 +295,6 @@ object TextContentScanner {
             if (normalizedPattern.isEmpty()) continue
 
             if (lowerRaw.contains(pattern) || normalized.contains(normalizedPattern)) {
-                // For short keywords (<= 3 chars, e.g. "xxx", "کس", "کیر", "کون", "گی"),
-                // enforce Unicode-safe whitespace token boundaries so we never false-positive
-                // on innocent words containing those letters (like "زندگی", "کسب", "اکنون", "class").
                 if (normalizedPattern.length <= 3) {
                     val tokenBoundaryRegex = Regex("(?<=^|\\s)${Regex.escape(normalizedPattern)}(?=$|\\s)")
                     if (tokenBoundaryRegex.containsMatchIn(normalized)) {
