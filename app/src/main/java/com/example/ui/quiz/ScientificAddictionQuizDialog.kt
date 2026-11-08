@@ -811,8 +811,8 @@ private fun FirstTimeOnboardingWelcomeSection(
             accentColor = AmberWarning,
             title = tr("3. Clean Streak Calendar & Daily Coins", "۳. تقویم زنجیره پاکی و سکه روزانه"),
             description = tr(
-                "Track your Duolingo-style 7-day clean calendar, earn +1 Coin for every clean day, and learn with NoBeep recovery lessons.",
-                "تقویم زنجیره روزهای پاک به سبک دولینگو، دریافت روزانه ۱ سکه جایزه و آموزش‌های علمی نوبیپ."
+                "Track your Duolingo-style 7-day clean calendar and earn +1 Coin for every clean day.",
+                "تقویم زنجیره روزهای پاک به سبک دولینگو و دریافت روزانه ۱ سکه جایزه."
             )
         )
 
