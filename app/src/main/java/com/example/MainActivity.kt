@@ -447,9 +447,19 @@ fun MainContent(
                 )
             },
             bottomBar = {
+                // Liquid Glass floating tab bar: detached pill, translucent
+                // surface, hairline border — content scrolls beneath it.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
                 NavigationBar(
-                    containerColor = ObsidianSurface,
-                    tonalElevation = 8.dp
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(32.dp))
+                        .border(1.dp, ObsidianBorder, RoundedCornerShape(32.dp)),
+                    containerColor = ObsidianSurface.copy(alpha = 0.94f),
+                    tonalElevation = 0.dp
                 ) {
                     NavigationBarItem(
                         selected = currentTab == ScreenTab.DASHBOARD,
@@ -604,6 +614,7 @@ fun MainContent(
                         colors = navigationBarColors(),
                         modifier = Modifier.testTag("nav_tab_info")
                     )
+                }
                 }
             }
         ) { innerPadding ->
@@ -1026,7 +1037,7 @@ private fun XBlockerCompactTopBar(
 private fun navigationBarColors() = NavigationBarItemDefaults.colors(
     selectedIconColor = EmeraldShield,
     selectedTextColor = ObsidianTextPrimary,
-    indicatorColor = EmeraldShield.copy(alpha = 0.18f),
+    indicatorColor = EmeraldShield.copy(alpha = 0.24f),
     unselectedIconColor = ObsidianTextSecondary,
     unselectedTextColor = ObsidianTextSecondary
 )
