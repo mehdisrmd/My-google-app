@@ -206,6 +206,11 @@ fun DashboardScreen(
         mutableStateOf(checkNotificationPermission(context))
     }
 
+    // The master shield can only be enabled after ALL required system
+    // permissions are granted (Accessibility, Overlay, Battery, Notifications).
+    val allPermissionsGranted = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
+    var showPermissionsNeededHint by remember { mutableStateOf(false) }
+
     var pendingAntiTamperAction by remember { mutableStateOf<PendingAntiTamperAction?>(null) }
     var showHomeResetStreakYoutubeDialog by remember { mutableStateOf(false) }
 
@@ -346,9 +351,16 @@ fun DashboardScreen(
                         Switch(
                             checked = isProtectionEnabled,
                             onCheckedChange = { targetEnabled ->
-                                if (!targetEnabled && (strictModeEnabled || isPreventUninstallEnabled)) {
+                                if (targetEnabled && !allPermissionsGranted) {
+                                    // Can't enable until every permission is granted:
+                                    // keep the shield off and open the System Setup
+                                    // section so the user can grant what's missing.
+                                    showPermissionsNeededHint = true
+                                    expandSecurityAndPermissionsDropdown = true
+                                } else if (!targetEnabled && (strictModeEnabled || isPreventUninstallEnabled)) {
                                     pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_MASTER_SHIELD
                                 } else {
+                                    showPermissionsNeededHint = false
                                     onToggleProtection(targetEnabled)
                                 }
                             },
@@ -360,6 +372,28 @@ fun DashboardScreen(
                                 uncheckedTrackColor = ObsidianBorder
                             )
                         )
+                    }
+
+                    if (showPermissionsNeededHint && !allPermissionsGranted) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = AmberWarning.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, AmberWarning),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("permissions_needed_hint")
+                        ) {
+                            Text(
+                                text = tr(
+                                    "Protection can't turn on yet — grant all permissions in System Setup below first (Accessibility, Overlay, Battery, Notifications).",
+                                    "محافظ هنوز فعال نمی‌شود — ابتدا همه دسترسی‌ها را در بخش تنظیمات سیستم در پایین بدهید (دسترسی‌پذیری، نمایش روی برنامه‌ها، باتری و اعلان‌ها)."
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = AmberWarning,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
                     }
 
                     // Compact 4-Pill Telemetry Strip (Clean Streak, Best Chain, Coins, Active Rules)
@@ -566,7 +600,7 @@ fun DashboardScreen(
             usageRefreshTrigger = usageRefreshTrigger
         )
 
-        // 3b. Reset My Streak at Home Page (Opens NoBeep YouTube Video Link Preview Gate)
+        // 3b. Reset My Streak at Home Page (opens the direct streak reset dialog)
         Surface(
             onClick = { showHomeResetStreakYoutubeDialog = true },
             shape = RoundedCornerShape(16.dp),
@@ -593,13 +627,13 @@ fun DashboardScreen(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFFFF0000).copy(alpha = 0.16f)),
+                            .background(CrimsonPrimary.copy(alpha = 0.16f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.SmartDisplay,
-                            contentDescription = "YouTube Recovery Lesson & Reset Streak",
-                            tint = Color(0xFFFF0000),
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Reset Streak",
+                            tint = CrimsonPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -613,8 +647,8 @@ fun DashboardScreen(
                         )
                         Text(
                             text = tr(
-                                "Watch NoBeep YouTube recovery lesson first to unlock reset",
-                                "تماشای پیش‌نمایش ویدیوی یوتیوب آموزشی نوبیپ قبل از ریست"
+                                "Tap to reset your streak to Day 0 — best chain stays saved",
+                                "برای ریست زنجیره به روز ۰ بزنید — بهترین زنجیره حفظ می‌شود"
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 10.sp,
@@ -888,7 +922,7 @@ fun DashboardScreen(
         }
 
         // DROPDOWN 4: Privacy Shield, Biometrics & System Permissions
-        val allPermsReady = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
+        val allPermsReady = allPermissionsGranted
         M3CollapsibleDropdownSection(
             title = tr(
                 "Privacy Shield, Biometrics & System Setup",
