@@ -10,6 +10,11 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ShieldApplication
 import com.example.notification.LockdownNotificationManager
@@ -17,16 +22,18 @@ import com.example.ui.theme.MyApplicationTheme
 
 class LockdownActivity : ComponentActivity() {
 
+    private var lockEndTimeState by mutableLongStateOf(0L)
+    private var lockDurationState by mutableIntStateOf(5)
+    private var lockTriggerState by mutableStateOf("Protected Content")
+    private var lockSourceAppState by mutableStateOf("System")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         configureLockscreenFlags()
+        refreshStateFromPrefsAndIntent(intent)
 
         val prefs = ShieldApplication.instance.preferences
-        val endTime = prefs.getActiveLockEndTime()
-        val duration = prefs.getActiveLockDurationMinutes()
-        val trigger = prefs.getActiveLockTrigger()
-        val sourceApp = prefs.getActiveLockApp()
 
         setContent {
             val isDarkTheme = prefs.isDarkTheme.collectAsStateWithLifecycle().value
@@ -37,10 +44,10 @@ class LockdownActivity : ComponentActivity() {
                 isPersianRtl = isPersian
             ) {
                 LockdownScreen(
-                    endTimeEpoch = endTime,
-                    totalDurationMinutes = duration,
-                    triggerWord = trigger,
-                    sourceApp = sourceApp,
+                    endTimeEpoch = lockEndTimeState,
+                    totalDurationMinutes = lockDurationState,
+                    triggerWord = lockTriggerState,
+                    sourceApp = lockSourceAppState,
                     onLockExpired = {
                         prefs.clearLockdown()
                         LockdownNotificationManager.cancelNotification(this@LockdownActivity)
@@ -49,6 +56,26 @@ class LockdownActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        refreshStateFromPrefsAndIntent(intent)
+    }
+
+    private fun refreshStateFromPrefsAndIntent(incoming: Intent?) {
+        val prefs = ShieldApplication.instance.preferences
+        val prefEnd = prefs.getActiveLockEndTime()
+        val intentEnd = incoming?.getLongExtra(EXTRA_END_TIME_EPOCH, 0L) ?: 0L
+        lockEndTimeState = maxOf(prefEnd, intentEnd)
+        lockDurationState = prefs.getActiveLockDurationMinutes()
+        lockTriggerState = incoming?.getStringExtra(EXTRA_TRIGGER_WORD)
+            ?.takeIf { it.isNotBlank() }
+            ?: prefs.getActiveLockTrigger()
+        lockSourceAppState = incoming?.getStringExtra(EXTRA_SOURCE_APP)
+            ?.takeIf { it.isNotBlank() }
+            ?: prefs.getActiveLockApp()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -67,6 +94,7 @@ class LockdownActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         val prefs = ShieldApplication.instance.preferences
+        refreshStateFromPrefsAndIntent(intent)
         if (!prefs.isCurrentlyLocked()) {
             LockdownNotificationManager.cancelNotification(this)
             finish()
@@ -76,7 +104,8 @@ class LockdownActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         val prefs = ShieldApplication.instance.preferences
-        if (prefs.isCurrentlyLocked() && prefs.getStrictModeEnabled()) {
+        // If user did not tap Phone Call / SMS and tries to leave while timer is counting down, pull back!
+        if (prefs.isCurrentlyLocked() && !prefs.isPackageAllowedDuringLockdown("com.android.dialer")) {
             try {
                 val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
                 am?.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME)
@@ -88,7 +117,7 @@ class LockdownActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val prefs = ShieldApplication.instance.preferences
-        if (prefs.isCurrentlyLocked() && prefs.getStrictModeEnabled()) {
+        if (prefs.isCurrentlyLocked() && !prefs.isPackageAllowedDuringLockdown("com.android.dialer")) {
             val relaunch = Intent(this, LockdownActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -127,5 +156,8 @@ class LockdownActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_STRICT_MODE = "extra_strict_mode"
+        const val EXTRA_TRIGGER_WORD = "extra_trigger_word"
+        const val EXTRA_SOURCE_APP = "extra_source_app"
+        const val EXTRA_END_TIME_EPOCH = "extra_end_time_epoch"
     }
 }

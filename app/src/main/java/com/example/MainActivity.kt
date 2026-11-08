@@ -12,7 +12,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,14 +43,14 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,9 +71,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +88,7 @@ import com.example.notification.LockdownNotificationManager
 import com.example.ui.dashboard.DashboardScreen
 import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
+import com.example.ui.info.GithubUpdateAvailablePanelDialog
 import com.example.ui.info.GithubUpdateChecker
 import com.example.ui.info.GithubUpdateStatus
 import com.example.ui.info.InfoAndUpdateScreen
@@ -79,6 +96,7 @@ import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.panic.PanicModeDialog
+import com.example.ui.quiz.ScientificAddictionQuizDialog
 import com.example.ui.security.BiometricLockOverlay
 import com.example.ui.security.BlackoutPrivacyCurtain
 import com.example.ui.streak.NoBeepStreakScreen
@@ -115,7 +133,7 @@ class MainActivity : ComponentActivity() {
 
         syncWindowSecureFlag()
 
-        // Initialize persistent lockdown & always-on Panic SOS notifications
+        // Initialize persistent lockdown & short Panic SOS notifications + Clean Day Milestone check
         LockdownNotificationManager.createNotificationChannel(this)
         LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(this)
 
@@ -231,6 +249,9 @@ class MainActivity : ComponentActivity() {
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(LockdownActivity.EXTRA_STRICT_MODE, true)
+            putExtra(LockdownActivity.EXTRA_TRIGGER_WORD, triggerWord)
+            putExtra(LockdownActivity.EXTRA_SOURCE_APP, "X Blocker Enforcement")
+            putExtra(LockdownActivity.EXTRA_END_TIME_EPOCH, endTime)
         }
         startActivity(intent)
     }
@@ -258,6 +279,11 @@ fun MainContent(
     var currentTab by remember { mutableStateOf(ScreenTab.DASHBOARD) }
     var showPanicModeDialog by remember { mutableStateOf(false) }
 
+    val hasCompletedQuiz by preferences.hasCompletedQuiz.collectAsStateWithLifecycle()
+    var showAddictionQuizDialog by remember {
+        mutableStateOf(!preferences.hasCompletedOnboardingQuiz())
+    }
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -266,7 +292,6 @@ fun MainContent(
         }
     }
 
-    // Request POST_NOTIFICATIONS automatically on Android 13+ so Panic SOS Notification Bar works immediately
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !LockdownNotificationManager.hasNotificationPermission(context)
@@ -282,6 +307,7 @@ fun MainContent(
     val isProtectionEnabled by preferences.isProtectionEnabled.collectAsStateWithLifecycle()
     val lockDurationMinutes by preferences.lockDurationMinutes.collectAsStateWithLifecycle()
     val strictModeEnabled by preferences.strictModeEnabled.collectAsStateWithLifecycle()
+    val coinsBalance by preferences.coinsBalance.collectAsStateWithLifecycle()
 
     val isBiometricLockEnabled by preferences.isBiometricLockEnabled.collectAsStateWithLifecycle()
     val isBlackoutPrivacyShieldEnabled by preferences.isBlackoutPrivacyShieldEnabled.collectAsStateWithLifecycle()
@@ -293,12 +319,16 @@ fun MainContent(
     val githubRepoSlug by preferences.githubRepoSlug.collectAsStateWithLifecycle()
 
     var githubUpdateStatus by remember { mutableStateOf(GithubUpdateStatus()) }
+    var showUpdateAvailablePanel by remember { mutableStateOf(false) }
 
     val runBackgroundGithubUpdateCheck = {
         coroutineScope.launch {
             githubUpdateStatus = githubUpdateStatus.copy(isChecking = true)
             val result = GithubUpdateChecker.checkLatestReleaseFromGithub(githubRepoSlug)
             githubUpdateStatus = result
+            if (result.isUpdateAvailable) {
+                showUpdateAvailablePanel = true
+            }
         }
     }
 
@@ -330,6 +360,7 @@ fun MainContent(
                 Lifecycle.Event.ON_RESUME -> {
                     isAppInBackgroundCurtain = false
                     onSyncWindowSecureFlag()
+                    LockdownNotificationManager.checkAndNotifyCleanDayMilestone(context)
                 }
                 else -> {}
             }
@@ -364,9 +395,10 @@ fun MainContent(
 
     val streakDays = remember(streakStartTimestamp, incidents) { preferences.getStreakDays() }
 
-    // Periodic Smart Focus Deep Work schedule evaluator
+    // Periodic Smart Focus Deep Work schedule evaluator & Clean Day Milestone notifier
     LaunchedEffect(focusSlots, isSmartFocusEnabled, isProtectionEnabled) {
         while (true) {
+            LockdownNotificationManager.checkAndNotifyCleanDayMilestone(context)
             if (isProtectionEnabled && isSmartFocusEnabled && focusSlots.isNotEmpty()) {
                 val activeMatch = SmartFocusEngine.checkAndFindActiveSlotToTrigger(
                     slots = focusSlots,
@@ -393,7 +425,7 @@ fun MainContent(
     }
 
     // Keep the Always-On Panic Notification synchronized whenever key states change
-    LaunchedEffect(isProtectionEnabled, lockDurationMinutes, streakDays, urgesDefeatedCount) {
+    LaunchedEffect(isProtectionEnabled, lockDurationMinutes, streakDays, urgesDefeatedCount, coinsBalance) {
         LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
     }
 
@@ -409,10 +441,9 @@ fun MainContent(
                 XBlockerCompactTopBar(
                     isDarkTheme = isDarkTheme,
                     isPersianLanguage = isPersianLanguage,
-                    updateAvailableTag = if (githubUpdateStatus.isUpdateAvailable) githubUpdateStatus.latestVersionTag else null,
+                    coinsBalance = coinsBalance,
                     onToggleTheme = { preferences.setDarkTheme(!isDarkTheme) },
-                    onToggleLanguage = { preferences.setPersianLanguage(!isPersianLanguage) },
-                    onOpenInfoTab = { currentTab = ScreenTab.INFO }
+                    onToggleLanguage = { preferences.setPersianLanguage(!isPersianLanguage) }
                 )
             },
             bottomBar = {
@@ -424,10 +455,17 @@ fun MainContent(
                         selected = currentTab == ScreenTab.DASHBOARD,
                         onClick = { currentTab = ScreenTab.DASHBOARD },
                         icon = {
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (currentTab == ScreenTab.DASHBOARD) 1.15f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "nav_shield_scale"
+                            )
                             Icon(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = "Shield",
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .scale(iconScale)
                             )
                         },
                         label = {
@@ -446,10 +484,17 @@ fun MainContent(
                         selected = currentTab == ScreenTab.STREAK,
                         onClick = { currentTab = ScreenTab.STREAK },
                         icon = {
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (currentTab == ScreenTab.STREAK) 1.15f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "nav_streak_scale"
+                            )
                             Icon(
                                 imageVector = Icons.Default.Whatshot,
                                 contentDescription = "Streak",
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .scale(iconScale)
                             )
                         },
                         label = {
@@ -468,10 +513,17 @@ fun MainContent(
                         selected = currentTab == ScreenTab.LIMITS,
                         onClick = { currentTab = ScreenTab.LIMITS },
                         icon = {
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (currentTab == ScreenTab.LIMITS) 1.15f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "nav_limits_scale"
+                            )
                             Icon(
                                 imageVector = Icons.Default.HourglassBottom,
                                 contentDescription = "Limits",
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .scale(iconScale)
                             )
                         },
                         label = {
@@ -490,10 +542,17 @@ fun MainContent(
                         selected = currentTab == ScreenTab.KEYWORDS,
                         onClick = { currentTab = ScreenTab.KEYWORDS },
                         icon = {
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (currentTab == ScreenTab.KEYWORDS) 1.15f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "nav_rules_scale"
+                            )
                             Icon(
                                 imageVector = Icons.Default.Block,
                                 contentDescription = "Rules",
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .scale(iconScale)
                             )
                         },
                         label = {
@@ -508,20 +567,36 @@ fun MainContent(
                         modifier = Modifier.testTag("nav_tab_keywords")
                     )
 
+                    // When an update is available, change the Info icon & label to Update!
+                    val isUpdateReady = githubUpdateStatus.isUpdateAvailable
                     NavigationBarItem(
                         selected = currentTab == ScreenTab.INFO,
-                        onClick = { currentTab = ScreenTab.INFO },
+                        onClick = {
+                            currentTab = ScreenTab.INFO
+                            if (isUpdateReady) {
+                                showUpdateAvailablePanel = true
+                            }
+                        },
                         icon = {
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (currentTab == ScreenTab.INFO || isUpdateReady) 1.18f else 1f,
+                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                label = "nav_info_update_scale"
+                            )
                             Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = "Info & Backup",
-                                modifier = Modifier.size(22.dp)
+                                imageVector = if (isUpdateReady) Icons.Default.SystemUpdate else Icons.Default.Info,
+                                contentDescription = if (isUpdateReady) "Update Available" else "Info & Backup",
+                                tint = if (isUpdateReady) AmberWarning else if (currentTab == ScreenTab.INFO) EmeraldShield else ObsidianTextSecondary,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .scale(iconScale)
                             )
                         },
                         label = {
                             Text(
-                                text = tr("Info", "اطلاعات"),
-                                fontWeight = FontWeight.SemiBold,
+                                text = if (isUpdateReady) tr("Update", "آپدیت") else tr("Info", "اطلاعات"),
+                                fontWeight = if (isUpdateReady) FontWeight.Black else FontWeight.SemiBold,
+                                color = if (isUpdateReady) AmberWarning else if (currentTab == ScreenTab.INFO) ObsidianTextPrimary else ObsidianTextSecondary,
                                 fontSize = 10.sp,
                                 maxLines = 1
                             )
@@ -532,7 +607,30 @@ fun MainContent(
                 }
             }
         ) { innerPadding ->
-            when (currentTab) {
+            AnimatedContent(
+                targetState = currentTab,
+                transitionSpec = {
+                    if (targetState.ordinal > initialState.ordinal) {
+                        (slideInHorizontally(animationSpec = tween(240)) { width -> width / 4 } +
+                            fadeIn(animationSpec = tween(220)) +
+                            scaleIn(initialScale = 0.96f, animationSpec = tween(220)))
+                            .togetherWith(
+                                slideOutHorizontally(animationSpec = tween(200)) { width -> -width / 5 } +
+                                    fadeOut(animationSpec = tween(180))
+                            )
+                    } else {
+                        (slideInHorizontally(animationSpec = tween(240)) { width -> -width / 4 } +
+                            fadeIn(animationSpec = tween(220)) +
+                            scaleIn(initialScale = 0.96f, animationSpec = tween(220)))
+                            .togetherWith(
+                                slideOutHorizontally(animationSpec = tween(200)) { width -> width / 5 } +
+                                    fadeOut(animationSpec = tween(180))
+                            )
+                    }
+                },
+                label = "main_tab_animated_transition"
+            ) { selectedTab ->
+                when (selectedTab) {
                 ScreenTab.DASHBOARD -> {
                     DashboardScreen(
                         isProtectionEnabled = isProtectionEnabled,
@@ -594,6 +692,7 @@ fun MainContent(
                         },
                         onOpenTestSandbox = {},
                         onOpenPanicMode = { showPanicModeDialog = true },
+                        onOpenAddictionQuiz = { showAddictionQuizDialog = true },
                         onResetAppFromScratch = {},
                         modifier = Modifier.padding(innerPadding)
                     )
@@ -609,6 +708,7 @@ fun MainContent(
                             preferences.resetStreak(reason)
                         },
                         onOpenPanicMode = { showPanicModeDialog = true },
+                        onOpenAddictionQuiz = { showAddictionQuizDialog = true },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -696,6 +796,9 @@ fun MainContent(
                         onCheckForUpdateNow = {
                             runBackgroundGithubUpdateCheck()
                         },
+                        onOpenUpdatePanel = {
+                            showUpdateAvailablePanel = true
+                        },
                         onExportBackupJson = {
                             repository.exportFullBackupJson()
                         },
@@ -705,6 +808,14 @@ fun MainContent(
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
+                }
+            }
+
+            if (showUpdateAvailablePanel && githubUpdateStatus.isUpdateAvailable) {
+                GithubUpdateAvailablePanelDialog(
+                    updateStatus = githubUpdateStatus,
+                    onDismiss = { showUpdateAvailablePanel = false }
+                )
             }
 
             if (showPanicModeDialog) {
@@ -735,6 +846,21 @@ fun MainContent(
                     onDismiss = { showPanicModeDialog = false }
                 )
             }
+
+            // NoBeep-Style Scientific Addiction Assessment Quiz (Item 16: First launch + Retake)
+            if (showAddictionQuizDialog) {
+                ScientificAddictionQuizDialog(
+                    isFirstLaunchOnboarding = !hasCompletedQuiz,
+                    onQuizCompleted = { scorePercent, severityEn, severityFa ->
+                        preferences.saveAddictionQuizResult(
+                            scorePercent = scorePercent,
+                            severityEn = severityEn,
+                            severityFa = severityFa
+                        )
+                    },
+                    onDismiss = { showAddictionQuizDialog = false }
+                )
+            }
         }
 
         // Biometric Lodge Security Gate Overlay
@@ -745,7 +871,7 @@ fun MainContent(
             )
         }
 
-        // Background Privacy Blackout Curtain (only active when user enables Anti-Agent Black Screen Shield)
+        // Background Privacy Blackout Curtain
         if (isAppInBackgroundCurtain && isBlackoutPrivacyShieldEnabled) {
             BlackoutPrivacyCurtain()
         }
@@ -756,11 +882,16 @@ fun MainContent(
 private fun XBlockerCompactTopBar(
     isDarkTheme: Boolean,
     isPersianLanguage: Boolean,
-    updateAvailableTag: String?,
+    coinsBalance: Int,
     onToggleTheme: () -> Unit,
-    onToggleLanguage: () -> Unit,
-    onOpenInfoTab: () -> Unit
+    onToggleLanguage: () -> Unit
 ) {
+    val themeIconRotation by animateFloatAsState(
+        targetValue = if (isDarkTheme) 0f else 180f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "theme_icon_rotation"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -775,29 +906,15 @@ private fun XBlockerCompactTopBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+                Image(
+                    painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
+                    contentDescription = "X Blocker Minimal Icon",
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(CrimsonPrimary.copy(alpha = 0.16f))
-                        .border(1.5.dp, CrimsonPrimary, RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "X",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Black,
-                            color = CrimsonPrimary
-                        )
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = EmeraldShield,
-                            modifier = Modifier.size(12.dp)
-                        )
-                    }
-                }
+                        .border(1.dp, EmeraldShield, RoundedCornerShape(10.dp))
+                )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
@@ -820,33 +937,32 @@ private fun XBlockerCompactTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (updateAvailableTag != null) {
-                    Surface(
-                        onClick = onOpenInfoTab,
-                        shape = RoundedCornerShape(8.dp),
-                        color = AmberWarning.copy(alpha = 0.2f),
-                        border = BorderStroke(1.dp, AmberWarning),
-                        modifier = Modifier.testTag("top_update_available_badge")
+                // Coins Badge (+1 Coin / Clean Day)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AmberWarning.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
+                    modifier = Modifier.testTag("top_bar_coins_badge")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDownload,
-                                contentDescription = "Update Available",
-                                tint = AmberWarning,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = updateAvailableTag,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp,
-                                color = AmberWarning
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.MonetizationOn,
+                            contentDescription = "Coins",
+                            tint = AmberWarning,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "$coinsBalance",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 10.sp,
+                            color = AmberWarning
+                        )
                     }
                 }
 
@@ -879,7 +995,7 @@ private fun XBlockerCompactTopBar(
                     }
                 }
 
-                // Tiny Button 2: Dark / White (Light) Theme Switch
+                // Tiny Button 2: Dark / White Theme Switch (Icon ONLY — no "Dark"/"White" text!)
                 Surface(
                     onClick = onToggleTheme,
                     shape = RoundedCornerShape(8.dp),
@@ -887,23 +1003,17 @@ private fun XBlockerCompactTopBar(
                     border = BorderStroke(1.dp, ObsidianBorder),
                     modifier = Modifier.testTag("tiny_theme_toggle_button")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Box(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
                             contentDescription = "Switch Dark/White Theme",
                             tint = if (isDarkTheme) AmberWarning else CrimsonPrimary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isDarkTheme) tr("White", "سفید") else tr("Dark", "تاریک"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
-                            color = ObsidianTextPrimary
+                            modifier = Modifier
+                                .size(15.dp)
+                                .rotate(themeIconRotation)
                         )
                     }
                 }

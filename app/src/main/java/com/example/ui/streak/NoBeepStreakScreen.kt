@@ -7,12 +7,10 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -31,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,10 +43,11 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -55,6 +55,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -79,8 +80,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -94,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.example.R
+import com.example.ShieldApplication
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.MotivationalQuotesRepository
 import com.example.ui.i18n.AppStrings.tr
@@ -113,8 +113,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import kotlin.math.cos
-import kotlin.math.sin
 
 data class StreakMilestone(
     val days: Int,
@@ -130,11 +128,22 @@ data class StreakMilestone(
 
 val STREAK_MILESTONES = listOf(
     StreakMilestone(
+        days = 0,
+        titleEn = "Day 0: Chain Starter",
+        titleFa = "روز ۰: آغازگر تعهد پاکی",
+        subtitleEn = "Commitment pledged — your clean chain has officially begun.",
+        subtitleFa = "تعهد شما ثبت شد — زنجیره پاکی شما رسماً آغاز شد.",
+        shareMottoEn = "Day 0: Forging an unbreakable chain!",
+        shareMottoFa = "روز ۰: آغاز ساختن یک زنجیره شکست‌ناپذیر!",
+        badgeColor = Color(0xFF10B981),
+        secondaryGlowColor = Color(0xFF059669)
+    ),
+    StreakMilestone(
         days = 1,
         titleEn = "Day 1: Chain Initiate",
-        titleFa = "روز ۱: آغازگر زنجیره پاکی",
-        subtitleEn = "First 24 hours clean — the unbreakable chain begins.",
-        subtitleFa = "۲۴ ساعت اول پاکی — آغاز زنجیره شکست‌ناپذیر.",
+        titleFa = "روز ۱: اولین حلقه زنجیره (+۱ سکه)",
+        subtitleEn = "First 24 hours clean — the unbreakable chain begins (+1 Coin).",
+        subtitleFa = "۲۴ ساعت اول پاکی — اولین حلقه زنجیره ساخته شد (+۱ سکه).",
         shareMottoEn = "Day 1 forged. Don't break the chain!",
         shareMottoFa = "حلقه اول ساخته شد. زنجیره را نشکن!",
         badgeColor = Color(0xFF38BDF8),
@@ -143,7 +152,7 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 3,
         titleEn = "Day 3: Dopamine Spark",
-        titleFa = "روز ۳: جرقه بازسازی ذهن",
+        titleFa = "روز ۳: جرقه بازسازی ذهن (+۳ سکه)",
         subtitleEn = "Initial urge wave conquered; mental fog starting to lift.",
         subtitleFa = "عبور از موج اول وسوسه و شروع شفافیت ذهن.",
         shareMottoEn = "3 Days Clean. Surfing every urge without breaking the chain.",
@@ -154,7 +163,7 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 7,
         titleEn = "Day 7: Bronze Shield",
-        titleFa = "روز ۷: سپر برنزی (۱ هفته)",
+        titleFa = "روز ۷: سپر برنزی (۱ هفته پاک)",
         subtitleEn = "One full week of discipline! Focus & energy rising.",
         subtitleFa = "یک هفته کامل اراده و نظم! افزایش محسوس تمرکز و انرژی.",
         shareMottoEn = "7-Day Bronze Shield Unlocked! Don't break the chain.",
@@ -165,7 +174,7 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 14,
         titleEn = "Day 14: Silver Guardian",
-        titleFa = "روز ۱۴: محافظ نقره‌ای (۲ هفته)",
+        titleFa = "روز ۱۴: محافظ نقره‌ای (۲ هفته پاک)",
         subtitleEn = "Two weeks clean — neural pathways rewiring for self-command.",
         subtitleFa = "دو هفته پاکی — بازسازی مسیرهای عصبی برای تسلط بر نفس.",
         shareMottoEn = "14 Days Clean • Silver Guardian Rank Achieved!",
@@ -176,7 +185,7 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 30,
         titleEn = "Day 30: Gold Warrior",
-        titleFa = "روز ۳۰: جنگجوی طلایی (۱ ماه)",
+        titleFa = "روز ۳۰: جنگجوی طلایی (۱ ماه پاک)",
         subtitleEn = "One month milestone! Strong emotional & dopamine balance.",
         subtitleFa = "یک ماه کامل پیروزی! تعادل قدرتمند دوپامین و آرامش ذهنی.",
         shareMottoEn = "30 Days Clean • Gold Warrior! Discipline over impulse.",
@@ -216,11 +225,14 @@ fun NoBeepStreakScreen(
     urgesDefeatedCount: Int,
     onResetStreak: (reason: String) -> Unit,
     onOpenPanicMode: () -> Unit = {},
+    onOpenAddictionQuiz: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val prefs = remember { runCatching { ShieldApplication.instance.preferences }.getOrNull() }
     val scrollState = rememberScrollState()
     var showRelapseDialog by remember { mutableStateOf(false) }
+    var inspectedBadgeMilestone by remember { mutableStateOf<StreakMilestone?>(null) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(streakStartTimestamp) {
@@ -236,10 +248,12 @@ fun NoBeepStreakScreen(
     val minutes = (TimeUnit.MILLISECONDS.toMinutes(elapsedMillis) % 60).toInt()
     val seconds = (TimeUnit.MILLISECONDS.toSeconds(elapsedMillis) % 60).toInt()
 
+    val bestChainDays = maxOf(days, longestStreakDays, prefs?.getLongestStreakDays() ?: 0)
+    val coinsBalance = prefs?.getCoinsBalance() ?: 0
+
     val nextMilestone = STREAK_MILESTONES.firstOrNull { it.days > days } ?: STREAK_MILESTONES.last()
     val prevMilestoneDays = STREAK_MILESTONES.lastOrNull { it.days <= days }?.days ?: 0
 
-    // Default selected milestone for the Shareable Card is the highest unlocked milestone (or Day 1)
     val defaultMilestoneIndex = remember(days) {
         val unlockedIdx = STREAK_MILESTONES.indexOfLast { days >= it.days }
         if (unlockedIdx >= 0) unlockedIdx else 0
@@ -264,7 +278,7 @@ fun NoBeepStreakScreen(
         days >= 7 -> tr("Bronze Shield", "سپر برنزی")
         days >= 3 -> tr("Dopamine Spark", "جرقه اراده")
         days >= 1 -> tr("Chain Initiate", "آغازگر زنجیره")
-        else -> tr("Day 0 — Start Your Chain", "روز ۰ — شروع زنجیره پاکی")
+        else -> tr("Chain Starter", "شروع‌کننده مسیر")
     }
 
     Column(
@@ -283,42 +297,74 @@ fun NoBeepStreakScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = tr("Clean Streak & Chain", "زنجیره روزهای پاک"),
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = ObsidianTextPrimary
                 )
                 Text(
                     text = tr(
-                        "Don't break the chain • Share your milestone victories",
-                        "زنجیره را نشکن • دستاوردهای خود را به اشتراک بگذارید"
+                        "Earn +1 Coin per clean day • Best Chain: ${bestChainDays}d",
+                        "هر روز پاک +۱ سکه جایزه • بهترین زنجیره: $bestChainDays روز"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
             }
 
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = EmeraldShield.copy(alpha = 0.15f),
-                border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
+            // Coins Badge + Current Rank Badge
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = AmberWarning.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Whatshot,
-                        contentDescription = null,
-                        tint = EmeraldShield,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = currentBadgeTitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = EmeraldShield
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MonetizationOn,
+                            contentDescription = "Coins",
+                            tint = AmberWarning,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "$coinsBalance",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Black,
+                            color = AmberWarning
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = EmeraldShield.copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Whatshot,
+                            contentDescription = null,
+                            tint = EmeraldShield,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = currentBadgeTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldShield
+                        )
+                    }
                 }
             }
         }
@@ -344,24 +390,24 @@ fun NoBeepStreakScreen(
                             )
                         )
                     )
-                    .padding(22.dp),
+                    .padding(20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(180.dp)
+                        modifier = Modifier.size(170.dp)
                     ) {
                         CircularProgressIndicator(
                             progress = { 1f },
-                            modifier = Modifier.size(180.dp),
+                            modifier = Modifier.size(170.dp),
                             color = ObsidianCard,
                             strokeWidth = 12.dp
                         )
 
                         CircularProgressIndicator(
                             progress = { progressToNext },
-                            modifier = Modifier.size(180.dp),
+                            modifier = Modifier.size(170.dp),
                             color = EmeraldShield,
                             strokeWidth = 12.dp
                         )
@@ -371,7 +417,7 @@ fun NoBeepStreakScreen(
                                 imageVector = Icons.Default.Shield,
                                 contentDescription = null,
                                 tint = EmeraldShield,
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -390,7 +436,7 @@ fun NoBeepStreakScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     // Live HH:MM:SS Ticker
                     Surface(
@@ -411,7 +457,7 @@ fun NoBeepStreakScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
                         text = if (days < 90) {
@@ -433,9 +479,10 @@ fun NoBeepStreakScreen(
             }
         }
 
-        // Predefined Image & Animation Social Share Studio (Instagram & X / Twitter)
-        PredefinedStreakMilestoneShareCard(
+        // Minimal & Cute Share Streak Card (Items 12 & 13: No "Instagram/X" text, shows @mehdisrmd in small font, opens Android system share sheet with app icon)
+        MinimalCuteStreakShareCard(
             currentStreakDays = days,
+            bestChainDays = bestChainDays,
             urgesDefeatedCount = urgesDefeatedCount,
             selectedMilestone = selectedShareMilestone,
             onSelectMilestoneIndex = { selectedShareMilestoneIndex = it },
@@ -443,141 +490,98 @@ fun NoBeepStreakScreen(
             context = context
         )
 
-        // Motivational "Don't Break the Chain" & Famous Quotes Card
+        // Daily Motivational Quote Card (Item 10: Non-tappable, 1 new quote per day)
         MotivationalQuoteBannerCard(streakDays = days)
 
-        // Emergency Panic Button for Urges
-        Button(
-            onClick = onOpenPanicMode,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp)
-                .testTag("streak_panic_sos_button"),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = CrimsonPrimary,
-                contentColor = Color.White
-            ),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Emergency,
-                contentDescription = null,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-                text = tr(
-                    "FEELING AN URGE? OPEN PANIC SHIELD",
-                    "احساس وسوسه دارید؟ باز کردن سپر اضطراری پنیک"
-                ),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Black
-            )
-        }
-
-        // 3-Column Stats Row
+        // Emergency Panic Button & Scientific Quiz Row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, ObsidianBorder)
+            Button(
+                onClick = onOpenPanicMode,
+                modifier = Modifier
+                    .weight(1.3f)
+                    .height(52.dp)
+                    .testTag("streak_panic_sos_button"),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CrimsonPrimary,
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.EmojiEvents,
-                            contentDescription = null,
-                            tint = AmberWarning,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("BEST CHAIN", "بهترین رکورد"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ObsidianTextSecondary,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "${maxOf(days, longestStreakDays)}d",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = ObsidianTextPrimary
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.Emergency,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = tr("PANIC SOS", "دکمه اضطراری پنیک"),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black
+                )
             }
 
-            Card(
-                modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
+            FilledTonalButton(
+                onClick = onOpenAddictionQuiz,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp)
+                    .testTag("streak_retake_quiz_button"),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = IndigoAccent.copy(alpha = 0.2f),
+                    contentColor = CyanTelemetry
+                ),
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = EmeraldShield,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("URGES BEAT", "وسوسه مهارشده"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = EmeraldShield,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "$urgesDefeatedCount",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = ObsidianTextPrimary
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = tr("Dependency Quiz", "آزمون وابستگی"),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
             }
+        }
 
-            Card(
+        // 4-Column Stats Row (Best Chain, Coins, Urges Beat, Resets)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            StatMiniCard(
                 modifier = Modifier.weight(1f),
-                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, ObsidianBorder)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("RESETS", "دفعات ریست"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ObsidianTextSecondary,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "$slipsCount",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = ObsidianTextPrimary
-                    )
-                }
-            }
+                title = tr("BEST CHAIN", "بهترین رکورد"),
+                value = "${bestChainDays}d",
+                accentColor = AmberWarning,
+                icon = Icons.Default.EmojiEvents
+            )
+            StatMiniCard(
+                modifier = Modifier.weight(1f),
+                title = tr("COINS", "سکه‌ها"),
+                value = "$coinsBalance",
+                accentColor = AmberWarning,
+                icon = Icons.Default.MonetizationOn
+            )
+            StatMiniCard(
+                modifier = Modifier.weight(1f),
+                title = tr("URGES BEAT", "مهار وسوسه"),
+                value = "$urgesDefeatedCount",
+                accentColor = EmeraldShield,
+                icon = Icons.Default.Shield
+            )
+            StatMiniCard(
+                modifier = Modifier.weight(1f),
+                title = tr("RESETS", "ریست‌ها"),
+                value = "$slipsCount",
+                accentColor = CrimsonPrimary,
+                icon = Icons.Default.Refresh
+            )
         }
 
         // Brain Reboot Progress Bar (90-Day Goal)
@@ -620,24 +624,48 @@ fun NoBeepStreakScreen(
             }
         }
 
-        // Milestones List (Tap any milestone to preview its Predefined Share Card & Animation!)
-        Text(
-            text = tr(
-                "Milestone Badges (Tap any badge to preview its Share Card)",
-                "نشان‌های افتخار (روی هر نشان بزنید تا کارت اشتراک‌گذاری آن را ببینید)"
-            ),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = ObsidianTextPrimary
-        )
+        // Interactive Milestone Badges Section (Item 15: Fixed & Interactive with Progress Bars + Badge Trophy Dialog)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = tr(
+                    "Milestone Badges (Tap any badge to inspect & share)",
+                    "نشان‌های افتخار (برای مشاهده و اشتراک‌گذاری روی هر نشان بزنید)"
+                ),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = ObsidianTextPrimary
+            )
+            val unlockedCount = STREAK_MILESTONES.count { days >= it.days }
+            Text(
+                text = "$unlockedCount / ${STREAK_MILESTONES.size}",
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Black,
+                color = EmeraldShield
+            )
+        }
 
         STREAK_MILESTONES.forEachIndexed { idx, milestone ->
             val unlocked = days >= milestone.days
+            val badgeProgress = if (milestone.days <= 0) {
+                1f
+            } else {
+                val targetMs = TimeUnit.DAYS.toMillis(milestone.days.toLong()).toFloat()
+                (elapsedMillis.toFloat() / targetMs).coerceIn(0f, 1f)
+            }
             MilestoneRowCard(
                 milestone = milestone,
                 unlocked = unlocked,
+                progressFraction = badgeProgress,
                 isSelectedForShare = idx == selectedShareMilestoneIndex,
-                onClick = { selectedShareMilestoneIndex = idx }
+                onClick = {
+                    selectedShareMilestoneIndex = idx
+                    inspectedBadgeMilestone = milestone
+                }
             )
         }
 
@@ -665,72 +693,211 @@ fun NoBeepStreakScreen(
         }
     }
 
-    if (showRelapseDialog) {
-        var triggerNote by remember { mutableStateOf("") }
+    // Interactive Badge Trophy Dialog when user taps any badge in the Badge Section (Item 15)
+    inspectedBadgeMilestone?.let { badge ->
+        val isUnlocked = days >= badge.days
+        val targetMs = TimeUnit.DAYS.toMillis(badge.days.coerceAtLeast(1).toLong())
+        val progressPct = if (badge.days <= 0 || isUnlocked) {
+            100
+        } else {
+            ((elapsedMillis.toFloat() / targetMs.toFloat()) * 100f).toInt().coerceIn(0, 99)
+        }
+        val remainingHours = if (isUnlocked) {
+            0L
+        } else {
+            TimeUnit.MILLISECONDS.toHours((targetMs - elapsedMillis).coerceAtLeast(0L))
+        }
+        val quoteForBadge = MotivationalQuotesRepository.getDailyQuoteForToday()
+
         AlertDialog(
-            onDismissRequest = { showRelapseDialog = false },
+            onDismissRequest = { inspectedBadgeMilestone = null },
             containerColor = ObsidianSurface,
             title = {
-                Text(
-                    text = tr("Reset Clean Streak?", "ریست کردن زنجیره روزهای پاک؟"),
-                    color = ObsidianTextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(badge.badgeColor.copy(alpha = 0.2f))
+                            .border(1.5.dp, badge.badgeColor, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isUnlocked) Icons.Default.EmojiEvents else Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = badge.badgeColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = tr(badge.titleEn, badge.titleFa),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = if (isUnlocked) {
+                                tr("✓ UNLOCKED BADGE", "✓ نشان باز شده")
+                            } else {
+                                tr("LOCKED • $progressPct% Complete ($remainingHours hrs left)", "قفل • $progressPct٪ انجام شده ($remainingHours ساعت باقی‌مانده)")
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isUnlocked) EmeraldShield else AmberWarning
+                        )
+                    }
+                }
             },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = tr(
-                            "Recovery is a journey. Log what triggered the slip so you can block it and forge an even stronger chain:",
-                            "مسیر پاکی نیازمند استقامت است. عامل لغزش را بنویسید تا زنجیره جدید را قوی‌تر بسازید:"
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ObsidianTextSecondary
+                        text = tr(badge.subtitleEn, badge.subtitleFa),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ObsidianTextPrimary
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = triggerNote,
-                        onValueChange = { triggerNote = it },
-                        label = { Text(tr("Trigger note (optional)", "علت یا زمان لغزش (اختیاری)")) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CrimsonPrimary,
-                            unfocusedBorderColor = ObsidianBorder,
-                            focusedTextColor = ObsidianTextPrimary,
-                            unfocusedTextColor = ObsidianTextPrimary
-                        )
+                    LinearProgressIndicator(
+                        progress = { progressPct / 100f },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = badge.badgeColor,
+                        trackColor = ObsidianCard
                     )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = ObsidianCard,
+                        border = BorderStroke(1.dp, ObsidianBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = tr("Milestone Coin Reward:", "پاداش سکه این مرحله:"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = ObsidianTextSecondary
+                            )
+                            Text(
+                                text = "+${badge.days.coerceAtLeast(1)} 🪙",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Black,
+                                color = AmberWarning
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onResetStreak(triggerNote.trim())
-                        showRelapseDialog = false
+                        StreakShareImageGenerator.shareMilestoneViaSystemSheet(
+                            context = context,
+                            milestone = badge,
+                            currentStreakDays = days,
+                            bestChainDays = bestChainDays,
+                            urgesDefeatedCount = urgesDefeatedCount,
+                            quoteText = tr(quoteForBadge.quoteEn, quoteForBadge.quoteFa)
+                        )
+                        inspectedBadgeMilestone = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
-                    modifier = Modifier.testTag("confirm_reset_streak_button")
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = badge.badgeColor,
+                        contentColor = Color.Black
+                    )
                 ) {
-                    Text(tr("Reset to Day 0", "ریست به روز ۰"), color = Color.White, fontWeight = FontWeight.Bold)
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Share Badge", "اشتراک‌گذاری نشان"),
+                        fontWeight = FontWeight.Black
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showRelapseDialog = false }) {
-                    Text(tr("Cancel", "انصراف"), color = ObsidianTextSecondary)
+                TextButton(onClick = { inspectedBadgeMilestone = null }) {
+                    Text(tr("Close", "بستن"), color = ObsidianTextSecondary)
                 }
             }
         )
     }
+
+    if (showRelapseDialog) {
+        NoBeepYoutubeResetStreakDialog(
+            bestChainDays = bestChainDays,
+            onConfirmResetStreak = { note ->
+                onResetStreak(note)
+            },
+            onDismiss = { showRelapseDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun StatMiniCard(
+    title: String,
+    value: String,
+    accentColor: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                color = ObsidianTextPrimary
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = ObsidianTextSecondary,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+    }
 }
 
 /**
- * Predefined Shareable Visual Card & Live Animation for each Clean Streak Milestone,
- * with direct one-tap sharing to Instagram and X (Twitter).
+ * Minimal & Cute Share Streak Card (Items 12 & 13):
+ * - Removes "Instagram / X" from the title.
+ * - Minimal, cute floating animation with the new Material Design 3 App Icon.
+ * - Shows ONLY `@mehdisrmd` in small font at the bottom (instead of the app name).
+ * - Tapping the card or Share button opens the Android system share chooser (`Intent.createChooser`)
+ *   so the user can pick any app with native app icons.
  */
 @Composable
-fun PredefinedStreakMilestoneShareCard(
+fun MinimalCuteStreakShareCard(
     currentStreakDays: Int,
+    bestChainDays: Int,
     urgesDefeatedCount: Int,
     selectedMilestone: StreakMilestone,
     selectedMilestoneIndex: Int,
@@ -738,29 +905,29 @@ fun PredefinedStreakMilestoneShareCard(
     context: Context,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "milestone_share_anim")
-    val haloRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
+    val infiniteTransition = rememberInfiniteTransition(label = "minimal_cute_share_anim")
+    val gentleFloatY by infiniteTransition.animateFloat(
+        initialValue = -4f,
+        targetValue = 4f,
         animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "halo_rotation"
-    )
-    val badgePulse by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "badge_pulse"
+        label = "gentle_float_y"
+    )
+    val softGlowScale by infiniteTransition.animateFloat(
+        initialValue = 0.97f,
+        targetValue = 1.03f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "soft_glow_scale"
     )
 
     val displayedDays = maxOf(currentStreakDays, selectedMilestone.days)
-    val quoteForCard = remember(selectedMilestoneIndex) {
-        MotivationalQuotesRepository.getQuoteByIndex(selectedMilestoneIndex)
+    val quoteForCard = remember {
+        MotivationalQuotesRepository.getDailyQuoteForToday()
     }
 
     Card(
@@ -769,32 +936,36 @@ fun PredefinedStreakMilestoneShareCard(
             .testTag("streak_milestone_share_studio_card"),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.5.dp, selectedMilestone.badgeColor.copy(alpha = 0.7f))
+        border = BorderStroke(1.5.dp, selectedMilestone.badgeColor.copy(alpha = 0.65f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Header with Material 3 App Icon
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = selectedMilestone.badgeColor,
-                        modifier = Modifier.size(22.dp)
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
+                        contentDescription = "App Icon",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, selectedMilestone.badgeColor, RoundedCornerShape(10.dp))
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = tr(
-                                "Share Clean Streak Card (Instagram / X)",
-                                "کارت اشتراک‌گذاری رکورد پاکی (اینستاگرام و X)"
+                                "Share Clean Streak Card",
+                                "اشتراک‌گذاری کارت زنجیره پاکی"
                             ),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Black,
@@ -802,8 +973,8 @@ fun PredefinedStreakMilestoneShareCard(
                         )
                         Text(
                             text = tr(
-                                "Predefined artwork & live animation for every streak milestone",
-                                "تصویر و انیمیشن اختصاصی برای هر مرحله از زنجیره پاکی"
+                                "Minimal animated card • Tap to share to any app",
+                                "کارت مینیمال با انیمیشن لطیف • اشتراک در هر برنامه"
                             ),
                             style = MaterialTheme.typography.labelSmall,
                             color = ObsidianTextSecondary,
@@ -811,12 +982,19 @@ fun PredefinedStreakMilestoneShareCard(
                         )
                     }
                 }
+
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = selectedMilestone.badgeColor,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
-            // Milestone Tier Selector Pills (1d, 3d, 7d, 14d, 30d, 60d, 90d)
+            // Milestone Tier Selector Pills (0d, 1d, 3d, 7d, 14d, 30d, 60d, 90d)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 STREAK_MILESTONES.forEachIndexed { idx, ms ->
                     val isSelected = idx == selectedMilestoneIndex
@@ -834,7 +1012,7 @@ fun PredefinedStreakMilestoneShareCard(
                             .testTag("share_milestone_pill_${ms.days}d")
                     ) {
                         Box(
-                            modifier = Modifier.padding(vertical = 6.dp),
+                            modifier = Modifier.padding(vertical = 5.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -843,292 +1021,231 @@ fun PredefinedStreakMilestoneShareCard(
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = if (isSelected || isUnlocked) FontWeight.Black else FontWeight.Medium,
                                 color = if (isSelected) ms.badgeColor else ObsidianTextSecondary,
-                                fontSize = 10.sp
+                                fontSize = 9.sp
                             )
                         }
                     }
                 }
             }
 
-            // Animated Visual Share Poster Preview (with generated img_streak_share_bg_1793985592091 artwork)
+            // Minimal & Cute Visual Share Card Preview (Tap opens Android System Share Sheet!)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(270.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .border(2.dp, selectedMilestone.badgeColor, RoundedCornerShape(20.dp))
+                    .height(215.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF0F172A),
+                                Color(0xFF111827),
+                                Color(0xFF0B132B)
+                            )
+                        )
+                    )
+                    .border(1.5.dp, selectedMilestone.badgeColor.copy(alpha = 0.8f), RoundedCornerShape(22.dp))
+                    .clickable {
+                        StreakShareImageGenerator.shareMilestoneViaSystemSheet(
+                            context = context,
+                            milestone = selectedMilestone,
+                            currentStreakDays = currentStreakDays,
+                            bestChainDays = bestChainDays,
+                            urgesDefeatedCount = urgesDefeatedCount,
+                            quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa)
+                        )
+                    }
                     .testTag("streak_visual_poster_preview"),
                 contentAlignment = Alignment.Center
             ) {
-                // Background generated broken-chain shield crest artwork
-                Image(
-                    painter = painterResource(id = R.drawable.img_streak_share_bg_1793985592091),
-                    contentDescription = "Streak Milestone Trophy Emblem",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Dark gradient overlay for crisp text legibility + milestone color aura
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xCC060911),
-                                    selectedMilestone.secondaryGlowColor.copy(alpha = 0.35f),
-                                    Color(0xEE060911)
-                                )
-                            )
-                        )
-                )
-
-                // Animated Rotating Orbiting Particles & Energy Ring Canvas
+                // Minimal cute soft glowing pastel circles in background
                 val primaryGlow = selectedMilestone.badgeColor
                 val secondaryGlow = selectedMilestone.secondaryGlowColor
-                androidx.compose.foundation.Canvas(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val center = Offset(size.width / 2f, size.height / 2f - 10.dp.toPx())
-                    val radius = 78.dp.toPx()
-
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val center = Offset(size.width / 2f, size.height / 2f - 8.dp.toPx())
                     drawCircle(
-                        color = primaryGlow.copy(alpha = 0.22f),
-                        radius = radius,
-                        center = center,
-                        style = Stroke(width = 3.dp.toPx())
+                        color = primaryGlow.copy(alpha = 0.12f),
+                        radius = 74.dp.toPx() * softGlowScale,
+                        center = center
                     )
-
-                    drawArc(
-                        color = primaryGlow,
-                        startAngle = haloRotation,
-                        sweepAngle = 110f,
-                        useCenter = false,
-                        topLeft = Offset(center.x - radius, center.y - radius),
-                        size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
-                        style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                    drawCircle(
+                        color = secondaryGlow.copy(alpha = 0.16f),
+                        radius = 52.dp.toPx() / softGlowScale,
+                        center = center
                     )
-
-                    drawArc(
-                        color = secondaryGlow,
-                        startAngle = haloRotation + 180f,
-                        sweepAngle = 110f,
-                        useCenter = false,
-                        topLeft = Offset(center.x - radius, center.y - radius),
-                        size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
-                        style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                    // Minimal cute sparkle dots
+                    drawCircle(
+                        color = primaryGlow.copy(alpha = 0.65f),
+                        radius = 3.5.dp.toPx(),
+                        center = Offset(center.x - 85.dp.toPx(), center.y - 34.dp.toPx())
                     )
-
-                    // Orbiting stars
-                    for (i in 0 until 6) {
-                        val angleRad = Math.toRadians((haloRotation + i * 60f).toDouble())
-                        val px = center.x + (radius + 12.dp.toPx()) * cos(angleRad).toFloat()
-                        val py = center.y + (radius + 12.dp.toPx()) * sin(angleRad).toFloat()
-                        drawCircle(
-                            color = if (i % 2 == 0) primaryGlow else AmberWarning,
-                            radius = 3.5.dp.toPx(),
-                            center = Offset(px, py)
-                        )
-                    }
+                    drawCircle(
+                        color = AmberWarning.copy(alpha = 0.7f),
+                        radius = 3.dp.toPx(),
+                        center = Offset(center.x + 88.dp.toPx(), center.y - 26.dp.toPx())
+                    )
+                    drawCircle(
+                        color = EmeraldShield.copy(alpha = 0.65f),
+                        radius = 3.dp.toPx(),
+                        center = Offset(center.x - 74.dp.toPx(), center.y + 32.dp.toPx())
+                    )
+                    drawCircle(
+                        color = primaryGlow.copy(alpha = 0.65f),
+                        radius = 3.5.dp.toPx(),
+                        center = Offset(center.x + 78.dp.toPx(), center.y + 30.dp.toPx())
+                    )
                 }
 
-                // Poster Foreground Content
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp),
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Top Banner Pill
+                    // Top Minimal Pill with M3 App Icon + Milestone Title
                     Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xCC0F172A),
-                        border = BorderStroke(1.dp, selectedMilestone.badgeColor)
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xFF1E293B),
+                        border = BorderStroke(1.dp, selectedMilestone.badgeColor.copy(alpha = 0.65f))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
                                 contentDescription = null,
-                                tint = selectedMilestone.badgeColor,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clip(CircleShape)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = tr(selectedMilestone.titleEn, selectedMilestone.titleFa),
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Black,
+                                fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                         }
                     }
 
-                    // Center Pulsing Streak Badge
+                    // Center Cute Floating Streak Emblem
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.scale(badgePulse)
+                        modifier = Modifier
+                            .offset(y = gentleFloatY.dp)
+                            .scale(softGlowScale)
                     ) {
                         Text(
-                            text = if (currentStreakDays >= selectedMilestone.days) {
-                                "${currentStreakDays}D CLEAN"
-                            } else {
-                                "${selectedMilestone.days}D GOAL"
-                            },
+                            text = "${displayedDays}d Clean ✨",
                             style = MaterialTheme.typography.headlineLarge,
                             fontFamily = JetBrainsMonoFontFamily,
                             fontWeight = FontWeight.Black,
                             color = Color.White
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = tr(selectedMilestone.shareMottoEn, selectedMilestone.shareMottoFa),
                             style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             color = selectedMilestone.badgeColor,
                             textAlign = TextAlign.Center
                         )
                     }
 
-                    // Bottom Quote & Branding Footer
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "\"${tr(quoteForCard.quoteEn, quoteForCard.quoteFa).take(95)}\"",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontStyle = FontStyle.Italic,
-                            color = Color(0xFFE2E8F0),
-                            textAlign = TextAlign.Center,
-                            maxLines = 2
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "X BLOCKER • DON'T BREAK THE CHAIN • $displayedDays DAYS • $urgesDefeatedCount URGES DEFEATED",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = AmberWarning
-                        )
-                    }
+                    // Bottom Footer: ONLY `@mehdisrmd` in small font (instead of the app name!)
+                    Text(
+                        text = "@mehdisrmd",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF94A3B8)
+                    )
                 }
             }
 
-            // Share Buttons for Instagram and X (Twitter)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            // Single Sleek Share Button with M3 App Icon -> Opens Native Android System Share Sheet
+            Button(
+                onClick = {
+                    StreakShareImageGenerator.shareMilestoneViaSystemSheet(
+                        context = context,
+                        milestone = selectedMilestone,
+                        currentStreakDays = currentStreakDays,
+                        bestChainDays = bestChainDays,
+                        urgesDefeatedCount = urgesDefeatedCount,
+                        quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa)
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = selectedMilestone.badgeColor,
+                    contentColor = Color.Black
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("share_streak_instagram_button")
             ) {
-                Button(
-                    onClick = {
-                        StreakShareImageGenerator.shareMilestoneToSocial(
-                            context = context,
-                            milestone = selectedMilestone,
-                            currentStreakDays = currentStreakDays,
-                            urgesDefeatedCount = urgesDefeatedCount,
-                            quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa),
-                            quoteAuthor = tr(quoteForCard.authorEn, quoteForCard.authorFa),
-                            targetPlatform = SocialSharePlatform.INSTAGRAM
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFE1306C),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp),
+                Image(
+                    painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
+                    contentDescription = null,
                     modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("share_streak_instagram_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = tr("Share on Instagram", "اشتراک در اینستاگرام"),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        StreakShareImageGenerator.shareMilestoneToSocial(
-                            context = context,
-                            milestone = selectedMilestone,
-                            currentStreakDays = currentStreakDays,
-                            urgesDefeatedCount = urgesDefeatedCount,
-                            quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa),
-                            quoteAuthor = tr(quoteForCard.authorEn, quoteForCard.authorFa),
-                            targetPlatform = SocialSharePlatform.TWITTER_X
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = CyanTelemetry,
-                        contentColor = Color.Black
+                        .size(22.dp)
+                        .clip(CircleShape)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = Icons.Default.Share,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = tr(
+                        "Share Clean Streak Card (@mehdisrmd)",
+                        "اشتراک‌گذاری کارت پاکی (@mehdisrmd)"
                     ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("share_streak_twitter_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = tr("Share on X / Twitter", "اشتراک در X / توییتر"),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black
+                )
             }
         }
     }
 }
 
-enum class SocialSharePlatform(val packageName: String) {
-    INSTAGRAM("com.instagram.android"),
-    TWITTER_X("com.twitter.android")
-}
-
 object StreakShareImageGenerator {
-    fun shareMilestoneToSocial(
+    /**
+     * Renders the minimal & cute streak card PNG with `@mehdisrmd` in small font at the bottom
+     * (without the app name) and opens Android's native system share sheet (`Intent.createChooser`)
+     * so all installed app icons are shown.
+     */
+    fun shareMilestoneViaSystemSheet(
         context: Context,
         milestone: StreakMilestone,
         currentStreakDays: Int,
+        bestChainDays: Int,
         urgesDefeatedCount: Int,
-        quoteText: String,
-        quoteAuthor: String,
-        targetPlatform: SocialSharePlatform
+        quoteText: String
     ) {
+        val shownDays = maxOf(currentStreakDays, milestone.days)
         val shareCaption = buildString {
-            append("🛡️ X Blocker • ${milestone.titleEn}\n")
-            append("🔥 Clean Streak: $currentStreakDays Days (${milestone.shareMottoEn})\n")
-            append("⚡ Urges Defeated: $urgesDefeatedCount\n")
-            append("💬 \"$quoteText\" — $quoteAuthor\n")
-            append("#DontBreakTheChain #XBlocker #SelfDiscipline")
+            append("✨ ${shownDays}d Clean • ${milestone.titleEn}\n")
+            append("🔗 ${milestone.shareMottoEn} (Best Chain: ${maxOf(bestChainDays, shownDays)}d)\n")
+            append("💬 \"$quoteText\"\n")
+            append("@mehdisrmd")
         }
 
         try {
-            val bitmap = renderSharePosterBitmap(
+            val bitmap = renderMinimalSharePosterBitmap(
                 context = context,
                 milestone = milestone,
                 currentStreakDays = currentStreakDays,
-                urgesDefeatedCount = urgesDefeatedCount,
-                quoteText = quoteText,
-                quoteAuthor = quoteAuthor
+                bestChainDays = bestChainDays,
+                quoteText = quoteText
             )
             val sharedDir = File(context.cacheDir, "shared_streaks").apply { mkdirs() }
-            val imageFile = File(sharedDir, "x_blocker_streak_${milestone.days}d.png")
+            val imageFile = File(sharedDir, "streak_card_${shownDays}d.png")
             FileOutputStream(imageFile).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
@@ -1138,40 +1255,25 @@ object StreakShareImageGenerator {
                 imageFile
             )
 
-            val targetedIntent = Intent(Intent.ACTION_SEND).apply {
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "image/png"
                 putExtra(Intent.EXTRA_STREAM, contentUri)
                 putExtra(Intent.EXTRA_TEXT, shareCaption)
-                setPackage(targetPlatform.packageName)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
-            val pm = context.packageManager
-            if (targetedIntent.resolveActivity(pm) != null) {
-                context.startActivity(targetedIntent)
-            } else {
-                val chooserIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "image/png"
-                    putExtra(Intent.EXTRA_STREAM, contentUri)
-                    putExtra(Intent.EXTRA_TEXT, shareCaption)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(
-                    Intent.createChooser(chooserIntent, "Share Clean Streak Result").apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                )
+            val chooser = Intent.createChooser(sendIntent, "Share Clean Streak").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            context.startActivity(chooser)
         } catch (_: Exception) {
-            // Fallback to text share if bitmap file provider fails
             try {
                 val textIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, shareCaption)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(
-                    Intent.createChooser(textIntent, "Share Clean Streak Result").apply {
+                    Intent.createChooser(textIntent, "Share Clean Streak").apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                 )
@@ -1180,106 +1282,116 @@ object StreakShareImageGenerator {
         }
     }
 
-    private fun renderSharePosterBitmap(
+    private fun renderMinimalSharePosterBitmap(
         context: Context,
         milestone: StreakMilestone,
         currentStreakDays: Int,
-        urgesDefeatedCount: Int,
-        quoteText: String,
-        quoteAuthor: String
+        bestChainDays: Int,
+        quoteText: String
     ): Bitmap {
         val width = 1080
-        val height = 1350
+        val height = 1080
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
 
-        // Draw background image if available
-        val bgBitmap = runCatching {
-            BitmapFactory.decodeResource(context.resources, R.drawable.img_streak_share_bg_1793985592091)
-        }.getOrNull()
-
-        if (bgBitmap != null) {
-            val srcRect = Rect(0, 0, bgBitmap.width, bgBitmap.height)
-            val dstRect = Rect(0, 0, width, height)
-            canvas.drawBitmap(bgBitmap, srcRect, dstRect, null)
-        }
-
-        // Gradient overlay
-        val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        // Minimal deep slate gradient background
+        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
                 0f,
                 0f,
                 0f,
                 height.toFloat(),
-                intArrayOf(0xDD060911.toInt(), 0x880B132B.toInt(), 0xEE060911.toInt()),
+                intArrayOf(0xFF0F172A.toInt(), 0xFF111827.toInt(), 0xFF0B132B.toInt()),
                 floatArrayOf(0f, 0.5f, 1f),
                 Shader.TileMode.CLAMP
             )
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-        // Outer neon frame
+        // Soft glowing aura circles
+        val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = milestone.badgeColor.copy(alpha = 0.16f).toArgb()
+            style = Paint.Style.FILL
+        }
+        canvas.drawCircle(width / 2f, height / 2f - 40f, 290f, glowPaint)
+
+        // Rounded minimal frame
         val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 10f
+            strokeWidth = 6f
             color = milestone.badgeColor.toArgb()
         }
-        canvas.drawRoundRect(RectF(40f, 40f, width - 40f, height - 40f), 48f, 48f, borderPaint)
+        canvas.drawRoundRect(RectF(48f, 48f, width - 48f, height - 48f), 56f, 56f, borderPaint)
 
-        // Title Text
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.WHITE
-            textSize = 54f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textAlign = Paint.Align.CENTER
+        // Draw M3 App Icon at top center
+        val iconBitmap = runCatching {
+            BitmapFactory.decodeResource(context.resources, R.drawable.ic_stop_sign_x_blocker_1794123976741)
+        }.getOrNull()
+        if (iconBitmap != null) {
+            val dst = RectF(width / 2f - 64f, 110f, width / 2f + 64f, 238f)
+            canvas.drawBitmap(iconBitmap, null, dst, null)
         }
-        canvas.drawText("X BLOCKER • DON'T BREAK THE CHAIN", width / 2f, 150f, titlePaint)
 
-        // Milestone Rank
+        // Milestone Rank Title
         val rankPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = milestone.badgeColor.toArgb()
-            textSize = 64f
+            textSize = 44f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText(milestone.titleEn.uppercase(Locale.US), width / 2f, 250f, rankPaint)
+        canvas.drawText(milestone.titleEn, width / 2f, 310f, rankPaint)
 
-        // Center Streak Number
+        // Center Streak Days
+        val shownDays = maxOf(currentStreakDays, milestone.days)
         val daysPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE
-            textSize = 150f
+            textSize = 148f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
-        val shownDays = maxOf(currentStreakDays, milestone.days)
-        canvas.drawText("${shownDays}D CLEAN", width / 2f, 700f, daysPaint)
+        canvas.drawText("${shownDays}d Clean", width / 2f, 530f, daysPaint)
 
         // Motto
         val mottoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = milestone.badgeColor.toArgb()
-            textSize = 42f
+            textSize = 38f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText(milestone.shareMottoEn, width / 2f, 790f, mottoPaint)
+        canvas.drawText(milestone.shareMottoEn, width / 2f, 620f, mottoPaint)
+
+        // Best Chain Subtitle
+        val chainPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFCBD5E1.toInt()
+            textSize = 30f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(
+            "Don't break the chain • Best Chain: ${maxOf(bestChainDays, shownDays)}d",
+            width / 2f,
+            690f,
+            chainPaint
+        )
 
         // Quote
         val quotePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFE2E8F0.toInt()
-            textSize = 34f
+            textSize = 28f
             typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
             textAlign = Paint.Align.CENTER
         }
-        val trimmedQuote = if (quoteText.length > 75) quoteText.take(72) + "..." else quoteText
-        canvas.drawText("\"$trimmedQuote\"", width / 2f, 1080f, quotePaint)
+        val trimmedQuote = if (quoteText.length > 72) quoteText.take(69) + "..." else quoteText
+        canvas.drawText("\"$trimmedQuote\"", width / 2f, 830f, quotePaint)
 
-        val authorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFF59E0B.toInt()
-            textSize = 32f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        // Small font @mehdisrmd signature at bottom (instead of app name)
+        val signaturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF94A3B8.toInt()
+            textSize = 26f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("— $quoteAuthor • Urges Defeated: $urgesDefeatedCount", width / 2f, 1145f, authorPaint)
+        canvas.drawText("@mehdisrmd", width / 2f, 975f, signaturePaint)
 
         return bitmap
     }
@@ -1308,6 +1420,7 @@ private fun TimeUnitColumn(value: String, label: String) {
 private fun MilestoneRowCard(
     milestone: StreakMilestone,
     unlocked: Boolean,
+    progressFraction: Float,
     isSelectedForShare: Boolean,
     onClick: () -> Unit
 ) {
@@ -1317,101 +1430,116 @@ private fun MilestoneRowCard(
             .clickable { onClick() }
             .testTag("milestone_row_${milestone.days}d"),
         colors = CardDefaults.cardColors(
-            containerColor = if (unlocked) ObsidianSurface else ObsidianCard.copy(alpha = 0.6f)
+            containerColor = if (unlocked) ObsidianSurface else ObsidianCard.copy(alpha = 0.7f)
         ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
-            1.dp,
-            when {
+            width = if (isSelectedForShare) 1.5.dp else 1.dp,
+            color = when {
                 isSelectedForShare -> milestone.badgeColor
-                unlocked -> milestone.badgeColor.copy(alpha = 0.5f)
+                unlocked -> milestone.badgeColor.copy(alpha = 0.55f)
                 else -> ObsidianBorder
             }
         )
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(14.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (unlocked) milestone.badgeColor.copy(alpha = 0.2f)
-                        else ObsidianBorder.copy(alpha = 0.4f)
-                    )
-                    .border(
-                        1.5.dp,
-                        if (unlocked) milestone.badgeColor else ObsidianBorder,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (unlocked) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Unlocked",
-                        tint = milestone.badgeColor,
-                        modifier = Modifier.size(24.dp)
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (unlocked) milestone.badgeColor.copy(alpha = 0.22f)
+                            else ObsidianBorder.copy(alpha = 0.4f)
+                        )
+                        .border(
+                            1.5.dp,
+                            if (unlocked) milestone.badgeColor else ObsidianBorder,
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (unlocked) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Unlocked",
+                            tint = milestone.badgeColor,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Locked",
+                            tint = ObsidianTextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tr(milestone.titleEn, milestone.titleFa),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (unlocked) ObsidianTextPrimary else ObsidianTextSecondary
                     )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Locked",
-                        tint = ObsidianTextSecondary,
-                        modifier = Modifier.size(20.dp)
+                    Text(
+                        text = tr(milestone.subtitleEn, milestone.subtitleFa),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary
                     )
                 }
-            }
 
-            Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = tr(milestone.titleEn, milestone.titleFa),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (unlocked) ObsidianTextPrimary else ObsidianTextSecondary
-                )
-                Text(
-                    text = tr(milestone.subtitleEn, milestone.subtitleFa),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ObsidianTextSecondary
-                )
-            }
-
-            if (isSelectedForShare) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = milestone.badgeColor.copy(alpha = 0.2f)
-                ) {
-                    Text(
-                        text = tr("PREVIEWING", "پیش‌نمایش"),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = milestone.badgeColor,
-                        fontSize = 9.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    color = if (unlocked) {
+                        milestone.badgeColor.copy(alpha = 0.2f)
+                    } else {
+                        ObsidianSurface
+                    },
+                    border = BorderStroke(
+                        1.dp,
+                        if (unlocked) milestone.badgeColor else ObsidianBorder
                     )
-                }
-            } else if (unlocked) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = milestone.badgeColor.copy(alpha = 0.15f)
                 ) {
                     Text(
-                        text = tr("UNLOCKED", "باز شده"),
+                        text = if (unlocked) {
+                            tr("UNLOCKED", "باز شده")
+                        } else {
+                            "${(progressFraction * 100).toInt()}%"
+                        },
                         style = MaterialTheme.typography.labelSmall,
+                        fontFamily = JetBrainsMonoFontFamily,
                         fontWeight = FontWeight.Bold,
-                        color = milestone.badgeColor,
+                        color = if (unlocked) milestone.badgeColor else ObsidianTextSecondary,
                         fontSize = 10.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            LinearProgressIndicator(
+                progress = { if (unlocked) 1f else progressFraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = if (unlocked) milestone.badgeColor else CyanTelemetry,
+                trackColor = ObsidianBorder
+            )
         }
     }
 }

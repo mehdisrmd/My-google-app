@@ -1,4 +1,4 @@
-name: Build & Publish Android APK to GitHub Releases
+name: Build & Publish Split Android APKs by CPU to GitHub Releases
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-and-release-apk:
-    name: Build & Release ShieldBlock APK
+    name: Build & Release X Blocker Split APKs (ARM64 / ARMv7a / x86_64 / Universal)
     runs-on: ubuntu-latest
 
     steps:
@@ -67,27 +67,51 @@ jobs:
       - name: Run Unit & Robolectric Tests
         run: gradle :app:testDebugUnitTest --stacktrace
 
-      - name: Build Installable Android APK
+      - name: Build Split APKs by CPU Architecture (arm64-v8a, armeabi-v7a, x86_64, universal)
         run: |
-          gradle :app:assembleDebug --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk X-Blocker.apk
+          gradle :app:assembleDebug -PsplitAbi=true --stacktrace
+          mkdir -p release-apks
+          if [ -f app/build/outputs/apk/debug/app-arm64-v8a-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk release-apks/X-Blocker-arm64-v8a.apk
+          fi
+          if [ -f app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk release-apks/X-Blocker-armeabi-v7a.apk
+          fi
+          if [ -f app/build/outputs/apk/debug/app-x86_64-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-x86_64-debug.apk release-apks/X-Blocker-x86_64.apk
+          fi
+          if [ -f app/build/outputs/apk/debug/app-x86-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-x86-debug.apk release-apks/X-Blocker-x86.apk
+          fi
+          if [ -f app/build/outputs/apk/debug/app-universal-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-universal-debug.apk release-apks/X-Blocker-universal.apk
+            cp app/build/outputs/apk/debug/app-universal-debug.apk release-apks/X-Blocker.apk
+          elif [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/X-Blocker-universal.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/X-Blocker.apk
+          fi
+          ls -lh release-apks/
 
-      - name: Upload X Blocker APK Artifact
+      - name: Upload Split X Blocker APKs Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: X-Blocker-APK
-          path: X-Blocker.apk
+          name: X-Blocker-Split-APKs
+          path: release-apks/*.apk
 
-      - name: Publish APK to GitHub Releases Automatically
+      - name: Publish Split CPU APKs to GitHub Releases Automatically
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.${{ github.run_number }}
-          name: "X Blocker v2.1.${{ github.run_number }} (Android APK)"
+          tag_name: v0.4.${{ github.run_number }}
+          name: "X Blocker v0.4.${{ github.run_number }} (Split CPU APKs: ARM64 / ARMv7a / Universal)"
           body: |
-            ### X Blocker Android Release (v2.1.${{ github.run_number }})
+            ### X Blocker Android Release (v0.4.${{ github.run_number }})
             - **Developer Telegram:** [@mehdisrmd](https://t.me/mehdisrmd)
-            - **Download:** Tap **`X-Blocker.apk`** below under **Assets** to install directly on your Android device.
-          files: X-Blocker.apk
+            - **CPU-Specific APK Downloads (Choose your device architecture):**
+              - **`X-Blocker-arm64-v8a.apk`** — Modern 64-bit Android phones (`ARM64 / arm64-v8a`, recommended for most phones)
+              - **`X-Blocker-armeabi-v7a.apk`** — Older 32-bit Android phones (`ARMv7a / armeabi-v7a`)
+              - **`X-Blocker-x86_64.apk`** — Android Emulators, Chromebooks & x86_64 tablets
+              - **`X-Blocker-universal.apk`** — Universal APK supporting all CPU architectures
+          files: release-apks/*.apk
           draft: false
           prerelease: false
           generate_release_notes: true

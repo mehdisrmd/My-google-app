@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/ic_x_blocker_fg_1793981573353"
-    android:inset="16%" />
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="66dp"
+        android:height="66dp"
+        android:gravity="center"
+        android:drawable="@drawable/ic_stop_sign_x_blocker_1794123976741" />
+</layer-list>

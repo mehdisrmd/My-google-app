@@ -9,7 +9,22 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,18 +44,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Emergency
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -49,8 +70,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -70,26 +94,35 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.R
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockIncident
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
+import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.security.BiometricAndPrivacyDashboardSection
+import com.example.ui.streak.NoBeepYoutubeResetStreakDialog
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonDark
 import com.example.ui.theme.CrimsonPrimary
@@ -106,7 +139,8 @@ import kotlin.math.roundToInt
 
 private enum class PendingAntiTamperAction {
     DISABLE_MASTER_SHIELD,
-    DISABLE_STRICT_MODE
+    DISABLE_STRICT_MODE,
+    DISABLE_PREVENT_UNINSTALL
 }
 
 @Composable
@@ -138,14 +172,26 @@ fun DashboardScreen(
     onToggleBiometricLock: (Boolean) -> Unit = {},
     onLockAppNow: () -> Unit = {},
     onToggleBlackoutShield: (Boolean) -> Unit = {},
-    onOpenTestSandbox: () -> Unit,
+    onOpenTestSandbox: () -> Unit = {},
     onOpenPanicMode: () -> Unit = {},
+    onOpenAddictionQuiz: () -> Unit = {},
     onResetAppFromScratch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scrollState = rememberScrollState()
+
+    val effectivePrefs = remember(context, preferences) {
+        preferences ?: ShieldPreferences(context)
+    }
+
+    val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
+    val coinsBalance by effectivePrefs.coinsBalance.collectAsStateWithLifecycle()
+    val bestChainDays by effectivePrefs.longestStreakDays.collectAsStateWithLifecycle()
+    val quizScorePercent by effectivePrefs.quizScorePercent.collectAsStateWithLifecycle()
+    val quizSeverityEn by effectivePrefs.quizSeverityEn.collectAsStateWithLifecycle()
+    val quizSeverityFa by effectivePrefs.quizSeverityFa.collectAsStateWithLifecycle()
 
     var isAccessibilityEnabled by remember {
         mutableStateOf(ShieldPreferences.isAccessibilityServiceEnabled(context))
@@ -161,8 +207,15 @@ fun DashboardScreen(
     }
 
     var pendingAntiTamperAction by remember { mutableStateOf<PendingAntiTamperAction?>(null) }
-    var showResetFromScratchDialog by remember { mutableStateOf(false) }
-    var resetSuccessBannerVisible by remember { mutableStateOf(false) }
+    var showHomeResetStreakYoutubeDialog by remember { mutableStateOf(false) }
+
+    // Structured Material Design 3 Collapsible Dropdown States (keeps Home Screen short & clean!)
+    var expandSectionGuardDropdown by remember { mutableStateOf(false) }
+    var expandUninstallAndLockDropdown by remember { mutableStateOf(false) }
+    var expandSmartFocusDropdown by remember { mutableStateOf(false) }
+    var expandSecurityAndPermissionsDropdown by remember {
+        mutableStateOf(!isAccessibilityEnabled || !hasOverlayPermission)
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -196,18 +249,14 @@ fun DashboardScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // App Title & Master Shield Switch (X Blocker Hero)
-        Card(
+        // 1. Compact Material Design 3 Hero Card (Master Shield + Coins + Best Chain)
+        ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(
-                1.5.dp,
-                if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.45f) else CrimsonPrimary.copy(alpha = 0.55f)
-            )
+            colors = CardDefaults.elevatedCardColors(containerColor = ObsidianSurface),
+            shape = RoundedCornerShape(22.dp)
         ) {
             Box(
                 modifier = Modifier
@@ -215,19 +264,181 @@ fun DashboardScreen(
                     .background(
                         Brush.linearGradient(
                             colors = if (isProtectionEnabled) listOf(
-                                EmeraldShield.copy(alpha = 0.18f),
+                                EmeraldShield.copy(alpha = 0.16f),
                                 CyanTelemetry.copy(alpha = 0.08f),
                                 Color.Transparent
                             ) else listOf(
-                                CrimsonPrimary.copy(alpha = 0.22f),
+                                CrimsonPrimary.copy(alpha = 0.20f),
                                 Color.Transparent
                             )
                         )
                     )
-                    .padding(20.dp)
+                    .border(
+                        1.5.dp,
+                        if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.45f) else CrimsonPrimary.copy(alpha = 0.55f),
+                        RoundedCornerShape(22.dp)
+                    )
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
+                                contentDescription = "X Blocker Minimal Icon",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(50.dp)
+                                    .clip(RoundedCornerShape(15.dp))
+                                    .border(
+                                        1.5.dp,
+                                        if (isProtectionEnabled) EmeraldShield else CrimsonPrimary,
+                                        RoundedCornerShape(15.dp)
+                                    )
+                            )
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = tr("X Blocker", "ایکس بلاکر"),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Black,
+                                        color = ObsidianTextPrimary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.2f)
+                                        else CrimsonPrimary.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = if (isProtectionEnabled) tr("ACTIVE", "فعال") else tr("OFF", "خاموش"),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isProtectionEnabled) EmeraldShield else CrimsonPrimary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = if (isProtectionEnabled) {
+                                        tr("M3 Content, Reels & Search Guard On", "محافظ هوشمند محتوا، ریلز و جستجو فعال است")
+                                    } else {
+                                        tr("Protection is Off — Turn On to Activate", "محافظ خاموش است — برای فعال‌سازی روشن کنید")
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isProtectionEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                if (!targetEnabled && (strictModeEnabled || isPreventUninstallEnabled)) {
+                                    pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_MASTER_SHIELD
+                                } else {
+                                    onToggleProtection(targetEnabled)
+                                }
+                            },
+                            modifier = Modifier.testTag("protection_master_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield,
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = ObsidianBorder
+                            )
+                        )
+                    }
+
+                    // Compact 4-Pill Telemetry Strip (Clean Streak, Best Chain, Coins, Active Rules)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CompactMetricPill(
+                            label = tr("STREAK", "زنجیره"),
+                            value = "${streakDays}d",
+                            color = EmeraldShield,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactMetricPill(
+                            label = tr("BEST", "بهترین"),
+                            value = "${maxOf(streakDays, bestChainDays)}d",
+                            color = CyanTelemetry,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactMetricPill(
+                            label = tr("COINS", "سکه‌ها"),
+                            value = "$coinsBalance 🪙",
+                            color = AmberWarning,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactMetricPill(
+                            label = tr("RULES", "قوانین"),
+                            value = "$totalKeywordsCount",
+                            color = IndigoAccent,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // Prominent "I Relapsed / Reset Streak" Button right on the Main Hero Card
+                    OutlinedButton(
+                        onClick = { showHomeResetStreakYoutubeDialog = true },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.65f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonPrimary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .testTag("hero_i_relapsed_reset_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SmartDisplay,
+                            contentDescription = null,
+                            tint = Color(0xFFFF0000),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = tr("I Relapsed • Reset Streak (Watch Lesson)", "لغزش داشتم • ریست زنجیره (آموزش ویدیویی)"),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = CrimsonPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Compact Action Strip: Emergency Panic Mode (SOS) + Scientific Addiction Quiz
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Card(
+                modifier = Modifier
+                    .weight(1.15f)
+                    .clickable { onOpenPanicMode() }
+                    .testTag("dashboard_panic_mode_card"),
+                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.8f))
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -237,115 +448,276 @@ fun DashboardScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(58.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(
-                                    if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.2f)
-                                    else CrimsonPrimary.copy(alpha = 0.2f)
-                                )
-                                .border(
-                                    2.dp,
-                                    if (isProtectionEnabled) EmeraldShield else CrimsonPrimary,
-                                    RoundedCornerShape(18.dp)
-                                ),
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CrimsonPrimary.copy(alpha = 0.22f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isProtectionEnabled) Icons.Default.Shield else Icons.Default.Warning,
-                                contentDescription = "Shield Status",
-                                tint = if (isProtectionEnabled) EmeraldShield else CrimsonPrimary,
-                                modifier = Modifier.size(32.dp)
+                                imageVector = Icons.Default.Emergency,
+                                contentDescription = "Panic SOS",
+                                tint = CrimsonPrimary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = tr("X Blocker", "ایکس بلاکر"),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Black,
-                                    color = ObsidianTextPrimary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isProtectionEnabled) EmeraldShield.copy(alpha = 0.2f)
-                                    else CrimsonPrimary.copy(alpha = 0.2f)
-                                ) {
-                                    Text(
-                                        text = if (isProtectionEnabled) tr("ACTIVE", "فعال") else tr("PAUSED", "متوقف"),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isProtectionEnabled) EmeraldShield else CrimsonPrimary,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = if (isProtectionEnabled) {
-                                    tr("Real-time Content & Section Guard Active", "محافظ هوشمند محتوا و بخش‌ها فعال است")
-                                } else {
-                                    tr("Protection Paused — Tap to Resume", "محافظت متوقف است — برای فعال‌سازی ضربه بزنید")
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color = ObsidianTextSecondary
+                                text = tr("Panic SOS", "پنیک اضطراری"),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Black,
+                                color = ObsidianTextPrimary
+                            )
+                            Text(
+                                text = tr("Instant Lock & Breathe", "قفل فوری و تنفس"),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                color = CrimsonPrimary
                             )
                         }
                     }
 
-                    Switch(
-                        checked = isProtectionEnabled,
-                        onCheckedChange = { targetEnabled ->
-                            if (!targetEnabled && strictModeEnabled) {
-                                pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_MASTER_SHIELD
-                            } else {
-                                onToggleProtection(targetEnabled)
-                            }
-                        },
-                        modifier = Modifier.testTag("protection_master_switch"),
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = EmeraldShield,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = ObsidianBorder
+                    Button(
+                        onClick = onOpenPanicMode,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CrimsonPrimary,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("dashboard_panic_button")
+                    ) {
+                        Text(
+                            text = "SOS",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 11.sp
                         )
-                    )
+                    }
+                }
+            }
+
+            // Scientific Addiction Quiz Quick Card (Item 16)
+            Card(
+                modifier = Modifier
+                    .weight(0.95f)
+                    .clickable { onOpenAddictionQuiz() }
+                    .testTag("dashboard_scientific_quiz_card"),
+                colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.5.dp, IndigoAccent.copy(alpha = 0.65f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(IndigoAccent.copy(alpha = 0.22f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Psychology,
+                            contentDescription = "Scientific Quiz",
+                            tint = CyanTelemetry,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (quizScorePercent >= 0) {
+                                tr("Quiz: $quizScorePercent%", "آزمون: $quizScorePercent٪")
+                            } else {
+                                tr("Addiction Quiz", "آزمون وابستگی")
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = if (quizScorePercent >= 0) {
+                                tr(quizSeverityEn, quizSeverityFa)
+                            } else {
+                                tr("Take NoBeep Test", "تست علمی نوبیپ")
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            color = CyanTelemetry,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
 
-        // Emergency Panic Mode Action Card (with Always-On Notification SOS Status)
-        Card(
+        // 3. Duolingo-Style 7-Day Clean Streak Calendar (Item 5)
+        WeeklyActivityCard(
+            incidents = incidents,
+            appLimits = appLimits,
+            preferences = effectivePrefs,
+            usageRefreshTrigger = usageRefreshTrigger
+        )
+
+        // 3b. Reset My Streak at Home Page (Opens NoBeep YouTube Video Link Preview Gate)
+        Surface(
+            onClick = { showHomeResetStreakYoutubeDialog = true },
+            shape = RoundedCornerShape(16.dp),
+            color = ObsidianSurface,
+            border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.55f)),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onOpenPanicMode() }
-                .testTag("dashboard_panic_mode_card"),
-            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(20.dp),
-            border = BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.85f))
+                .testTag("dashboard_reset_streak_button")
         ) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                CrimsonPrimary.copy(alpha = 0.22f),
-                                IndigoAccent.copy(alpha = 0.10f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-                    .padding(16.dp)
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFFF0000).copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SmartDisplay,
+                            contentDescription = "YouTube Recovery Lesson & Reset Streak",
+                            tint = Color(0xFFFF0000),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = tr("Reset My Streak (I Slipped)", "ریست روزهای پاک (لغزش داشتم)"),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = tr(
+                                "Watch NoBeep YouTube recovery lesson first to unlock reset",
+                                "تماشای پیش‌نمایش ویدیوی یوتیوب آموزشی نوبیپ قبل از ریست"
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CrimsonPrimary.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.5f))
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = tr("Reset", "ریست"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 10.sp,
+                            color = CrimsonPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Daily Motivational Quote of the Day (Item 10: Non-tappable, 1 new quote each day)
+        MotivationalQuoteBannerCard(streakDays = streakDays)
+
+        // =========================================================================
+        // STRUCTURED MATERIAL DESIGN 3 DROPDOWN SECTIONS (Item 6: Shorter Home Screen)
+        // =========================================================================
+
+        // DROPDOWN 1: In-App Section Guard (Instagram Reels & Telegram Search Box)
+        val activeSectionsCount = sectionRules.count { it.isEnabled }
+        M3CollapsibleDropdownSection(
+            title = tr(
+                "In-App Section Blocker (Reels & Search)",
+                "مسدودساز بخش‌های برنامه (ریلز و جستجوی تلگرام)"
+            ),
+            subtitle = tr(
+                "Shows Full Block Page on Instagram Reels & Telegram Search (Archived Chats safe)",
+                "نمایش صفحه قفل کامل در ریلز و جستجوی تلگرام (بدون مسدودسازی آرشیو)"
+            ),
+            badgeText = tr("$activeSectionsCount Active", "$activeSectionsCount فعال"),
+            icon = Icons.Default.VisibilityOff,
+            accentColor = CrimsonPrimary,
+            expanded = expandSectionGuardDropdown,
+            onToggleExpand = { expandSectionGuardDropdown = !expandSectionGuardDropdown },
+            testTag = "dropdown_section_blocker"
+        ) {
+            MiddleSectionBlockerCard(
+                sectionRules = sectionRules,
+                onToggleSectionRule = onToggleSectionRule,
+                onAddSectionRule = onAddSectionRule
+            )
+        }
+
+        // DROPDOWN 2: Prevent Uninstall, Strict Lock Mode & Lock Duration (Items 7 & 8)
+        M3CollapsibleDropdownSection(
+            title = tr(
+                "Prevent Uninstall & Lock Timer",
+                "محافظ ضدحذف برنامه و تنظیمات زمان قفل"
+            ),
+            subtitle = tr(
+                "Requires 20 Coins or Long Motivational Sentence to turn off",
+                "نیازمند ۲۰ سکه یا نوشتن جمله انگیزشی طولانی برای خاموش کردن"
+            ),
+            badgeText = if (isPreventUninstallEnabled) {
+                tr("Protected • ${lockDurationMinutes}m", "محافظت‌شده • ${lockDurationMinutes}m")
+            } else {
+                "${lockDurationMinutes}m"
+            },
+            icon = Icons.Default.Lock,
+            accentColor = AmberWarning,
+            expanded = expandUninstallAndLockDropdown,
+            onToggleExpand = { expandUninstallAndLockDropdown = !expandUninstallAndLockDropdown },
+            testTag = "dropdown_prevent_uninstall_and_lock"
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Prevent Uninstall Guard Card (Item 7)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isPreventUninstallEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -357,366 +729,504 @@ fun DashboardScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(CrimsonPrimary.copy(alpha = 0.25f))
-                                    .border(1.5.dp, CrimsonPrimary, RoundedCornerShape(14.dp)),
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Emergency,
-                                    contentDescription = "Emergency Panic Mode",
+                                    imageVector = Icons.Default.DeleteForever,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Prevent Uninstall Protection", "محافظ جلوگیری از حذف برنامه"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Blocks uninstalling X Blocker. Turning off requires 20 Coins or typing a long motivational sentence.",
+                                        "مانع از حذف ایکس بلاکر می‌شود. خاموش کردن نیازمند ۲۰ سکه یا نوشتن جمله انگیزشی طولانی است."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isPreventUninstallEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                if (!targetEnabled) {
+                                    pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_PREVENT_UNINSTALL
+                                } else {
+                                    effectivePrefs.setPreventUninstallEnabled(true)
+                                }
+                            },
+                            modifier = Modifier.testTag("prevent_uninstall_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
+                // Strict Lock Mode Toggle
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, ObsidianBorder)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CrimsonDark.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
                                     tint = CrimsonPrimary,
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
                             Spacer(modifier = Modifier.width(12.dp))
 
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column {
                                 Text(
-                                    text = tr("Emergency Panic Mode (SOS)", "حالت اضطراری پنیک (SOS)"),
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = tr("Strict Lock Mode", "حالت قفل سخت‌گیرانه"),
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = ObsidianTextPrimary
                                 )
                                 Text(
-                                    text = tr("Instant self-lockdown & 4-7-8 urge relief", "قفل فوری خودکار و تمرین تنفس ضد وسوسه"),
+                                    text = tr(
+                                        "Only Phone Calls & Texts allowed while timer counts down",
+                                        "هنگام شمارش تایمر فقط تماس تلفنی و پیامک مجاز است"
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = CrimsonPrimary
-                                )
-                            }
-                        }
-
-                        Button(
-                            onClick = onOpenPanicMode,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CrimsonPrimary,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.testTag("dashboard_panic_button")
-                        ) {
-                            Text(
-                                text = tr("PANIC", "پنیک"),
-                                fontWeight = FontWeight.Black,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
-                    }
-
-                    // Always-On Notification Bar SOS Indicator
-                    var notificationFeedbackBanner by remember { mutableStateOf<String?>(null) }
-                    Surface(
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                val posted = com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
-                                notificationFeedbackBanner = if (posted) {
-                                    tr(
-                                        "Emergency Panic SOS notification is pinned & active in your Notification Bar!",
-                                        "اعلان اضطراری پنیک در نوار اعلان گوشی شما فعال و سنجاق شد!"
-                                    )
-                                } else {
-                                    tr(
-                                        "Enable Notification permission below so the Panic SOS bar can appear.",
-                                        "لطفاً دسترسی اعلان (Notifications) را فعال کنید."
-                                    )
-                                }
-                            }
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        color = ObsidianCard.copy(alpha = 0.85f),
-                        border = BorderStroke(1.dp, if (hasNotificationPermission) EmeraldShield.copy(alpha = 0.5f) else AmberWarning),
-                        modifier = Modifier.testTag("dashboard_pin_notification_bar_button")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = if (hasNotificationPermission) EmeraldShield else AmberWarning,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = if (hasNotificationPermission) {
-                                        tr("Panic SOS button pinned in Notification Bar (Tap to sync)", "دکمه اضطراری در نوار اعلان فعال است (برای بروزرسانی ضربه بزنید)")
-                                    } else {
-                                        tr("Tap here to allow Panic SOS Notification Bar", "برای فعال‌سازی دکمه پنیک در نوار اعلان اینجا بزنید")
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 11.sp,
                                     color = ObsidianTextSecondary
                                 )
                             }
-                            Text(
-                                text = if (hasNotificationPermission) tr("ALWAYS ON", "همیشه فعال") else tr("ALLOW", "فعال‌سازی"),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                color = if (hasNotificationPermission) EmeraldShield else AmberWarning,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                softWrap = false
+                        }
+
+                        Switch(
+                            checked = strictModeEnabled,
+                            onCheckedChange = { targetStrict ->
+                                if (!targetStrict) {
+                                    pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_STRICT_MODE
+                                } else {
+                                    onToggleStrictMode(true)
+                                }
+                            },
+                            modifier = Modifier.testTag("strict_mode_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = CrimsonPrimary
                             )
-                        }
-                    }
-
-                    notificationFeedbackBanner?.let { msg ->
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldShield
-                        )
-                    }
-                }
-            }
-        }
-
-        // Bento Stats Row (Streak, Blocks, Keywords)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            StatCard(
-                title = tr("CLEAN STREAK", "روزهای پاک"),
-                value = "${streakDays}d",
-                subtitle = tr("Don't break chain", "زنجیره را نشکن"),
-                accentColor = EmeraldShield,
-                modifier = Modifier.weight(1f)
-            )
-            StatCard(
-                title = tr("BLOCKS", "مسدودسازی"),
-                value = "$incidentCount",
-                subtitle = tr("Triggers stopped", "موارد متوقف‌شده"),
-                accentColor = CrimsonPrimary,
-                modifier = Modifier.weight(1f)
-            )
-            StatCard(
-                title = tr("ACTIVE RULES", "قوانین فعال"),
-                value = "$totalKeywordsCount",
-                subtitle = tr("EN + FA shield", "محافظ فارسی/انگلیسی"),
-                accentColor = CyanTelemetry,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        // Motivational "Don't Break the Chain" & Famous Quotes Banner
-        com.example.ui.components.MotivationalQuoteBannerCard(streakDays = streakDays)
-
-        // MIDDLE MENU: Dedicated Instagram Reels & Telegram Search Box Section Blocker (Stop Section Only!)
-        MiddleSectionBlockerCard(
-            sectionRules = sectionRules,
-            onToggleSectionRule = onToggleSectionRule,
-            onAddSectionRule = onAddSectionRule
-        )
-
-        // 7-Day Weekly Activity Status Bento Card (No predefined example apps)
-        val effectivePrefs = remember(context, preferences) {
-            preferences ?: ShieldPreferences(context)
-        }
-        WeeklyActivityCard(
-            incidents = incidents,
-            appLimits = appLimits,
-            preferences = effectivePrefs,
-            usageRefreshTrigger = usageRefreshTrigger
-        )
-
-        // Smart Focus (Deep Work Auto-Lock Slots) Card
-        SmartFocusDashboardCard(
-            focusSlots = focusSlots,
-            isSmartFocusEnabled = isSmartFocusEnabled,
-            onToggleSmartFocusMaster = onToggleSmartFocusMaster,
-            onToggleFocusSlot = onToggleFocusSlot,
-            onAddFocusSlot = onAddFocusSlot,
-            onStartFocusSessionNow = onStartFocusSessionNow
-        )
-
-        // Biometric Lodge & Simplified Anti-Agent Screenshot Blocker (FLAG_SECURE)
-        BiometricAndPrivacyDashboardSection(
-            preferences = effectivePrefs,
-            isBiometricLockEnabled = isBiometricLockEnabled,
-            isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
-            onToggleBiometricLock = onToggleBiometricLock,
-            onLockAppNow = onLockAppNow,
-            onToggleBlackoutShield = onToggleBlackoutShield
-        )
-
-        // Permission Setup Warning Banner
-        if (!isAccessibilityEnabled || !hasOverlayPermission || !isBatteryOptExempt || !hasNotificationPermission) {
-            PermissionRequiredCard(
-                isAccessibilityEnabled = isAccessibilityEnabled,
-                hasOverlayPermission = hasOverlayPermission,
-                isBatteryOptExempt = isBatteryOptExempt,
-                hasNotificationPermission = hasNotificationPermission,
-                onEnableAccessibility = {
-                    openAccessibilitySettings(context)
-                    checkPermissions()
-                },
-                onEnableOverlay = {
-                    openOverlaySettings(context)
-                    checkPermissions()
-                },
-                onDisableBatteryOpt = {
-                    ShieldPreferences.requestDisableBatteryOptimization(context)
-                    checkPermissions()
-                },
-                onEnableNotifications = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                }
-            )
-        } else {
-            AllProtectionsActiveCard()
-        }
-
-        // Dedicated Stop Battery Optimization Card
-        BatteryOptimizationCard(
-            isExempt = isBatteryOptExempt,
-            onRequestExemption = {
-                ShieldPreferences.requestDisableBatteryOptimization(context)
-                checkPermissions()
-            }
-        )
-
-        // Custom Lock Duration Picker (Central User Feature)
-        LockDurationCard(
-            currentMinutes = lockDurationMinutes,
-            onChangeDuration = onChangeDuration
-        )
-
-        // Strict Lock Mode Toggle
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, ObsidianBorder)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(CrimsonDark.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column {
-                        Text(
-                            text = tr("Strict Lock Mode", "حالت قفل سخت‌گیرانه"),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = tr("Cannot bypass or dismiss until timer reaches 0", "عدم امکان دور زدن یا بستن قفل تا پایان زمان"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ObsidianTextSecondary
                         )
                     }
                 }
 
-                Switch(
-                    checked = strictModeEnabled,
-                    onCheckedChange = { targetStrict ->
-                        if (!targetStrict) {
-                            pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_STRICT_MODE
-                        } else {
-                            onToggleStrictMode(true)
-                        }
-                    },
-                    modifier = Modifier.testTag("strict_mode_switch"),
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = CrimsonPrimary
-                    )
+                // Lock Duration Picker
+                LockDurationCard(
+                    currentMinutes = lockDurationMinutes,
+                    onChangeDuration = onChangeDuration
                 )
             }
         }
 
-        // Informational Privacy Note
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // DROPDOWN 3: Smart Focus Deep Work Schedules
+        M3CollapsibleDropdownSection(
+            title = tr(
+                "Smart Focus Deep Work Schedules",
+                "زمان‌بندی تمرکز هوشمند (Smart Focus)"
+            ),
+            subtitle = tr(
+                "Auto-lock phone during study, work, or sleep hours",
+                "قفل خودکار گوشی در ساعات مطالعه، کار یا خواب شبانه"
+            ),
+            badgeText = if (isSmartFocusEnabled) tr("Enabled", "فعال") else tr("Off", "خاموش"),
+            icon = Icons.Default.Timer,
+            accentColor = CyanTelemetry,
+            expanded = expandSmartFocusDropdown,
+            onToggleExpand = { expandSmartFocusDropdown = !expandSmartFocusDropdown },
+            testTag = "dropdown_smart_focus"
         ) {
-            Icon(
-                imageVector = Icons.Default.Security,
-                contentDescription = null,
-                tint = ObsidianTextSecondary,
-                modifier = Modifier.size(16.dp)
+            SmartFocusDashboardCard(
+                focusSlots = focusSlots,
+                isSmartFocusEnabled = isSmartFocusEnabled,
+                onToggleSmartFocusMaster = onToggleSmartFocusMaster,
+                onToggleFocusSlot = onToggleFocusSlot,
+                onAddFocusSlot = onAddFocusSlot,
+                onStartFocusSessionNow = onStartFocusSessionNow
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = tr(
-                    "100% On-Device Protection. Your screen text is never transmitted or saved.",
-                    "محافظت ۱۰۰٪ روی دستگاه شما. هیچ متنی از صفحه شما به بیرون ارسال یا ذخیره نمی‌شود."
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = ObsidianTextSecondary
-            )
+        }
+
+        // DROPDOWN 4: Privacy Shield, Biometrics & System Permissions
+        val allPermsReady = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
+        M3CollapsibleDropdownSection(
+            title = tr(
+                "Privacy Shield, Biometrics & System Setup",
+                "حریم خصوصی، قفل بیومتریک و دسترسی‌های سیستم"
+            ),
+            subtitle = tr(
+                "Screenshot blocker, PIN/Biometric lock, Accessibility & Notification Bar",
+                "مسدودساز اسکرین‌شات، قفل اثرانگشت، دسترسی‌پذیری و نوار اعلان"
+            ),
+            badgeText = if (allPermsReady) tr("All Ready", "تکمیل") else tr("Setup", "نیاز به تنظیم"),
+            icon = Icons.Default.Security,
+            accentColor = if (allPermsReady) EmeraldShield else AmberWarning,
+            expanded = expandSecurityAndPermissionsDropdown,
+            onToggleExpand = { expandSecurityAndPermissionsDropdown = !expandSecurityAndPermissionsDropdown },
+            testTag = "dropdown_security_and_permissions"
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Notification Bar SOS Pin Button
+                Surface(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = ObsidianCard,
+                    border = BorderStroke(1.dp, if (hasNotificationPermission) EmeraldShield.copy(alpha = 0.5f) else AmberWarning),
+                    modifier = Modifier.testTag("dashboard_pin_notification_bar_button")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = if (hasNotificationPermission) EmeraldShield else AmberWarning,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = tr(
+                                    "Short Panic SOS Notification Bar (Tap to refresh)",
+                                    "نوار اعلان کوتاه و سریع پنیک (برای بروزرسانی ضربه بزنید)"
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = ObsidianTextPrimary
+                            )
+                        }
+                        Text(
+                            text = if (hasNotificationPermission) tr("ACTIVE", "فعال") else tr("ALLOW", "اجازه"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            color = if (hasNotificationPermission) EmeraldShield else AmberWarning
+                        )
+                    }
+                }
+
+                BiometricAndPrivacyDashboardSection(
+                    preferences = effectivePrefs,
+                    isBiometricLockEnabled = isBiometricLockEnabled,
+                    isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
+                    onToggleBiometricLock = onToggleBiometricLock,
+                    onLockAppNow = onLockAppNow,
+                    onToggleBlackoutShield = onToggleBlackoutShield
+                )
+
+                if (!allPermsReady) {
+                    PermissionRequiredCard(
+                        isAccessibilityEnabled = isAccessibilityEnabled,
+                        hasOverlayPermission = hasOverlayPermission,
+                        isBatteryOptExempt = isBatteryOptExempt,
+                        hasNotificationPermission = hasNotificationPermission,
+                        onEnableAccessibility = {
+                            openAccessibilitySettings(context)
+                            checkPermissions()
+                        },
+                        onEnableOverlay = {
+                            openOverlaySettings(context)
+                            checkPermissions()
+                        },
+                        onDisableBatteryOpt = {
+                            ShieldPreferences.requestDisableBatteryOptimization(context)
+                            checkPermissions()
+                        },
+                        onEnableNotifications = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        }
+                    )
+                } else {
+                    AllProtectionsActiveCard()
+                }
+
+                BatteryOptimizationCard(
+                    isExempt = isBatteryOptExempt,
+                    onRequestExemption = {
+                        ShieldPreferences.requestDisableBatteryOptimization(context)
+                        checkPermissions()
+                    }
+                )
+            }
         }
     }
 
-    if (pendingAntiTamperAction != null) {
-        StrictModeCommitmentDialog(
-            actionTitle = when (pendingAntiTamperAction) {
-                PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> tr("Pause Master Shield Protection?", "توقف محافظ اصلی برنامه؟")
-                PendingAntiTamperAction.DISABLE_STRICT_MODE -> tr("Disable Strict Lock Mode?", "غیرفعال کردن قفل سخت‌گیرانه؟")
-                null -> ""
+    val activeAntiTamperAction = pendingAntiTamperAction
+    if (activeAntiTamperAction != null) {
+        MotivationOrCoinsUnlockGateDialog(
+            actionTitle = when (activeAntiTamperAction) {
+                PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> tr(
+                    "Pause Master Shield Protection?",
+                    "توقف محافظ اصلی برنامه؟"
+                )
+                PendingAntiTamperAction.DISABLE_STRICT_MODE -> tr(
+                    "Disable Strict Lock Mode?",
+                    "غیرفعال کردن قفل سخت‌گیرانه؟"
+                )
+                PendingAntiTamperAction.DISABLE_PREVENT_UNINSTALL -> tr(
+                    "Turn Off Prevent Uninstall?",
+                    "خاموش کردن محافظ جلوگیری از حذف؟"
+                )
             },
-            onConfirm = {
-                when (pendingAntiTamperAction) {
+            coinsBalance = coinsBalance,
+            onUnlockWithCoins = {
+                if (effectivePrefs.spendCoins(20)) {
+                    when (activeAntiTamperAction) {
+                        PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> onToggleProtection(false)
+                        PendingAntiTamperAction.DISABLE_STRICT_MODE -> onToggleStrictMode(false)
+                        PendingAntiTamperAction.DISABLE_PREVENT_UNINSTALL -> effectivePrefs.setPreventUninstallEnabled(false)
+                    }
+                    pendingAntiTamperAction = null
+                }
+            },
+            onConfirmBySentence = {
+                when (activeAntiTamperAction) {
                     PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> onToggleProtection(false)
                     PendingAntiTamperAction.DISABLE_STRICT_MODE -> onToggleStrictMode(false)
-                    null -> {}
+                    PendingAntiTamperAction.DISABLE_PREVENT_UNINSTALL -> effectivePrefs.setPreventUninstallEnabled(false)
                 }
                 pendingAntiTamperAction = null
             },
             onDismiss = { pendingAntiTamperAction = null }
         )
     }
+
+    if (showHomeResetStreakYoutubeDialog) {
+        NoBeepYoutubeResetStreakDialog(
+            bestChainDays = maxOf(streakDays, bestChainDays),
+            onConfirmResetStreak = { note ->
+                effectivePrefs.resetStreak(note)
+            },
+            onDismiss = { showHomeResetStreakYoutubeDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun CompactMetricPill(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = ObsidianCard,
+        border = BorderStroke(1.dp, color.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleSmall,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Black,
+                color = color,
+                maxLines = 1
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                color = ObsidianTextSecondary,
+                maxLines = 1
+            )
+        }
+    }
 }
 
 /**
- * Middle Menu Card on the Dashboard for stopping ONLY Instagram Reels or ONLY the Telegram Search Box
- * without blocking the entire Instagram or Telegram app!
+ * Material Design 3 Structured Collapsible Dropdown Card (Item 6)
+ */
+@Composable
+fun M3CollapsibleDropdownSection(
+    title: String,
+    subtitle: String,
+    badgeText: String,
+    icon: ImageVector,
+    accentColor: Color,
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
+    testTag: String,
+    content: @Composable () -> Unit
+) {
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "dropdown_arrow_rotation"
+    )
+
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+            .testTag(testTag),
+        colors = CardDefaults.elevatedCardColors(containerColor = ObsidianSurface),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    1.dp,
+                    if (expanded) accentColor.copy(alpha = 0.65f) else ObsidianBorder,
+                    RoundedCornerShape(20.dp)
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleExpand() }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(accentColor.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = ObsidianTextSecondary,
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = accentColor.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            color = accentColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = ObsidianTextSecondary,
+                        modifier = Modifier.rotate(arrowRotation)
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * In-App Section Blocker Card for Instagram Reels & Telegram Search Box (Items 3 & 4):
+ * Shows Full Block Page for both Instagram Reels and Telegram Search, while ignoring Telegram Archived Chats.
  */
 @Composable
 fun MiddleSectionBlockerCard(
@@ -737,234 +1247,192 @@ fun MiddleSectionBlockerCard(
     val isInstagramReelsEnabled = instagramReelsRule?.isEnabled ?: true
     val isTelegramSearchEnabled = telegramSearchRule?.isEnabled ?: true
 
-    Card(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .testTag("middle_section_blocker_card"),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-        shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.5.dp, CrimsonPrimary.copy(alpha = 0.55f))
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        // Option 1: Instagram Reels Section
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = ObsidianCard,
+            border = BorderStroke(
+                1.dp,
+                if (isInstagramReelsEnabled) EmeraldShield.copy(alpha = 0.5f) else ObsidianBorder
+            ),
+            modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(CrimsonPrimary.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Icon(
+                        imageVector = Icons.Default.VideoLibrary,
+                        contentDescription = null,
+                        tint = if (isInstagramReelsEnabled) EmeraldShield else ObsidianTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = tr(
-                                "In-App Section Guard (Stop Section Only)",
-                                "مسدودساز بخش‌های خاص (توقف فقط همان بخش)"
+                                "1. Instagram Reels Blocker (Full Block Page)",
+                                "۱. مسدودساز بخش Reels اینستاگرام (صفحه قفل کامل)"
                             ),
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = ObsidianTextPrimary
                         )
                         Text(
                             text = tr(
-                                "Does NOT block the whole app — only exits Reels or Search Box when entered!",
-                                "کل برنامه را نمی‌بندد — فقط هنگام ورود به ریلز یا باکس جستجو از آن بخش خارج می‌شود!"
+                                "DMs & Feed work normally; entering Reels opens the X Blocker Lock Page.",
+                                "چت و فید عادی کار می‌کند؛ با ورود به Reels صفحه قفل کامل باز می‌شود."
                             ),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
                             color = ObsidianTextSecondary
                         )
                     }
                 }
-            }
 
-            // Option 1: Instagram Reels Section Only
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = ObsidianCard,
-                border = BorderStroke(
-                    1.dp,
-                    if (isInstagramReelsEnabled) EmeraldShield.copy(alpha = 0.5f) else ObsidianBorder
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VideoLibrary,
-                            contentDescription = null,
-                            tint = if (isInstagramReelsEnabled) EmeraldShield else ObsidianTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = tr(
-                                    "1. Stop Instagram Reels Section Only",
-                                    "۱. توقف فقط بخش Reels اینستاگرام"
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                            Text(
-                                text = tr(
-                                    "Instagram DMs & Feed work normally; stops ONLY when you enter Reels tab.",
-                                    "چت و فید اینستاگرام عادی کار می‌کند؛ فقط با ورود به تب Reels متوقف می‌شود."
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary
+                Switch(
+                    checked = isInstagramReelsEnabled,
+                    onCheckedChange = {
+                        if (instagramReelsRule != null) {
+                            onToggleSectionRule(instagramReelsRule)
+                        } else {
+                            onAddSectionRule(
+                                SectionBlockRule(
+                                    targetPackage = "com.instagram.android",
+                                    sectionName = "Instagram Reels & Explore",
+                                    triggerPattern = "reels|ریلز|clips_viewer",
+                                    viewIdPattern = "clips_viewer|reel_viewer|clips_video_container|clips_tab",
+                                    isEnabled = true
+                                )
                             )
                         }
-                    }
-
-                    Switch(
-                        checked = isInstagramReelsEnabled,
-                        onCheckedChange = {
-                            if (instagramReelsRule != null) {
-                                onToggleSectionRule(instagramReelsRule)
-                            } else {
-                                onAddSectionRule(
-                                    SectionBlockRule(
-                                        targetPackage = "com.instagram.android",
-                                        sectionName = "Instagram Reels & Explore",
-                                        triggerPattern = "reels|ریلز|clips_viewer",
-                                        viewIdPattern = "clips_viewer|reel_viewer|clips_video_container|clips_tab",
-                                        isEnabled = true
-                                    )
-                                )
-                            }
-                        },
-                        modifier = Modifier.testTag("middle_instagram_reels_switch"),
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = EmeraldShield
-                        )
+                    },
+                    modifier = Modifier.testTag("middle_instagram_reels_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = EmeraldShield
                     )
-                }
+                )
             }
+        }
 
-            // Option 2: Telegram Search Box Only
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = ObsidianCard,
-                border = BorderStroke(
-                    1.dp,
-                    if (isTelegramSearchEnabled) CyanTelemetry.copy(alpha = 0.5f) else ObsidianBorder
-                ),
-                modifier = Modifier.fillMaxWidth()
+        // Option 2: Telegram Search Box (Archive Safe + Full Block Page)
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = ObsidianCard,
+            border = BorderStroke(
+                1.dp,
+                if (isTelegramSearchEnabled) CyanTelemetry.copy(alpha = 0.5f) else ObsidianBorder
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SearchOff,
-                            contentDescription = null,
-                            tint = if (isTelegramSearchEnabled) CyanTelemetry else ObsidianTextSecondary,
-                            modifier = Modifier.size(22.dp)
+                    Icon(
+                        imageVector = Icons.Default.SearchOff,
+                        contentDescription = null,
+                        tint = if (isTelegramSearchEnabled) CyanTelemetry else ObsidianTextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = tr(
+                                "2. Telegram Search Box Blocker (Archive Safe)",
+                                "۲. مسدودساز باکس جستجوی تلگرام (ایمن برای آرشیو)"
+                            ),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = tr(
-                                    "2. Stop Telegram Search Box Only",
-                                    "۲. توقف فقط باکس جستجوی تلگرام (Search Box)"
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                            Text(
-                                text = tr(
-                                    "Telegram chats work normally; stops ONLY when you tap the Search box.",
-                                    "چت‌های تلگرام عادی کار می‌کنند؛ فقط هنگام ورود به باکس جستجو متوقف می‌شود."
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary
+                        Text(
+                            text = tr(
+                                "Chats & Archived Chats work freely; tapping Search opens the Block Page.",
+                                "چت‌ها و بخش آرشیو کاملاً باز هستند؛ زدن روی جستجو صفحه قفل را باز می‌کند."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = isTelegramSearchEnabled,
+                    onCheckedChange = {
+                        if (telegramSearchRule != null) {
+                            onToggleSectionRule(telegramSearchRule)
+                        } else {
+                            onAddSectionRule(
+                                SectionBlockRule(
+                                    targetPackage = "org.telegram.messenger",
+                                    sectionName = "Telegram Search Box",
+                                    triggerPattern = "search|جستجو|global search|جستجوی جهانی|search messages",
+                                    viewIdPattern = "search_src_text|chat_search|search_field",
+                                    isEnabled = true
+                                )
                             )
                         }
-                    }
-
-                    Switch(
-                        checked = isTelegramSearchEnabled,
-                        onCheckedChange = {
-                            if (telegramSearchRule != null) {
-                                onToggleSectionRule(telegramSearchRule)
-                            } else {
-                                onAddSectionRule(
-                                    SectionBlockRule(
-                                        targetPackage = "org.telegram.messenger",
-                                        sectionName = "Telegram Search Box",
-                                        triggerPattern = "search|جستجو|global search|جستجوی جهانی|search messages",
-                                        viewIdPattern = "search_src_text|chat_search|search_field",
-                                        isEnabled = true
-                                    )
-                                )
-                            }
-                        },
-                        modifier = Modifier.testTag("middle_telegram_search_switch"),
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Black,
-                            checkedTrackColor = CyanTelemetry
-                        )
+                    },
+                    modifier = Modifier.testTag("middle_telegram_search_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = CyanTelemetry
                     )
-                }
+                )
             }
         }
     }
 }
 
+/**
+ * Unlock Gate Dialog (Items 7 & 8, Confirmed by user):
+ * Allows turning off Prevent Uninstall, Strict Mode, or Master Shield by EITHER:
+ * 1. Spending 20 Coins (earned +1 coin per clean day), OR
+ * 2. Typing a long motivational commitment sentence.
+ */
 @Composable
-private fun StrictModeCommitmentDialog(
+private fun MotivationOrCoinsUnlockGateDialog(
     actionTitle: String,
-    onConfirm: () -> Unit,
+    coinsBalance: Int,
+    onUnlockWithCoins: () -> Unit,
+    onConfirmBySentence: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val requiredPhrase = "I choose self control"
+    val longMotivationalSentence =
+        "I am the master of my mind and I refuse to trade my clean streak chain for a temporary urge"
+    val legacyShortPhrase = "I choose self control"
     var typedPhrase by remember { mutableStateOf("") }
-    val isMatched = typedPhrase.trim().equals(requiredPhrase, ignoreCase = true)
+    val normalizedInput = typedPhrase.trim()
+    val isMatched = normalizedInput.equals(longMotivationalSentence, ignoreCase = true) ||
+        normalizedInput.equals(legacyShortPhrase, ignoreCase = true)
+    val hasEnoughCoins = coinsBalance >= 20
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -987,35 +1455,109 @@ private fun StrictModeCommitmentDialog(
             }
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
                     text = tr(
-                        "Strict Mode is active to protect your clean streak during moments of urge. To confirm this change, type the phrase below:",
-                        "حالت سخت‌گیرانه برای محافظت از رکورد پاک شما فعال است. برای تایید، عبارت زیر را تایپ کنید:"
+                        "To turn off protection, you must either spend 20 Clean Coins OR type the long motivational sentence below:",
+                        "برای خاموش کردن این محافظ، باید ۲۰ سکه روزهای پاک خرج کنید یا جمله انگیزشی طولانی زیر را کامل بنویسید:"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
-                Spacer(modifier = Modifier.height(10.dp))
+
+                // Option 1: Spend 20 Coins Card
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = AmberWarning.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MonetizationOn,
+                                contentDescription = null,
+                                tint = AmberWarning,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = tr(
+                                        "Your Balance: $coinsBalance / 20 Coins",
+                                        "موجودی شما: $coinsBalance از ۲۰ سکه"
+                                    ),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AmberWarning
+                                )
+                                Text(
+                                    text = tr("+1 Coin earned each Clean Day", "+۱ سکه به ازای هر روز پاک"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        FilledTonalButton(
+                            onClick = onUnlockWithCoins,
+                            enabled = hasEnoughCoins,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = AmberWarning,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("unlock_with_20_coins_button")
+                        ) {
+                            Text(
+                                text = tr("Use 20 🪙", "خرج ۲۰ سکه"),
+                                fontWeight = FontWeight.Black,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
+                // Option 2: Type Long Motivational Sentence
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
                     color = ObsidianCard,
+                    border = BorderStroke(1.dp, ObsidianBorder),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "\"$requiredPhrase\"",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "\"$longMotivationalSentence\"",
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
-                        color = AmberWarning,
+                        color = CyanTelemetry,
                         modifier = Modifier.padding(10.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+
                 OutlinedTextField(
                     value = typedPhrase,
                     onValueChange = { typedPhrase = it },
-                    placeholder = { Text(tr("Type phrase to unlock...", "عبارت را وارد کنید...")) },
-                    singleLine = true,
+                    placeholder = {
+                        Text(
+                            tr(
+                                "Type the full motivational sentence...",
+                                "جمله انگیزشی بالا را به صورت کامل تایپ کنید..."
+                            )
+                        )
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("strict_mode_confirm_input"),
@@ -1031,7 +1573,7 @@ private fun StrictModeCommitmentDialog(
         },
         confirmButton = {
             Button(
-                onClick = onConfirm,
+                onClick = onConfirmBySentence,
                 enabled = isMatched,
                 colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
                 modifier = Modifier.testTag("strict_mode_confirm_button")
@@ -1119,11 +1661,11 @@ fun LockDurationCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, ObsidianBorder)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1132,7 +1674,7 @@ fun LockDurationCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(34.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(AmberWarning.copy(alpha = 0.2f)),
                         contentAlignment = Alignment.Center
@@ -1141,13 +1683,13 @@ fun LockDurationCard(
                             imageVector = Icons.Default.HourglassTop,
                             contentDescription = null,
                             tint = AmberWarning,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = tr("Lock Duration", "مدت زمان قفل"),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = ObsidianTextPrimary
                     )
@@ -1160,7 +1702,7 @@ fun LockDurationCard(
                 ) {
                     Text(
                         text = tr("$currentMinutes min", "$currentMinutes دقیقه"),
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = ObsidianTextPrimary,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -1168,15 +1710,7 @@ fun LockDurationCard(
                 }
             }
 
-            Text(
-                text = tr(
-                    "When explicit content is detected, the phone will stay locked for this duration:",
-                    "هنگام تشخیص محتوای نامناسب، گوشی به این مدت قفل خواهد شد:"
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = ObsidianTextSecondary,
-                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
-            )
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Preset Buttons
             Row(
@@ -1192,15 +1726,15 @@ fun LockDurationCard(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .height(38.dp)
+                            .height(36.dp)
                             .testTag("preset_${min}_min"),
                         shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) CrimsonPrimary else ObsidianCard,
+                        color = if (isSelected) CrimsonPrimary else ObsidianSurface,
                         border = if (isSelected) null else BorderStroke(1.dp, ObsidianBorder)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
-                                text = if (min == 1) "1m (Test)" else "${min}m",
+                                text = "${min}m",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isSelected) Color.White else ObsidianTextSecondary
@@ -1210,14 +1744,7 @@ fun LockDurationCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Custom Slider
-            Text(
-                text = tr("Custom Duration Slider (1 to 120 minutes):", "تنظیم دستی زمان قفل (۱ تا ۱۲۰ دقیقه):"),
-                style = MaterialTheme.typography.labelSmall,
-                color = ObsidianTextSecondary
-            )
+            Spacer(modifier = Modifier.height(10.dp))
 
             Slider(
                 value = sliderValue,
@@ -1253,36 +1780,28 @@ fun PermissionRequiredCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.Warning,
                     contentDescription = null,
                     tint = AmberWarning,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(20.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = tr("Permission Setup Required", "نیاز به فعال‌سازی دسترسی‌ها"),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = ObsidianTextPrimary
                 )
             }
 
-            Text(
-                text = tr(
-                    "To monitor on-screen text across browsers, stop Instagram Reels / Telegram Search, and lock over apps, X Blocker needs:",
-                    "برای پایش متن صفحه، توقف ریلز اینستاگرام و جستجوی تلگرام، ایکس بلاکر به دسترسی‌های زیر نیاز دارد:"
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = ObsidianTextSecondary,
-                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
-            )
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Accessibility permission item
             Row(
@@ -1292,14 +1811,14 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tr("1. Accessibility Service", "۱. سرویس دسترسی‌پذیری (Accessibility)"),
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = tr("1. Accessibility Service", "۱. سرویس دسترسی‌پذیری"),
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = ObsidianTextPrimary
                     )
                     Text(
-                        text = if (isAccessibilityEnabled) tr("Active & scanning", "فعال و در حال پایش") else tr("Needed to detect explicit words & sections", "لازم برای تشخیص کلمات و بخش‌ها"),
-                        style = MaterialTheme.typography.bodySmall,
+                        text = if (isAccessibilityEnabled) tr("Active", "فعال") else tr("Required for Reels/Search & Web guard", "لازم برای محافظت از ریلز، جستجو و وب"),
+                        style = MaterialTheme.typography.labelSmall,
                         color = if (isAccessibilityEnabled) EmeraldShield else ObsidianTextSecondary
                     )
                 }
@@ -1309,7 +1828,7 @@ fun PermissionRequiredCard(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = "Enabled",
                         tint = EmeraldShield,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 } else {
                     Button(
@@ -1322,13 +1841,13 @@ fun PermissionRequiredCard(
                             text = tr("Enable", "فعال‌سازی"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Overlay permission item
             Row(
@@ -1339,13 +1858,13 @@ fun PermissionRequiredCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = tr("2. Display Over Other Apps", "۲. نمایش روی سایر برنامه‌ها"),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = ObsidianTextPrimary
                     )
                     Text(
-                        text = if (hasOverlayPermission) tr("Active & granted", "فعال") else tr("Required to display lockdown screen", "لازم برای نمایش صفحه قفل"),
-                        style = MaterialTheme.typography.bodySmall,
+                        text = if (hasOverlayPermission) tr("Active", "فعال") else tr("Required for Block Screen", "لازم برای نمایش صفحه قفل"),
+                        style = MaterialTheme.typography.labelSmall,
                         color = if (hasOverlayPermission) EmeraldShield else ObsidianTextSecondary
                     )
                 }
@@ -1355,7 +1874,7 @@ fun PermissionRequiredCard(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = "Enabled",
                         tint = EmeraldShield,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 } else {
                     Button(
@@ -1368,13 +1887,13 @@ fun PermissionRequiredCard(
                             text = tr("Grant", "اعطا"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Battery Optimization Item
             Row(
@@ -1384,15 +1903,10 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tr("3. Stop Battery Optimization", "۳. لغو بهینه‌سازی باتری"),
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = tr("3. Unrestricted Battery", "۳. لغو بهینه‌سازی باتری"),
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = ObsidianTextPrimary
-                    )
-                    Text(
-                        text = if (isBatteryOptExempt) tr("Unrestricted background active", "فعال در پس‌زمینه") else tr("Prevents Android from killing the scanner", "جلوگیری از بسته شدن خودکار برنامه"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isBatteryOptExempt) EmeraldShield else ObsidianTextSecondary
                     )
                 }
 
@@ -1401,7 +1915,7 @@ fun PermissionRequiredCard(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = "Enabled",
                         tint = EmeraldShield,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 } else {
                     Button(
@@ -1414,15 +1928,14 @@ fun PermissionRequiredCard(
                             text = tr("Disable", "لغو"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
 
             if (!hasNotificationPermission) {
-                Spacer(modifier = Modifier.height(12.dp))
-
+                Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1430,15 +1943,10 @@ fun PermissionRequiredCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = tr("4. Persistent Lockdown Notification", "۴. اعلان دائمی قفل"),
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = tr("4. Notifications", "۴. اعلان‌ها"),
+                            style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = tr("Shows remaining lock time in status bar", "نمایش زمان باقی‌مانده قفل در نوار اعلان"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ObsidianTextSecondary
                         )
                     }
 
@@ -1448,18 +1956,11 @@ fun PermissionRequiredCard(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.testTag("enable_notifications_btn")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            tint = Color.Black,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = tr("Allow", "اجازه"),
                             color = Color.Black,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
@@ -1475,96 +1976,58 @@ fun BatteryOptimizationCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(
             1.dp,
             if (isExempt) EmeraldShield.copy(alpha = 0.4f) else AmberWarning.copy(alpha = 0.5f)
         )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (isExempt) EmeraldShield.copy(alpha = 0.2f)
-                                else AmberWarning.copy(alpha = 0.2f)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = if (isExempt) EmeraldShield else AmberWarning,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column {
-                        Text(
-                            text = tr("Battery Optimization", "بهینه‌سازی باتری"),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = if (isExempt) tr("Unrestricted Background (Active)", "بدون محدودیت در پس‌زمینه (فعال)") else tr("Battery Saver May Kill App", "ذخیره‌ساز باتری ممکن است برنامه را ببندد"),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isExempt) EmeraldShield else AmberWarning
-                        )
-                    }
-                }
-
-                if (isExempt) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = EmeraldShield.copy(alpha = 0.2f)
-                    ) {
-                        Text(
-                            text = tr("EXEMPT", "معاف"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldShield,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                } else {
-                    Button(
-                        onClick = onRequestExemption,
-                        colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("disable_battery_opt_button")
-                    ) {
-                        Text(
-                            text = tr("Disable", "لغو"),
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Icon(
+                    imageVector = Icons.Default.Bolt,
+                    contentDescription = null,
+                    tint = if (isExempt) EmeraldShield else AmberWarning,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = tr("Battery Optimization", "بهینه‌سازی باتری"),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = if (isExempt) tr("Unrestricted Background Active", "بدون محدودیت در پس‌زمینه") else tr("Tap Disable to keep scanner alive", "برای فعال ماندن دائمی لغو کنید"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isExempt) EmeraldShield else AmberWarning
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = tr(
-                    "Disabling battery optimization guarantees X Blocker's accessibility scanner never sleeps and remains 100% active.",
-                    "غیرفعال کردن بهینه‌سازی باتری تضمین می‌کند سرویس ایکس بلاکر در پس‌زمینه همیشه فعال بماند."
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = ObsidianTextSecondary
-            )
+            if (!isExempt) {
+                Button(
+                    onClick = onRequestExemption,
+                    colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.testTag("disable_battery_opt_button")
+                ) {
+                    Text(
+                        text = tr("Disable", "لغو"),
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
         }
     }
 }
@@ -1573,47 +2036,32 @@ fun BatteryOptimizationCard(
 fun AllProtectionsActiveCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.4f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(EmeraldShield.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = EmeraldShield,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column {
-                Text(
-                    text = tr("System Permissions Granted", "تمامی دسترسی‌های سیستم فعال هستند"),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = ObsidianTextPrimary
-                )
-                Text(
-                    text = tr(
-                        "Accessibility, Overlay, Notifications, and Unrestricted Background are active.",
-                        "سرویس دسترسی‌پذیری، نمایش روی برنامه‌ها و اجرای پس‌زمینه فعال هستند."
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = EmeraldShield
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = EmeraldShield,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = tr(
+                    "All System Permissions Active",
+                    "تمامی دسترسی‌های سیستم فعال هستند"
+                ),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = EmeraldShield
+            )
         }
     }
 }

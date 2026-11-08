@@ -1,384 +1,396 @@
 package com.example.service
 
 import android.accessibilityservice.AccessibilityService
-import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import com.example.ShieldApplication
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockedKeyword
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
+import com.example.data.preferences.ShieldPreferences
+import com.example.data.repository.ShieldRepository
 import com.example.notification.LockdownNotificationManager
-import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.lockdown.LockdownActivity
+import com.example.util.AppPackageResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class ShieldAccessibilityService : AccessibilityService() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private lateinit var repository: ShieldRepository
+    private lateinit var preferences: ShieldPreferences
+
+    @Volatile
     private var cachedKeywords: List<BlockedKeyword> = emptyList()
+
+    @Volatile
     private var cachedSectionRules: List<SectionBlockRule> = emptyList()
+
+    @Volatile
     private var cachedAppLimits: List<AppUsageLimit> = emptyList()
+
+    @Volatile
     private var cachedFocusSlots: List<FocusScheduleSlot> = emptyList()
 
-    private var lastScanTime = 0L
-    private val scanThrottleMs = 150L
-    private var lastSectionExitTime = 0L
-    private val sectionExitCooldownMs = 1200L
+    private var lastScanTimestamp = 0L
+    private var lastForegroundPackage: String = ""
+    private var lastUsageTickTimestamp = 0L
 
-    // Foreground tracking for daily app usage limit
-    private var currentForegroundPkg: String? = null
-    private var foregroundStartTime: Long = 0L
+    override fun onCreate() {
+        super.onCreate()
+        val app = application as ShieldApplication
+        repository = app.repository
+        preferences = app.preferences
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(this)
-        observeRules()
-        startSmartFocusTicker()
-    }
-
-    private fun observeRules() {
-        val repo = runCatching { ShieldApplication.instance.repository }.getOrNull() ?: return
-
+        // Keep active rules cached in memory for zero-latency scanning
         serviceScope.launch {
-            try {
-                repo.allKeywords.collectLatest { list ->
-                    cachedKeywords = list.filter { it.isEnabled }
-                }
-            } catch (_: Exception) {}
-        }
-
-        serviceScope.launch {
-            try {
-                repo.allSectionRules.collectLatest { list ->
-                    cachedSectionRules = list.filter { it.isEnabled }
-                }
-            } catch (_: Exception) {}
-        }
-
-        serviceScope.launch {
-            try {
-                repo.allAppUsageLimits.collectLatest { list ->
-                    cachedAppLimits = list.filter { it.isEnabled }
-                }
-            } catch (_: Exception) {}
-        }
-
-        serviceScope.launch {
-            try {
-                repo.allFocusSlots.collectLatest { list ->
-                    cachedFocusSlots = list.filter { it.isEnabled }
-                }
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun startSmartFocusTicker() {
-        serviceScope.launch {
-            while (true) {
-                checkSmartFocusSchedule()
-                checkActiveForegroundAppUsageAndLimits()
-                delay(3_000L)
+            repository.allKeywords.collect { list ->
+                cachedKeywords = list.filter { it.isEnabled }
             }
         }
-    }
+        serviceScope.launch {
+            repository.allSectionRules.collect { list ->
+                cachedSectionRules = list.filter { it.isEnabled }
+            }
+        }
+        serviceScope.launch {
+            repository.allAppUsageLimits.collect { list ->
+                cachedAppLimits = list.filter { it.isEnabled }
+            }
+        }
+        serviceScope.launch {
+            repository.allFocusSlots.collect { list ->
+                cachedFocusSlots = list.filter { it.isEnabled }
+            }
+        }
 
-    private fun checkActiveForegroundAppUsageAndLimits() {
-        val app = runCatching { ShieldApplication.instance }.getOrNull() ?: return
-        val preferences = app.preferences
-        if (!preferences.getIsProtectionEnabled() || preferences.isCurrentlyLocked()) return
+        // Background ticker every 1 second to enforce:
+        // 1. Active Lockdown Strict Screen Pinning (allows only X Blocker + temporary Call/SMS window)
+        // 2. Real-time Per-App Daily Usage Limits
+        // 3. Scheduled Smart Focus Auto-Activation
+        // 4. Daily Clean Day Milestone & Coin Reward check
+        serviceScope.launch {
+            while (true) {
+                delay(1000L)
+                val now = System.currentTimeMillis()
+                try {
+                    LockdownNotificationManager.checkAndNotifyCleanDayMilestone(this@ShieldAccessibilityService)
+                } catch (_: Exception) {
+                }
 
-        val activeWindowPkg = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
-        val systemStatsPkg = preferences.queryRecentForegroundPackageFromSystem()
-        val candidatePkg = when {
-            !activeWindowPkg.isNullOrBlank() &&
-                !com.example.util.AppPackageResolver.isTransientSystemPackage(activeWindowPkg, applicationContext.packageName) -> activeWindowPkg
-            !systemStatsPkg.isNullOrBlank() &&
-                !com.example.util.AppPackageResolver.isTransientSystemPackage(systemStatsPkg, applicationContext.packageName) -> systemStatsPkg
-            else -> currentForegroundPkg
-        } ?: return
+                // 1. Check Smart Focus Schedules
+                if (preferences.getIsSmartFocusEnabled() && !preferences.isCurrentlyLocked()) {
+                    val activeMatch = com.example.ui.focus.SmartFocusEngine.checkAndFindActiveSlotToTrigger(
+                        slots = cachedFocusSlots,
+                        preferences = preferences
+                    )
+                    if (activeMatch != null) {
+                        val (slot, durationMins) = activeMatch
+                        preferences.markFocusSlotTriggeredToday(slot.id, now)
+                        triggerLockdown(
+                            triggerWord = "Smart Focus: ${slot.title}",
+                            sourceApp = "Scheduled Focus",
+                            customDurationMinutes = durationMins
+                        )
+                    }
+                }
 
-        handleAppUsageTracking(candidatePkg, AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, preferences)
-    }
+                val rootNode = try {
+                    rootInActiveWindow
+                } catch (_: Exception) {
+                    null
+                }
+                val rootPkg = rootNode?.packageName?.toString().orEmpty()
+                val sysPkg = preferences.queryRecentForegroundPackageFromSystem().orEmpty()
+                val activePkg = when {
+                    rootPkg.isNotBlank() && !isIgnoredSystemUiPackage(rootPkg) -> rootPkg
+                    sysPkg.isNotBlank() && !isIgnoredSystemUiPackage(sysPkg) -> sysPkg
+                    else -> lastForegroundPackage
+                }
 
-    private fun checkSmartFocusSchedule() {
-        val app = runCatching { ShieldApplication.instance }.getOrNull() ?: return
-        val preferences = app.preferences
-        if (!preferences.getIsProtectionEnabled()) return
+                if (activePkg.isNotBlank()) {
+                    lastForegroundPackage = activePkg
+                }
 
-        val match = SmartFocusEngine.checkAndFindActiveSlotToTrigger(
-            slots = cachedFocusSlots,
-            preferences = preferences
-        )
-        if (match != null) {
-            val (slot, durationMins) = match
-            preferences.markFocusSlotTriggeredToday(slot.id)
-            triggerCustomLockdown(
-                reason = "Smart Focus: ${slot.title} (${slot.formattedTimeRange()})",
-                sourcePackage = "Smart Focus Deep Work",
-                durationMinutes = durationMins
-            )
+                // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
+                //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
+                if (preferences.isCurrentlyLocked()) {
+                    if (activePkg.isNotBlank() &&
+                        !preferences.isPackageAllowedDuringLockdown(activePkg)
+                    ) {
+                        launchLockdownOverlay(
+                            triggerWord = preferences.getActiveLockTrigger(),
+                            sourceApp = preferences.getActiveLockApp(),
+                            endTimeEpoch = preferences.getActiveLockEndTime()
+                        )
+                    }
+                    continue
+                }
+
+                if (!preferences.getIsProtectionEnabled()) continue
+
+                // 3. Track Per-App Usage & Enforce Daily Limit
+                if (activePkg.isNotBlank() &&
+                    activePkg != packageName &&
+                    !isSystemLauncherOrKeyboard(activePkg)
+                ) {
+                    val elapsedSec = if (lastUsageTickTimestamp > 0L) {
+                        ((now - lastUsageTickTimestamp) / 1000L).toInt().coerceIn(1, 5)
+                    } else {
+                        1
+                    }
+                    lastUsageTickTimestamp = now
+                    preferences.addAppUsageSeconds(activePkg, elapsedSec)
+
+                    val matchedLimit = cachedAppLimits.firstOrNull { limit ->
+                        limit.isEnabled && AppPackageResolver.matchesAppLimit(
+                            limit = limit,
+                            candidatePackage = activePkg,
+                            context = this@ShieldAccessibilityService
+                        )
+                    }
+                    if (matchedLimit != null) {
+                        val usedMins = preferences.getTodayAppUsageMinutes(
+                            packageName = matchedLimit.packageName,
+                            appName = matchedLimit.appName
+                        )
+                        if (usedMins >= matchedLimit.dailyLimitMinutes) {
+                            triggerLockdown(
+                                triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
+                                sourceApp = matchedLimit.appName
+                            )
+                        }
+                    }
+                } else {
+                    lastUsageTickTimestamp = now
+                }
+            }
         }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        val app = runCatching { ShieldApplication.instance }.getOrNull() ?: return
-        val preferences = app.preferences
+        val pkgName = event.packageName?.toString() ?: return
+        if (!isIgnoredSystemUiPackage(pkgName)) {
+            lastForegroundPackage = pkgName
+        }
 
-        // If currently in active lockdown, ensure lockdown screen stays on top if user tries switching apps
+        // 1. If device is currently in active lockdown, block leaving X Blocker (except whitelisted Call/SMS)
         if (preferences.isCurrentlyLocked()) {
-            val packageName = event.packageName?.toString() ?: ""
-            if (packageName.isNotEmpty() &&
-                !com.example.util.AppPackageResolver.isTransientSystemPackage(packageName, applicationContext.packageName)
-            ) {
-                bringLockdownToFront()
+            if (!preferences.isPackageAllowedDuringLockdown(pkgName)) {
+                launchLockdownOverlay(
+                    triggerWord = preferences.getActiveLockTrigger(),
+                    sourceApp = preferences.getActiveLockApp(),
+                    endTimeEpoch = preferences.getActiveLockEndTime()
+                )
             }
             return
         }
 
-        if (!preferences.getIsProtectionEnabled()) {
-            return
+        if (pkgName == packageName) return
+
+        val rootNode = try {
+            rootInActiveWindow
+        } catch (_: Exception) {
+            null
+        } ?: event.source
+
+        // 2. Prevent Uninstall Guard (Item 7)
+        if (preferences.getIsPreventUninstallEnabled()) {
+            if (TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, pkgName)) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                triggerLockdown(
+                    triggerWord = "Prevent Uninstall Guard",
+                    sourceApp = "System Settings"
+                )
+                return
+            }
         }
 
-        // Check Smart Focus Deep Work schedule
-        checkSmartFocusSchedule()
-
-        val sourcePackage = event.packageName?.toString() ?: return
-        if (sourcePackage == applicationContext.packageName) {
-            return
-        }
-
-        // 1. App Usage Tracking & Restriction Check
-        if (!com.example.util.AppPackageResolver.isTransientSystemPackage(sourcePackage, applicationContext.packageName)) {
-            handleAppUsageTracking(sourcePackage, event.eventType, preferences)
-        }
+        if (!preferences.getIsProtectionEnabled()) return
+        if (isSystemLauncherOrKeyboard(pkgName)) return
 
         val now = System.currentTimeMillis()
-        if (now - lastScanTime < scanThrottleMs) {
-            return
+        if (now - lastScanTimestamp < 220L) return
+        lastScanTimestamp = now
+
+        val activeRootPkg = rootNode?.packageName?.toString()?.takeIf { it.isNotBlank() } ?: pkgName
+
+        // 3. Check Per-App Daily Time Limit
+        val matchedLimit = cachedAppLimits.firstOrNull { limit ->
+            limit.isEnabled && AppPackageResolver.matchesAppLimit(
+                limit = limit,
+                candidatePackage = activeRootPkg,
+                context = this@ShieldAccessibilityService
+            )
         }
-        lastScanTime = now
-
-        val rootNode = rootInActiveWindow ?: return
-
-        serviceScope.launch {
-            // 2. In-App Section Blocker Check (Instagram Reels, Telegram Search Box, YouTube Shorts)
-            val sectionRules = cachedSectionRules
-            if (sectionRules.isNotEmpty()) {
-                val matchedSection = TextContentScanner.scanForSectionRule(
-                    root = rootNode,
-                    rules = sectionRules,
-                    currentPackage = sourcePackage
+        if (matchedLimit != null) {
+            val usedMins = preferences.getTodayAppUsageMinutes(
+                packageName = matchedLimit.packageName,
+                appName = matchedLimit.appName
+            )
+            if (usedMins >= matchedLimit.dailyLimitMinutes) {
+                triggerLockdown(
+                    triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
+                    sourceApp = matchedLimit.appName
                 )
-                if (matchedSection != null) {
-                    val nowSection = System.currentTimeMillis()
-                    if (nowSection - lastSectionExitTime >= sectionExitCooldownMs) {
-                        lastSectionExitTime = nowSection
-                        if (preferences.getIsSectionExitOnlyMode()) {
-                            // Stop ONLY that specific section (e.g., exit Instagram Reels or close Telegram Search box)
-                            // without blocking or closing the entire Instagram / Telegram app!
-                            performGlobalAction(GLOBAL_ACTION_BACK)
-                            triggerVibration()
-                            serviceScope.launch(Dispatchers.IO) {
-                                app.repository.recordIncident(
-                                    matchedWord = "Section Stopped: ${matchedSection.sectionName}",
-                                    sourceApp = sourcePackage,
-                                    durationMinutes = 0
-                                )
-                            }
-                        } else {
-                            // Full Lockdown Mode if user disabled Section-Exit-Only mode
-                            performGlobalAction(GLOBAL_ACTION_BACK)
-                            performGlobalAction(GLOBAL_ACTION_HOME)
-                            onBlockedWordDetected(
-                                matchedWord = "Section: ${matchedSection.sectionName}",
-                                sourcePackage = sourcePackage
-                            )
-                        }
-                    }
-                    return@launch
-                }
+                return
             }
+        }
 
-            // 3. On-Screen Explicit Word & URL Scanner Check (English & Persian)
-            val keywords = cachedKeywords
-            if (keywords.isNotEmpty()) {
-                val match = TextContentScanner.scanNodeTree(
-                    root = rootNode,
-                    activeKeywords = keywords,
-                    ignorePackage = applicationContext.packageName
-                )
-                if (match != null) {
-                    onBlockedWordDetected(
-                        matchedWord = match.matchedKeyword,
-                        sourcePackage = sourcePackage
+        // 4. Check Specific App Section Blocker (Instagram Reels & Telegram Search Box)
+        // Confirmed by User (Item 4): Show Full Block Page for both Telegram Search and Instagram Reels!
+        val matchedSectionRule = TextContentScanner.findMatchingSectionRule(
+            root = rootNode,
+            currentPackage = activeRootPkg,
+            rules = cachedSectionRules
+        )
+        if (matchedSectionRule != null) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            if (preferences.getIsSectionExitOnlyMode()) {
+                val appLabel = resolveReadableAppName(activeRootPkg)
+                serviceScope.launch {
+                    repository.recordIncident(
+                        matchedWord = "Section Blocked: ${matchedSectionRule.sectionName}",
+                        sourceApp = appLabel,
+                        durationMinutes = 0
                     )
                 }
-            }
-        }
-    }
-
-    private fun handleAppUsageTracking(
-        sourcePackage: String,
-        eventType: Int,
-        preferences: com.example.data.preferences.ShieldPreferences
-    ) {
-        val now = System.currentTimeMillis()
-        val prevPkg = currentForegroundPkg
-
-        if (prevPkg != null && prevPkg != sourcePackage && foregroundStartTime > 0L) {
-            val elapsedSeconds = ((now - foregroundStartTime) / 1000L).toInt().coerceIn(0, 3600)
-            if (elapsedSeconds > 0) {
-                preferences.addAppUsageSeconds(prevPkg, elapsedSeconds)
-            }
-            currentForegroundPkg = sourcePackage
-            foregroundStartTime = now
-        } else if (prevPkg == sourcePackage && foregroundStartTime > 0L) {
-            val elapsedSeconds = ((now - foregroundStartTime) / 1000L).toInt()
-            if (elapsedSeconds >= 3) {
-                preferences.addAppUsageSeconds(sourcePackage, elapsedSeconds)
-                foregroundStartTime = now
-            }
-        } else if (prevPkg == null) {
-            currentForegroundPkg = sourcePackage
-            foregroundStartTime = now
-        }
-
-        // Check if sourcePackage (or any of its known package variants/aliases) exceeds daily limit
-        val limit = cachedAppLimits.find {
-            it.isEnabled && com.example.util.AppPackageResolver.matchesAppLimit(it, sourcePackage, this)
-        }
-        if (limit != null) {
-            val usedMinutes = maxOf(
-                preferences.getTodayAppUsageMinutes(sourcePackage, limit.appName),
-                preferences.getTodayAppUsageMinutes(limit.packageName, limit.appName)
-            )
-            if (usedMinutes >= limit.dailyLimitMinutes) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
-                val hours = limit.dailyLimitMinutes / 60
-                val mins = limit.dailyLimitMinutes % 60
-                val limitStr = when {
-                    hours > 0 && mins == 0 -> "${hours}h"
-                    hours > 0 -> "${hours}h ${mins}m"
-                    else -> "${mins}m"
-                }
-                onBlockedWordDetected(
-                    matchedWord = "Daily limit exceeded ($limitStr) on ${limit.appName}",
-                    sourcePackage = limit.appName
+            } else {
+                triggerLockdown(
+                    triggerWord = "${matchedSectionRule.sectionName} (${resolveReadableAppName(activeRootPkg)})",
+                    sourceApp = resolveReadableAppName(activeRootPkg)
                 )
             }
+            return
+        }
+
+        // 5. Check Explicit Keywords & Adult Domains
+        val screenTexts = mutableListOf<String>()
+        event.text.forEach { charSeq ->
+            charSeq?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { screenTexts.add(it) }
+        }
+        event.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            screenTexts.add(it)
+        }
+        screenTexts.addAll(TextContentScanner.extractScreenText(rootNode))
+
+        val matchedWord = TextContentScanner.findMatchingKeyword(screenTexts, cachedKeywords)
+        if (matchedWord != null) {
+            triggerLockdown(
+                triggerWord = matchedWord,
+                sourceApp = resolveReadableAppName(activeRootPkg)
+            )
         }
     }
 
-    private fun onBlockedWordDetected(matchedWord: String, sourcePackage: String) {
-        val app = ShieldApplication.instance
-        val durationMinutes = app.preferences.getLockDurationMinutes()
-        triggerCustomLockdown(
-            reason = matchedWord,
-            sourcePackage = sourcePackage,
-            durationMinutes = durationMinutes
-        )
-    }
-
-    private fun triggerCustomLockdown(
-        reason: String,
-        sourcePackage: String,
-        durationMinutes: Int
+    private fun triggerLockdown(
+        triggerWord: String,
+        sourceApp: String,
+        customDurationMinutes: Int? = null
     ) {
-        val app = ShieldApplication.instance
-        val preferences = app.preferences
-
-        // 1. Kick user immediately out of the app to home screen
-        performGlobalAction(GLOBAL_ACTION_HOME)
-
-        // 2. Trigger warning vibration
-        triggerVibration()
-
-        // 3. Start lockdown state
+        val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         val endTime = preferences.startLockdown(
             durationMinutes = durationMinutes,
-            triggerWord = reason,
-            sourceApp = sourcePackage
+            triggerWord = triggerWord,
+            sourceApp = sourceApp
         )
 
-        // 4. Start ongoing foreground notification
-        LockdownNotificationManager.startLockdownNotification(
-            context = this,
-            endTimeEpoch = endTime,
-            triggerWord = reason
-        )
-
-        // 5. Log incident to database
-        serviceScope.launch(Dispatchers.IO) {
-            app.repository.recordIncident(
-                matchedWord = reason,
-                sourceApp = sourcePackage,
+        serviceScope.launch {
+            repository.recordIncident(
+                matchedWord = triggerWord,
+                sourceApp = sourceApp,
                 durationMinutes = durationMinutes
             )
         }
 
-        // 6. Launch LockdownActivity
-        bringLockdownToFront()
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        performGlobalAction(GLOBAL_ACTION_HOME)
+
+        LockdownNotificationManager.startLockdownNotification(
+            context = this,
+            endTimeEpoch = endTime,
+            triggerWord = triggerWord
+        )
+
+        launchLockdownOverlay(
+            triggerWord = triggerWord,
+            sourceApp = sourceApp,
+            endTimeEpoch = endTime
+        )
     }
 
-    private fun bringLockdownToFront() {
-        val intent = Intent(this, LockdownActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            putExtra(LockdownActivity.EXTRA_STRICT_MODE, true)
-        }
-        startActivity(intent)
-    }
-
-    private fun triggerVibration() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vibratorManager?.defaultVibrator?.vibrate(
-                    VibrationEffect.createWaveform(longArrayOf(0, 200, 100, 300), -1)
+    private fun launchLockdownOverlay(
+        triggerWord: String,
+        sourceApp: String,
+        endTimeEpoch: Long
+    ) {
+        mainHandler.post {
+            val lockIntent = Intent(this, LockdownActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 )
-            } else {
-                @Suppress("DEPRECATION")
-                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(
-                        VibrationEffect.createWaveform(longArrayOf(0, 200, 100, 300), -1)
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(400)
-                }
+                putExtra(LockdownActivity.EXTRA_TRIGGER_WORD, triggerWord)
+                putExtra(LockdownActivity.EXTRA_SOURCE_APP, sourceApp)
+                putExtra(LockdownActivity.EXTRA_END_TIME_EPOCH, endTimeEpoch)
             }
-        } catch (_: Exception) {}
+            try {
+                startActivity(lockIntent)
+            } catch (_: Exception) {
+            }
+        }
     }
 
-    override fun onInterrupt() {}
+    private fun isIgnoredSystemUiPackage(pkgName: String): Boolean {
+        val lower = pkgName.lowercase()
+        return lower == "com.android.systemui" ||
+            lower.contains("inputmethod") ||
+            lower.contains("keyboard") ||
+            lower == "android"
+    }
+
+    private fun isSystemLauncherOrKeyboard(pkgName: String): Boolean {
+        val lower = pkgName.lowercase()
+        return lower.contains("launcher") ||
+            lower.contains("systemui") ||
+            lower.contains("inputmethod") ||
+            lower.contains("keyboard") ||
+            lower.contains("nexuslauncher") ||
+            lower.contains("pixel.launcher") ||
+            lower.contains("trebuchet")
+    }
+
+    private fun resolveReadableAppName(pkgName: String): String {
+        return try {
+            val appInfo = packageManager.getApplicationInfo(pkgName, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) {
+            pkgName.substringAfterLast('.')
+                .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        }
+    }
+
+    override fun onInterrupt() {
+        // Required override for AccessibilityService
+    }
 
     override fun onDestroy() {
         super.onDestroy()
-        val now = System.currentTimeMillis()
-        val pkg = currentForegroundPkg
-        if (pkg != null && foregroundStartTime > 0L) {
-            val elapsedSeconds = ((now - foregroundStartTime) / 1000L).toInt().coerceIn(0, 3600)
-            if (elapsedSeconds > 0) {
-                runCatching {
-                    ShieldApplication.instance.preferences.addAppUsageSeconds(pkg, elapsedSeconds)
-                }
-            }
-        }
+        serviceScope.cancel()
     }
 }

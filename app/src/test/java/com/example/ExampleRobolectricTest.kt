@@ -5,9 +5,14 @@ import com.example.data.local.DefaultSectionRules
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
 import com.example.service.TextContentScanner
+import com.example.ui.components.CalendarDayStatus
+import com.example.ui.components.MotivationalQuotesRepository
 import com.example.ui.components.WeeklyActivityCalculator
 import com.example.ui.i18n.AppStrings
 import com.example.ui.info.GithubUpdateChecker
+import com.example.ui.quiz.ScientificAddictionQuizRepository
+import com.example.ui.streak.NOBEEP_YOUTUBE_RECOVERY_LESSONS
+import com.example.ui.streak.STREAK_MILESTONES
 import com.example.ui.theme.AppThemeState
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianTextPrimary
@@ -81,8 +86,12 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test section rules detection for Instagram Reels and Telegram Search Box`() {
-        val rules = DefaultSectionRules.getDefaultRules()
+    fun `test section rules default to off on install and detect Instagram Reels and exclude Telegram Archive when enabled`() {
+        val defaultRules = DefaultSectionRules.getDefaultRules()
+        // All section blockers must be OFF by default when the app is first installed
+        assertTrue(defaultRules.all { !it.isEnabled })
+
+        val rules = defaultRules.map { it.copy(isEnabled = true) }
 
         val reelsMatch = TextContentScanner.findFirstSectionMatch(
             "Watching Reels tab",
@@ -99,6 +108,21 @@ class ExampleRobolectricTest {
         )
         assertNotNull(telegramPersianSearchMatch)
         assertTrue(telegramPersianSearchMatch!!.matchedKeyword.contains("Telegram Search"))
+
+        // Item 3: Opening Telegram Archived Chats must NEVER trigger the Telegram Search Blocker!
+        val telegramArchiveMatchEn = TextContentScanner.findFirstSectionMatch(
+            "Archived Chats | Search",
+            "org.telegram.messenger",
+            rules
+        )
+        assertNull("Archived Chats in Telegram must not trigger search blocker", telegramArchiveMatchEn)
+
+        val telegramArchiveMatchFa = TextContentScanner.findFirstSectionMatch(
+            "چت‌های آرشیو | جستجو",
+            "org.telegram.messenger",
+            rules
+        )
+        assertNull("Persian Archive in Telegram must not trigger search blocker", telegramArchiveMatchFa)
     }
 
     @Test
@@ -133,20 +157,24 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test weekly activity status 7-day metrics calculation without predefined examples`() {
+    fun `test Duolingo style weekly streak calendar pre-install gray and clean day status`() {
         AppThemeState.isPersianLanguage = false
-        val emptyLimitsMetrics = WeeklyActivityCalculator.buildWeeklyMetrics(
+        val metrics = WeeklyActivityCalculator.buildWeeklyMetrics(
             incidents = emptyList(),
             appLimits = emptyList(),
             preferences = null
         )
-        assertEquals(7, emptyLimitsMetrics.size)
-        assertEquals(0, emptyLimitsMetrics.last().trackedAppMinutes)
-        assertEquals("Today", emptyLimitsMetrics.last().dayShortLabel)
+        assertEquals(7, metrics.size)
+        assertEquals(0, metrics.last().trackedAppMinutes)
+        assertEquals("Today", metrics.last().dayShortLabel)
+        // Days before install are gray, and Today starts from Day 0 (TODAY_IN_PROGRESS, 0 clean days completed)
+        assertEquals(CalendarDayStatus.PRE_INSTALL_GRAY, metrics.first().status)
+        assertEquals(CalendarDayStatus.TODAY_IN_PROGRESS, metrics.last().status)
+        assertEquals(0, metrics.count { it.status == CalendarDayStatus.CLEAN_STREAK_DAY })
     }
 
     @Test
-    fun `test Persian language RTL and Dark White theme switching and GithubUpdateChecker`() {
+    fun `test v0_4 version, My-google-app GitHub repo, 32 daily quotes, 8 milestone badges, and NoBeep YouTube reset lessons`() {
         // Theme toggle (Dark vs White)
         AppThemeState.isDarkTheme = true
         val darkBg = ObsidianBg
@@ -165,32 +193,42 @@ class ExampleRobolectricTest {
         AppThemeState.isPersianLanguage = false
         assertEquals("X Blocker", AppStrings.tr("X Blocker", "ایکس بلاکر"))
 
-        // GitHub Update Checker & @mehdisrmd Telegram contact verification
+        // Item 9 & Update Repo: Current app version is 0.4, repo is https://github.com/mehdisrmd/My-google-app
+        assertEquals("0.4", GithubUpdateChecker.CURRENT_APP_VERSION)
         assertEquals("@mehdisrmd", GithubUpdateChecker.TELEGRAM_HANDLE)
         assertEquals("https://t.me/mehdisrmd", GithubUpdateChecker.TELEGRAM_URL)
+        assertEquals("mehdisrmd/My-google-app", GithubUpdateChecker.DEFAULT_GITHUB_REPO_SLUG)
+        assertEquals("https://github.com/mehdisrmd/My-google-app", GithubUpdateChecker.DEFAULT_GITHUB_REPO_URL)
         assertEquals(
-            "mehdisrmd/x-blocker",
-            GithubUpdateChecker.extractSlugFromUrlOrInput("https://github.com/mehdisrmd/x-blocker/releases")
+            "mehdisrmd/My-google-app",
+            GithubUpdateChecker.extractSlugFromUrlOrInput("https://github.com/mehdisrmd/My-google-app")
         )
-        assertTrue(GithubUpdateChecker.isRemoteVersionNewer("v2.3.0", "2.2.0"))
-        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v2.2.0", "2.2.0"))
-        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v1.9.0", "2.2.0"))
+        assertTrue(GithubUpdateChecker.isRemoteVersionNewer("v0.5", "0.4"))
+        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v0.4", "0.4"))
 
-        // Motivational Quotes & Don't Break the Chain verification
-        val quotes = com.example.ui.components.MotivationalQuotesRepository.allQuotes
-        assertTrue(quotes.size >= 10)
+        // Item 10: Expanded quotes (32+) & deterministic Daily Quote
+        val quotes = MotivationalQuotesRepository.allQuotes
+        assertTrue(quotes.size >= 30)
         assertTrue(quotes.any { it.isChainMotto && it.quoteEn.contains("Don't break the chain", ignoreCase = true) })
-        assertTrue(quotes.any { it.authorEn.contains("Marcus Aurelius") })
+        val todayQuote = MotivationalQuotesRepository.getDailyQuoteForToday(1_700_000_000_000L)
+        val nextDayQuote = MotivationalQuotesRepository.getDailyQuoteForToday(1_700_000_000_000L + 86_400_000L)
+        assertNotEquals(todayQuote.id, nextDayQuote.id)
 
-        // Breathing Studio Modes verification
-        val breathingModes = com.example.ui.components.BreathingPatternMode.entries
-        assertEquals(3, breathingModes.size)
-        assertEquals(3, com.example.ui.components.BreathingPatternMode.RELAX_478.phases.size)
-        assertEquals(4, com.example.ui.components.BreathingPatternMode.BOX_4444.phases.size)
+        // Item 15: 8 Milestone Badges starting from Day 0 Starter Badge
+        assertEquals(8, STREAK_MILESTONES.size)
+        assertEquals(0, STREAK_MILESTONES.first().days)
+        assertEquals(90, STREAK_MILESTONES.last().days)
 
-        // Predefined Streak Share Milestones verification
-        assertEquals(7, com.example.ui.streak.STREAK_MILESTONES.size)
-        assertTrue(com.example.ui.streak.STREAK_MILESTONES.first().shareMottoEn.contains("chain", ignoreCase = true))
+        // Item 16: NoBeep-Style Scientific Addiction Assessment Quiz
+        assertEquals(8, ScientificAddictionQuizRepository.questions.size)
+        val lowEval = ScientificAddictionQuizRepository.evaluateScore(2)
+        assertTrue(lowEval.scorePercent < 20)
+        val highEval = ScientificAddictionQuizRepository.evaluateScore(22)
+        assertTrue(highEval.scorePercent >= 80)
+
+        // NoBeep YouTube Recovery Lessons for Streak Reset
+        assertEquals(3, NOBEEP_YOUTUBE_RECOVERY_LESSONS.size)
+        assertTrue(NOBEEP_YOUTUBE_RECOVERY_LESSONS.all { it.youtubeUrl.startsWith("https://www.youtube.com/watch?v=") })
     }
 
     @Test

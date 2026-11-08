@@ -65,6 +65,14 @@ class ShieldRepository(
     suspend fun seedDefaultSectionRulesIfNeeded() {
         if (dao.getSectionRuleCount() == 0) {
             dao.insertSectionRules(DefaultSectionRules.getDefaultRules())
+            preferences.consumeSectionRulesOffMigration()
+        } else if (preferences.consumeSectionRulesOffMigration()) {
+            val existing = dao.getAllSectionRulesSync()
+            for (rule in existing) {
+                if (rule.isEnabled) {
+                    dao.insertSectionRule(rule.copy(isEnabled = false))
+                }
+            }
         }
     }
 

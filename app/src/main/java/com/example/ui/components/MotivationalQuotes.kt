@@ -3,7 +3,6 @@ package com.example.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -28,10 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +49,7 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import java.util.concurrent.TimeUnit
 
 data class MotivationalQuote(
     val id: Int,
@@ -97,7 +94,7 @@ object MotivationalQuotesRepository {
         ),
         MotivationalQuote(
             id = 4,
-            quoteEn = "Don't break the chain! A 5-minute dopamine trap is never worth resetting weeks of hard-earned freedom.",
+            quoteEn = "Don't break the chain! A 5-minute dopamine trap is never worth trading weeks of hard-earned freedom.",
             quoteFa = "زنجیره را نشکن! یک وسوسه ۵ دقیقه‌ای هرگز ارزش از دست دادن روزها تلاش و آزادی را ندارد.",
             authorEn = "X Blocker Iron Rule",
             authorFa = "قانون آهنین ایکس بلاکر",
@@ -178,6 +175,191 @@ object MotivationalQuotesRepository {
             categoryBadgeEn = "DON'T BREAK THE CHAIN",
             categoryBadgeFa = "زنجیره را نشکن",
             isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 13,
+            quoteEn = "He who conquers others is strong; He who conquers himself is mighty.",
+            quoteFa = "کسی که بر دیگران چیره شود نیرومند است، اما کسی که بر خویشتن چیره شود شکست‌ناپذیر است.",
+            authorEn = "Lao Tzu • Tao Te Ching",
+            authorFa = "لائوتسه • دائو ده جینگ",
+            categoryBadgeEn = "ANCIENT WISDOM",
+            categoryBadgeFa = "حکمت کهن"
+        ),
+        MotivationalQuote(
+            id = 14,
+            quoteEn = "Discipline is choosing between what you want now and what you want most. Don't break the chain!",
+            quoteFa = "انضباط یعنی انتخاب میان آنچه همین لحظه هوس کرده‌ای و آنچه بیش از هر چیز در زندگی می‌خواهی. زنجیره را نشکن!",
+            authorEn = "Abraham Lincoln",
+            authorFa = "آبراهام لینکلن",
+            categoryBadgeEn = "DON'T BREAK THE CHAIN",
+            categoryBadgeFa = "زنجیره را نشکن",
+            isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 15,
+            quoteEn = "The first and greatest victory is to conquer yourself; to be conquered by yourself is of all things most shameful.",
+            quoteFa = "نخستین و بزرگ‌ترین پیروزی، فتحِ خویشتن است؛ و مغلوبِ نفسِ خود شدن از هر شکستی تلخ‌تر است.",
+            authorEn = "Plato",
+            authorFa = "افلاطون",
+            categoryBadgeEn = "PHILOSOPHY",
+            categoryBadgeFa = "فلسفه"
+        ),
+        MotivationalQuote(
+            id = 16,
+            quoteEn = "Even if a thousand griefs surround your heart, do not despair; the dawn of freedom is closer than you think.",
+            quoteFa = "یوسف گمگشته بازآید به کنعان غم مخور — کلبه احزان شود روزی گلستان غم مخور.",
+            authorEn = "Hafez Shirazi",
+            authorFa = "حافظ شیرازی",
+            categoryBadgeEn = "PERSIAN POETRY",
+            categoryBadgeFa = "غزل حافظ"
+        ),
+        MotivationalQuote(
+            id = 17,
+            quoteEn = "He who has a why to live for can bear almost any how. Remember why you started this streak.",
+            quoteFa = "کسی که «چرایی» بزرگی برای زیستن دارد، با هر «چگونگی» و سختی‌ای کنار می‌آید. به یاد بیاور چرا شروع کردی.",
+            authorEn = "Friedrich Nietzsche",
+            authorFa = "فریدریش نیچه",
+            categoryBadgeEn = "PURPOSE",
+            categoryBadgeFa = "هدفمندی"
+        ),
+        MotivationalQuote(
+            id = 18,
+            quoteEn = "You can never get a smaller mastery than the mastery of yourself. Guard your mind's gates.",
+            quoteFa = "هیچ تسلطی کوچک‌تر یا بزرگ‌تر از تسلط بر خویشتن نیست. نگهبان دروازه‌های ذهنت باش.",
+            authorEn = "Leonardo da Vinci",
+            authorFa = "لئوناردو داوینچی",
+            categoryBadgeEn = "GENIUS MIND",
+            categoryBadgeFa = "ذهن خلاق"
+        ),
+        MotivationalQuote(
+            id = 19,
+            quoteEn = "Today is victory over yourself of yesterday; tomorrow is your victory over lesser men.",
+            quoteFa = "امروز روز پیروزی تو بر دیروزِ خودت است؛ و فردا روز اوج گرفتن توست.",
+            authorEn = "Miyamoto Musashi • The Book of Five Rings",
+            authorFa = "میاموتو موساشی • کتاب پنج حلقه",
+            categoryBadgeEn = "SAMURAI CODE",
+            categoryBadgeFa = "آیین سامورایی"
+        ),
+        MotivationalQuote(
+            id = 20,
+            quoteEn = "Don't break the chain! When an urge hits, wait 15 minutes and breathe deeply — your brain will thank you tomorrow.",
+            quoteFa = "زنجیره را نشکن! وقتی وسوسه سراغت آمد، ۱۵ دقیقه صبر کن و عمیق نفس بکش — فردا به خودت افتخار خواهی کرد.",
+            authorEn = "Neuroscience Recovery Principle",
+            authorFa = "اصل علمی بازسازی دوپامین",
+            categoryBadgeEn = "DON'T BREAK THE CHAIN",
+            categoryBadgeFa = "زنجیره را نشکن",
+            isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 21,
+            quoteEn = "Until you make the unconscious conscious, it will direct your life and you will call it fate.",
+            quoteFa = "تا زمانی که عادت‌های ناخودآگاهت را آگاهانه مهار نکنی، آن‌ها زندگی‌ات را هدایت می‌کنند و نامش را سرنوشت می‌گذاری.",
+            authorEn = "Carl Jung",
+            authorFa = "کارل گوستاو یونگ",
+            categoryBadgeEn = "PSYCHOLOGY",
+            categoryBadgeFa = "روان‌شناسی"
+        ),
+        MotivationalQuote(
+            id = 22,
+            quoteEn = "We are what we repeatedly do. Excellence, then, is not an act, but a habit.",
+            quoteFa = "ما همانی هستیم که تکرارش می‌کنیم؛ پس برتری و پاکی یک اتفاق نیست، بلکه یک عادت روزانه است.",
+            authorEn = "Will Durant",
+            authorFa = "ویل دورانت",
+            categoryBadgeEn = "DAILY HABIT",
+            categoryBadgeFa = "عادت روزانه"
+        ),
+        MotivationalQuote(
+            id = 23,
+            quoteEn = "It always seems impossible until it is done. Protect today and watch your life transform.",
+            quoteFa = "هر کار بزرگی تا پیش از انجام شدنش ناممکن به نظر می‌رسد. از امروزت محافظت کن تا زندگی‌ات دگرگون شود.",
+            authorEn = "Nelson Mandela",
+            authorFa = "نلسون ماندلا",
+            categoryBadgeEn = "RESILIENCE",
+            categoryBadgeFa = "ایستادگی"
+        ),
+        MotivationalQuote(
+            id = 24,
+            quoteEn = "A man who conquers himself is greater than one who takes a thousand fortified cities.",
+            quoteFa = "آدمی که بر نفس خود چیره شود، از فاتح هزار شهر و دژ نیرومندتر است.",
+            authorEn = "Dhammapada",
+            authorFa = "حکمت شرقی",
+            categoryBadgeEn = "INNER VICTORY",
+            categoryBadgeFa = "پیروزی درونی"
+        ),
+        MotivationalQuote(
+            id = 25,
+            quoteEn = "Don't break the chain! Every clean day rewires your dopamine receptors toward real joy, ambition, and peace.",
+            quoteFa = "زنجیره را نشکن! هر روز پاک، گیرنده‌های دوپامین مغزت را به سوی شادی واقعی، تمرکز و آرامش بازسازی می‌کند.",
+            authorEn = "Brain Rewiring Protocol",
+            authorFa = "پروتکل بازسازی مغز",
+            categoryBadgeEn = "DON'T BREAK THE CHAIN",
+            categoryBadgeFa = "زنجیره را نشکن",
+            isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 26,
+            quoteEn = "The secret of change is to focus all of your energy not on fighting the old, but on building the new.",
+            quoteFa = "راز تغییر در این است که تمام انرژی خود را نه صرفِ درگیری با گذشته، بلکه صرفِ ساختن آینده‌ای نو کنی.",
+            authorEn = "Socrates",
+            authorFa = "سقراط",
+            categoryBadgeEn = "WISDOM",
+            categoryBadgeFa = "حکمت سقراط"
+        ),
+        MotivationalQuote(
+            id = 27,
+            quoteEn = "It does not matter how slowly you go as long as you do not stop. Keep your chain unbroken.",
+            quoteFa = "مهم نیست چقدر آهسته پیش می‌روی، تا زمانی که متوقف نشوی برنده تویی. زنجیره‌ات را حفظ کن.",
+            authorEn = "Confucius",
+            authorFa = "کنفوسیوس",
+            categoryBadgeEn = "PERSEVERANCE",
+            categoryBadgeFa = "پشتکار"
+        ),
+        MotivationalQuote(
+            id = 28,
+            quoteEn = "Above all, don't lie to yourself. Be honest with your triggers and close the door before the urge grows.",
+            quoteFa = "بیش از هر چیز، به خودت دروغ نگو. با محرک‌هایت روراست باش و پیش از اوج گرفتن وسوسه، در را ببند.",
+            authorEn = "Fyodor Dostoevsky • The Brothers Karamazov",
+            authorFa = "فئودور داستایوفسکی • برادران کارامازوف",
+            categoryBadgeEn = "LITERARY WISDOM",
+            categoryBadgeFa = "سخن بزرگان"
+        ),
+        MotivationalQuote(
+            id = 29,
+            quoteEn = "He who cannot obey himself will be commanded. Choose self-command every single morning.",
+            quoteFa = "کسی که نتواند به خویشتن فرمان دهد، فرمان‌بردار هوس‌ها خواهد شد. هر صبح فرمانروای خودت باش.",
+            authorEn = "Friedrich Nietzsche",
+            authorFa = "فریدریش نیچه",
+            categoryBadgeEn = "SELF-COMMAND",
+            categoryBadgeFa = "فرمانروایی بر نفس"
+        ),
+        MotivationalQuote(
+            id = 30,
+            quoteEn = "Don't break the chain! Respect the version of yourself who fought through yesterday to give you today's streak.",
+            quoteFa = "زنجیره را نشکن! به تلاشِ دیروزِ خودت احترام بگذار که جنگید تا امروز این زنجیره پاک را داشته باشی.",
+            authorEn = "X Blocker Daily Creed",
+            authorFa = "منشور روزانه ایکس بلاکر",
+            categoryBadgeEn = "DON'T BREAK THE CHAIN",
+            categoryBadgeFa = "زنجیره را نشکن",
+            isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 31,
+            quoteEn = "Chains of habit are too light to be felt until they are too heavy to be broken — forge a chain of freedom instead.",
+            quoteFa = "زنجیرهای عادت ابتدا آن‌قدر سبک‌اند که حس نمی‌شوند تا روزی که شکستنشان دشوار شود؛ زنجیره آزادی را بساز!",
+            authorEn = "Warren Buffett",
+            authorFa = "وارن بافت",
+            categoryBadgeEn = "HABIT CHAIN",
+            categoryBadgeFa = "زنجیره عادت",
+            isChainMotto = true
+        ),
+        MotivationalQuote(
+            id = 32,
+            quoteEn = "How long are you going to wait before you demand the best for yourself?",
+            quoteFa = "تا کی می‌خواهی صبر کنی تا بهترین نسخه زندگی را از خودت مطالبه کنی؟ همین امروز روز توست.",
+            authorEn = "Epictetus • Enchiridion",
+            authorFa = "اپیکتتوس",
+            categoryBadgeEn = "STOIC CALL",
+            categoryBadgeFa = "ندای بیداری"
         )
     )
 
@@ -185,23 +367,38 @@ object MotivationalQuotesRepository {
         val safeIdx = ((index % allQuotes.size) + allQuotes.size) % allQuotes.size
         return allQuotes[safeIdx]
     }
+
+    /**
+     * Deterministically returns one quote per calendar day so the user sees a fresh quote
+     * each day without tapping.
+     */
+    fun getDailyQuoteForToday(nowMs: Long = System.currentTimeMillis()): MotivationalQuote {
+        val epochDay = TimeUnit.MILLISECONDS.toDays(nowMs).toInt()
+        return getQuoteByIndex(epochDay)
+    }
 }
 
+/**
+ * Non-tappable Daily Motivational Quote Card (Item 10):
+ * Automatically displays one new quote each calendar day and cannot be tapped to cycle.
+ */
 @Composable
 fun MotivationalQuoteBannerCard(
     streakDays: Int = 0,
-    initialQuoteIndex: Int = 0,
+    initialQuoteIndex: Int = -1,
     modifier: Modifier = Modifier
 ) {
-    var currentIndex by remember { mutableIntStateOf(initialQuoteIndex) }
-    val currentQuote = remember(currentIndex) {
-        MotivationalQuotesRepository.getQuoteByIndex(currentIndex)
+    val currentQuote = remember(initialQuoteIndex) {
+        if (initialQuoteIndex >= 0) {
+            MotivationalQuotesRepository.getQuoteByIndex(initialQuoteIndex)
+        } else {
+            MotivationalQuotesRepository.getDailyQuoteForToday()
+        }
     }
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { currentIndex = (currentIndex + 1) % MotivationalQuotesRepository.allQuotes.size }
             .testTag("motivational_quote_banner_card"),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(20.dp),
@@ -230,9 +427,9 @@ fun MotivationalQuoteBannerCard(
                         }
                     )
                 )
-                .padding(16.dp)
+                .padding(14.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -285,27 +482,23 @@ fun MotivationalQuoteBannerCard(
                     }
 
                     Surface(
-                        onClick = {
-                            currentIndex = (currentIndex + 1) % MotivationalQuotesRepository.allQuotes.size
-                        },
                         shape = RoundedCornerShape(8.dp),
                         color = ObsidianCard,
-                        border = BorderStroke(1.dp, ObsidianBorder),
-                        modifier = Modifier.testTag("next_motivational_quote_button")
+                        border = BorderStroke(1.dp, ObsidianBorder)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Next Quote",
+                                imageVector = Icons.Default.CalendarToday,
+                                contentDescription = null,
                                 tint = CyanTelemetry,
-                                modifier = Modifier.size(12.dp)
+                                modifier = Modifier.size(11.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = tr("Next Quote", "جمله بعدی"),
+                                text = tr("Daily Quote", "جمله روز"),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -318,7 +511,7 @@ fun MotivationalQuoteBannerCard(
                 Row(verticalAlignment = Alignment.Top) {
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .background(ObsidianCard)
                             .border(1.dp, ObsidianBorder, CircleShape),
@@ -328,7 +521,7 @@ fun MotivationalQuoteBannerCard(
                             imageVector = Icons.Default.FormatQuote,
                             contentDescription = null,
                             tint = if (currentQuote.isChainMotto) AmberWarning else CyanTelemetry,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))

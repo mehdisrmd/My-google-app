@@ -2,13 +2,13 @@ package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -39,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.AppUsageLimit
@@ -57,70 +60,61 @@ import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
-enum class DaySafetyStatus {
-    CLEAN,
-    URGE_DEFEATED,
-    BLOCKED_INCIDENT
+enum class CalendarDayStatus {
+    PRE_INSTALL_GRAY,
+    TODAY_IN_PROGRESS,
+    CLEAN_STREAK_DAY,
+    RELAPSE_DAY
 }
+
+data class DailyStreakCalendarNode(
+    val daysAgo: Int,
+    val dayShortEn: String,
+    val dayShortFa: String,
+    val dateNumber: String,
+    val fullDateLabel: String,
+    val status: CalendarDayStatus,
+    val isToday: Boolean,
+    val urgesDefeated: Int
+)
 
 data class DailyActivityMetric(
     val daysAgo: Int,
     val dayShortLabel: String,
-    val dateFormatted: String,
-    val blocksCount: Int,
-    val lockMinutesTotal: Int,
-    val urgesDefeatedCount: Int,
     val trackedAppMinutes: Int,
-    val status: DaySafetyStatus
+    val status: CalendarDayStatus
 )
 
 object WeeklyActivityCalculator {
     fun buildWeeklyMetrics(
         incidents: List<BlockIncident>,
         appLimits: List<AppUsageLimit>,
-        preferences: ShieldPreferences?,
-        nowMillis: Long = System.currentTimeMillis()
+        preferences: ShieldPreferences?
     ): List<DailyActivityMetric> {
-        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(nowMillis)
-        // Strictly use user-configured appLimits with NO predefined fallback example apps
-        val trackedPackages = appLimits.map { it.packageName }
-
-        val dayLabelFormat = SimpleDateFormat("EEE", Locale.getDefault())
-        val dateFormat = SimpleDateFormat("MMM d", Locale.getDefault())
+        val dayFmtEn = SimpleDateFormat("EEE", Locale.US)
+        val pkgList = appLimits.map { it.packageName }
+        val currentStreakDays = preferences?.getStreakDays() ?: 0
 
         return (6 downTo 0).map { daysAgo ->
-            val targetEpochDay = todayEpochDay - daysAgo
-            val cal = Calendar.getInstance().apply {
-                timeInMillis = nowMillis - TimeUnit.DAYS.toMillis(daysAgo.toLong())
-            }
-            val dayDate = Date(cal.timeInMillis)
-
-            val dayIncidents = incidents.filter { inc ->
-                TimeUnit.MILLISECONDS.toDays(inc.timestamp) == targetEpochDay
-            }
-            val blocksCount = dayIncidents.size
-            val lockMinutes = dayIncidents.sumOf { it.lockDurationMinutes }
-            val urgesDefeated = preferences?.getDayUrgesDefeated(daysAgo) ?: 0
-            val appMinutes = preferences?.getDayAppUsageMinutes(daysAgo, trackedPackages) ?: 0
-
+            val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -daysAgo) }
+            val label = if (daysAgo == 0) "Today" else dayFmtEn.format(cal.time)
+            val mins = preferences?.getDayAppUsageMinutes(daysAgo, pkgList) ?: 0
             val status = when {
-                blocksCount > 0 -> DaySafetyStatus.BLOCKED_INCIDENT
-                urgesDefeated > 0 -> DaySafetyStatus.URGE_DEFEATED
-                else -> DaySafetyStatus.CLEAN
+                preferences == null -> {
+                    if (daysAgo == 0) CalendarDayStatus.TODAY_IN_PROGRESS else CalendarDayStatus.PRE_INSTALL_GRAY
+                }
+                preferences.isDayBeforeInstall(daysAgo) -> CalendarDayStatus.PRE_INSTALL_GRAY
+                preferences.didRelapseOnDay(daysAgo) -> CalendarDayStatus.RELAPSE_DAY
+                daysAgo == 0 && currentStreakDays == 0 -> CalendarDayStatus.TODAY_IN_PROGRESS
+                daysAgo <= currentStreakDays -> CalendarDayStatus.CLEAN_STREAK_DAY
+                else -> CalendarDayStatus.TODAY_IN_PROGRESS
             }
-
             DailyActivityMetric(
                 daysAgo = daysAgo,
-                dayShortLabel = if (daysAgo == 0) tr("Today", "امروز") else dayLabelFormat.format(dayDate),
-                dateFormatted = dateFormat.format(dayDate),
-                blocksCount = blocksCount,
-                lockMinutesTotal = lockMinutes,
-                urgesDefeatedCount = urgesDefeated,
-                trackedAppMinutes = appMinutes,
+                dayShortLabel = label,
+                trackedAppMinutes = mins,
                 status = status
             )
         }
@@ -131,31 +125,63 @@ object WeeklyActivityCalculator {
 fun WeeklyActivityCard(
     incidents: List<BlockIncident>,
     appLimits: List<AppUsageLimit>,
-    preferences: ShieldPreferences?,
-    usageRefreshTrigger: Long = 0L,
+    preferences: ShieldPreferences,
+    usageRefreshTrigger: Long,
     modifier: Modifier = Modifier
 ) {
-    val metrics = remember(incidents, appLimits, usageRefreshTrigger, com.example.ui.theme.AppThemeState.isPersianLanguage) {
-        WeeklyActivityCalculator.buildWeeklyMetrics(
-            incidents = incidents,
-            appLimits = appLimits,
-            preferences = preferences
-        )
+    val currentStreakDays = preferences.getStreakDays()
+    val bestChainDays = preferences.getLongestStreakDays()
+    val coinsBalance = preferences.getCoinsBalance()
+
+    val calendarNodes = remember(incidents, appLimits, usageRefreshTrigger, currentStreakDays) {
+        val dayFmtEn = SimpleDateFormat("EEE", Locale.US)
+        val dateNumFmt = SimpleDateFormat("d", Locale.US)
+        val fullFmt = SimpleDateFormat("MMM d", Locale.US)
+
+        (6 downTo 0).map { daysAgo ->
+            val cal = Calendar.getInstance().apply {
+                add(Calendar.DAY_OF_YEAR, -daysAgo)
+            }
+            val dayShortEn = dayFmtEn.format(cal.time)
+            val dayShortFa = when (cal.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.SATURDAY -> "ش"
+                Calendar.SUNDAY -> "ی"
+                Calendar.MONDAY -> "د"
+                Calendar.TUESDAY -> "س"
+                Calendar.WEDNESDAY -> "چ"
+                Calendar.THURSDAY -> "پ"
+                Calendar.FRIDAY -> "ج"
+                else -> dayShortEn
+            }
+            val isBeforeInstall = preferences.isDayBeforeInstall(daysAgo)
+            val didRelapse = preferences.didRelapseOnDay(daysAgo)
+            // Starts from 0: On Day 0 (just installed or just reset), Today is TODAY_IN_PROGRESS (0 clean days completed)
+            val status = when {
+                isBeforeInstall -> CalendarDayStatus.PRE_INSTALL_GRAY
+                didRelapse -> CalendarDayStatus.RELAPSE_DAY
+                daysAgo == 0 && currentStreakDays == 0 -> CalendarDayStatus.TODAY_IN_PROGRESS
+                daysAgo <= currentStreakDays -> CalendarDayStatus.CLEAN_STREAK_DAY
+                else -> CalendarDayStatus.TODAY_IN_PROGRESS
+            }
+            val urges = preferences.getDayUrgesDefeated(daysAgo)
+
+            DailyStreakCalendarNode(
+                daysAgo = daysAgo,
+                dayShortEn = dayShortEn,
+                dayShortFa = dayShortFa,
+                dateNumber = dateNumFmt.format(cal.time),
+                fullDateLabel = fullFmt.format(cal.time),
+                status = status,
+                isToday = daysAgo == 0,
+                urgesDefeated = urges
+            )
+        }
     }
 
-    var selectedIndex by remember { mutableIntStateOf(metrics.lastIndex.coerceAtLeast(0)) }
-    val selectedDay = metrics.getOrNull(selectedIndex) ?: metrics.last()
+    var selectedIndex by remember { mutableIntStateOf(6) } // Default to Today
+    val selectedNode = calendarNodes.getOrElse(selectedIndex) { calendarNodes.last() }
 
-    val cleanDaysCount = metrics.count { it.blocksCount == 0 }
-    val weeklyBlocksTotal = metrics.sumOf { it.blocksCount }
-    val weeklyUrgesTotal = metrics.sumOf { it.urgesDefeatedCount }
-    val weeklyAppUsageMins = metrics.sumOf { it.trackedAppMinutes }
-
-    val maxBarUnits = remember(metrics) {
-        metrics.maxOfOrNull { day ->
-            (day.blocksCount * 25) + (day.urgesDefeatedCount * 15) + (day.trackedAppMinutes / 2)
-        }?.coerceAtLeast(30) ?: 30
-    }
+    val cleanDaysInWeek = calendarNodes.count { it.status == CalendarDayStatus.CLEAN_STREAK_DAY }
 
     Card(
         modifier = modifier
@@ -163,321 +189,390 @@ fun WeeklyActivityCard(
             .testTag("weekly_activity_card"),
         colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
         shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.dp, ObsidianBorder)
+        border = BorderStroke(1.5.dp, AmberWarning.copy(alpha = 0.45f))
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp)
-        ) {
-            // Header Row
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Top Duolingo-style Streak Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(CyanTelemetry.copy(alpha = 0.15f)),
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        AmberWarning.copy(alpha = 0.30f),
+                                        EmeraldShield.copy(alpha = 0.12f)
+                                    )
+                                )
+                            )
+                            .border(1.5.dp, AmberWarning, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.BarChart,
-                            contentDescription = null,
-                            tint = CyanTelemetry,
-                            modifier = Modifier.size(20.dp)
+                            imageVector = Icons.Default.LocalFireDepartment,
+                            contentDescription = "Streak Calendar",
+                            tint = AmberWarning,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = tr("Weekly Activity Status", "وضعیت فعالیت هفتگی"),
+                            text = tr("Clean Streak Calendar", "تقویم زنجیره پاکی (سبک دولینگو)"),
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = ObsidianTextPrimary
                         )
                         Text(
-                            text = tr("Real-time 7-day activity (no preset examples)", "آمار واقعی ۷ روز گذشته (بدون داده‌های پیش‌فرض)"),
-                            style = MaterialTheme.typography.labelSmall,
+                            text = if (cleanDaysInWeek == 0) {
+                                tr(
+                                    "0 clean days • Starting from Day 0 (Pre-install gray)",
+                                    "۰ روز پاک • شروع از روز صفر (روزهای قبل خاکستری)"
+                                )
+                            } else {
+                                tr(
+                                    "$cleanDaysInWeek clean day(s) this week • Pre-install days are gray",
+                                    "$cleanDaysInWeek روز پاک در این هفته • روزهای قبل از نصب خاکستری هستند"
+                                )
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
                             color = ObsidianTextSecondary
                         )
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = if (cleanDaysCount >= 5) EmeraldShield.copy(alpha = 0.16f)
-                    else AmberWarning.copy(alpha = 0.16f),
-                    border = BorderStroke(
-                        1.dp,
-                        if (cleanDaysCount >= 5) EmeraldShield.copy(alpha = 0.45f)
-                        else AmberWarning.copy(alpha = 0.45f)
-                    )
+                // Coins + Best Chain Pill
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = tr("$cleanDaysCount/7 CLEAN", "$cleanDaysCount/7 روز پاک"),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        color = if (cleanDaysCount >= 5) EmeraldShield else AmberWarning,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = AmberWarning.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MonetizationOn,
+                                contentDescription = null,
+                                tint = AmberWarning,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "$coinsBalance",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Black,
+                                color = AmberWarning
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EmeraldShield.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.EmojiEvents,
+                                contentDescription = null,
+                                tint = EmeraldShield,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = tr("Best: ${bestChainDays}d", "رکورد: ${bestChainDays} روز"),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Black,
+                                color = EmeraldShield
+                            )
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Summary KPI Pills
+            // Duolingo-Style 7-Day Connected Streak Calendar Strip
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                color = ObsidianCard,
+                border = BorderStroke(1.dp, ObsidianBorder)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        calendarNodes.forEachIndexed { index, node ->
+                            val isSelected = index == selectedIndex
+                            val isClean = node.status == CalendarDayStatus.CLEAN_STREAK_DAY
+                            val isPreInstall = node.status == CalendarDayStatus.PRE_INSTALL_GRAY
+
+                            val circleBgColor = when (node.status) {
+                                CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianBorder.copy(alpha = 0.45f)
+                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning.copy(alpha = 0.16f)
+                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
+                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary.copy(alpha = 0.25f)
+                            }
+
+                            val circleBorderColor = when {
+                                node.isToday && isClean -> AmberWarning
+                                node.status == CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                isSelected -> CyanTelemetry
+                                node.status == CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianBorder
+                                node.status == CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
+                                else -> CrimsonPrimary
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { selectedIndex = index }
+                                    .padding(vertical = 4.dp)
+                                    .testTag("weekly_day_bar_$index"),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                // Day of Week Label (M, T, W...)
+                                Text(
+                                    text = if (node.isToday) {
+                                        tr("TODAY", "امروز")
+                                    } else {
+                                        tr(node.dayShortEn.take(3).uppercase(), node.dayShortFa)
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (node.isToday || isSelected) FontWeight.Black else FontWeight.SemiBold,
+                                    color = when {
+                                        node.isToday -> AmberWarning
+                                        isPreInstall -> ObsidianTextSecondary.copy(alpha = 0.55f)
+                                        else -> ObsidianTextSecondary
+                                    },
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Duolingo-style Streak Circle
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (node.isToday) 40.dp else 36.dp)
+                                        .clip(CircleShape)
+                                        .background(circleBgColor)
+                                        .border(
+                                            width = if (node.isToday || isSelected) 2.5.dp else 1.5.dp,
+                                            color = circleBorderColor,
+                                            shape = CircleShape
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when (node.status) {
+                                        CalendarDayStatus.CLEAN_STREAK_DAY -> {
+                                            Icon(
+                                                imageVector = if (node.isToday) {
+                                                    Icons.Default.LocalFireDepartment
+                                                } else {
+                                                    Icons.Default.Check
+                                                },
+                                                contentDescription = "Clean Day",
+                                                tint = Color.Black,
+                                                modifier = Modifier.size(if (node.isToday) 22.dp else 19.dp)
+                                            )
+                                        }
+
+                                        CalendarDayStatus.TODAY_IN_PROGRESS -> {
+                                            Text(
+                                                text = "0d",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 11.sp,
+                                                color = AmberWarning
+                                            )
+                                        }
+
+                                        CalendarDayStatus.PRE_INSTALL_GRAY -> {
+                                            Icon(
+                                                imageVector = Icons.Default.Remove,
+                                                contentDescription = "Before Install",
+                                                tint = ObsidianTextSecondary.copy(alpha = 0.55f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+
+                                        CalendarDayStatus.RELAPSE_DAY -> {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = "Streak Reset",
+                                                tint = CrimsonPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(5.dp))
+
+                                // Calendar Date Number
+                                Text(
+                                    text = node.dateNumber,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                                    color = if (isPreInstall) {
+                                        ObsidianTextSecondary.copy(alpha = 0.5f)
+                                    } else {
+                                        ObsidianTextPrimary
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Selected Day Summary Strip
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = ObsidianSurface,
+                        border = BorderStroke(1.dp, ObsidianBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            when (selectedNode.status) {
+                                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
+                                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                                CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianTextSecondary.copy(alpha = 0.5f)
+                                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary
+                                            }
+                                        )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (selectedNode.isToday) {
+                                        tr("Today (${selectedNode.fullDateLabel})", "امروز (${selectedNode.fullDateLabel})")
+                                    } else {
+                                        "${selectedNode.dayShortEn} (${selectedNode.fullDateLabel})"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                            }
+
+                            val statusText = when (selectedNode.status) {
+                                CalendarDayStatus.CLEAN_STREAK_DAY -> tr(
+                                    "✓ Clean Day (+1 Coin)",
+                                    "✓ روز پاک (+۱ سکه)"
+                                )
+                                CalendarDayStatus.TODAY_IN_PROGRESS -> tr(
+                                    "Day 0 • In Progress (0 / 1 Day)",
+                                    "روز ۰ • در حال ثبت (۰ از ۱ روز)"
+                                )
+                                CalendarDayStatus.PRE_INSTALL_GRAY -> tr(
+                                    "Before App Install (Gray)",
+                                    "قبل از نصب برنامه (خاکستری)"
+                                )
+                                CalendarDayStatus.RELAPSE_DAY -> tr(
+                                    "Streak Reset Logged",
+                                    "ثبت شروع مجدد زنجیره"
+                                )
+                            }
+
+                            val statusColor = when (selectedNode.status) {
+                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
+                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianTextSecondary
+                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary
+                            }
+
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = statusColor
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Legend Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                WeeklyKpiPill(
-                    label = tr("CLEAN DAYS", "روزهای پاک"),
-                    value = "$cleanDaysCount / 7",
-                    accent = EmeraldShield,
-                    modifier = Modifier.weight(1f)
+                LegendDotItem(
+                    color = EmeraldShield,
+                    label = tr("Clean Day (+1🪙)", "روز پاک (+۱ سکه)")
                 )
-                WeeklyKpiPill(
-                    label = tr("7D BLOCKS", "مسدودسازی ۷ روز"),
-                    value = "$weeklyBlocksTotal",
-                    accent = if (weeklyBlocksTotal == 0) EmeraldShield else CrimsonPrimary,
-                    modifier = Modifier.weight(1f)
+                LegendDotItem(
+                    color = ObsidianTextSecondary.copy(alpha = 0.5f),
+                    label = tr("Before Install", "قبل از نصب")
                 )
-                WeeklyKpiPill(
-                    label = tr("URGES WON", "غلبه بر وسوسه"),
-                    value = "$weeklyUrgesTotal",
-                    accent = CyanTelemetry,
-                    modifier = Modifier.weight(1f)
+                LegendDotItem(
+                    color = AmberWarning,
+                    label = tr("Active Chain: ${currentStreakDays}d", "زنجیره فعلی: ${currentStreakDays} روز")
                 )
-                WeeklyKpiPill(
-                    label = tr("LIMITED APPS", "اپ‌های محدود"),
-                    value = if (weeklyAppUsageMins >= 60) "${weeklyAppUsageMins / 60}h ${weeklyAppUsageMins % 60}m" else "${weeklyAppUsageMins}m",
-                    accent = AmberWarning,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 7-Day Interactive Bar Chart
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(112.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(ObsidianCard.copy(alpha = 0.7f))
-                    .padding(horizontal = 10.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                metrics.forEachIndexed { index, metric ->
-                    val isSelected = index == selectedIndex
-                    val rawUnits = (metric.blocksCount * 25) +
-                            (metric.urgesDefeatedCount * 15) +
-                            (metric.trackedAppMinutes / 2)
-                    val fillRatio = if (rawUnits == 0) {
-                        0.15f
-                    } else {
-                        (rawUnits.toFloat() / maxBarUnits.toFloat()).coerceIn(0.22f, 1f)
-                    }
-
-                    val barColors = when (metric.status) {
-                        DaySafetyStatus.BLOCKED_INCIDENT -> listOf(CrimsonPrimary, CrimsonPrimary.copy(alpha = 0.55f))
-                        DaySafetyStatus.URGE_DEFEATED -> listOf(CyanTelemetry, EmeraldShield)
-                        DaySafetyStatus.CLEAN -> listOf(EmeraldShield, EmeraldShield.copy(alpha = 0.45f))
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (isSelected) ObsidianBorder.copy(alpha = 0.55f) else Color.Transparent
-                            )
-                            .clickable { selectedIndex = index }
-                            .padding(vertical = 4.dp)
-                            .testTag("weekly_day_bar_$index"),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Bottom
-                    ) {
-                        Text(
-                            text = when {
-                                metric.blocksCount > 0 -> "${metric.blocksCount}!"
-                                metric.urgesDefeatedCount > 0 -> "+${metric.urgesDefeatedCount}"
-                                else -> "✓"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = when (metric.status) {
-                                DaySafetyStatus.BLOCKED_INCIDENT -> CrimsonPrimary
-                                DaySafetyStatus.URGE_DEFEATED -> CyanTelemetry
-                                DaySafetyStatus.CLEAN -> EmeraldShield
-                            }
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Box(
-                            modifier = Modifier
-                                .width(18.dp)
-                                .weight(1f),
-                            contentAlignment = Alignment.BottomCenter
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .fillMaxHeight(fillRatio)
-                                    .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
-                                    .background(Brush.verticalGradient(barColors))
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = metric.dayShortLabel.take(3),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                            fontSize = 10.sp,
-                            color = if (isSelected) ObsidianTextPrimary else ObsidianTextSecondary
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Selected Day Breakdown Strip
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = ObsidianCard,
-                border = BorderStroke(1.dp, ObsidianBorder),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("weekly_selected_day_details")
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = when (selectedDay.status) {
-                                DaySafetyStatus.BLOCKED_INCIDENT -> Icons.Default.Warning
-                                DaySafetyStatus.URGE_DEFEATED -> Icons.Default.Shield
-                                DaySafetyStatus.CLEAN -> Icons.Default.CheckCircle
-                            },
-                            contentDescription = null,
-                            tint = when (selectedDay.status) {
-                                DaySafetyStatus.BLOCKED_INCIDENT -> CrimsonPrimary
-                                DaySafetyStatus.URGE_DEFEATED -> CyanTelemetry
-                                DaySafetyStatus.CLEAN -> EmeraldShield
-                            },
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "${selectedDay.dayShortLabel} (${selectedDay.dateFormatted})",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                            Text(
-                                text = when {
-                                    selectedDay.blocksCount > 0 ->
-                                        tr(
-                                            "${selectedDay.blocksCount} blocked trigger(s) • ${selectedDay.lockMinutesTotal}m lockdown",
-                                            "${selectedDay.blocksCount} مورد مسدود شده • ${selectedDay.lockMinutesTotal} دقیقه قفل"
-                                        )
-                                    selectedDay.urgesDefeatedCount > 0 ->
-                                        tr(
-                                            "100% Clean • ${selectedDay.urgesDefeatedCount} urge(s) defeated",
-                                            "کاملاً پاک • غلبه بر ${selectedDay.urgesDefeatedCount} وسوسه"
-                                        )
-                                    else ->
-                                        tr("100% Clean Day • Zero triggers", "روز کاملاً پاک • بدون هیچ تخلف")
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                fontSize = 11.sp,
-                                color = ObsidianTextSecondary
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = tr("${selectedDay.trackedAppMinutes}m apps", "${selectedDay.trackedAppMinutes} دقیقه اپ"),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        color = AmberWarning
-                    )
-                }
             }
         }
     }
 }
 
 @Composable
-private fun WeeklyKpiPill(
-    label: String,
-    value: String,
-    accent: Color,
-    modifier: Modifier = Modifier
+private fun LegendDotItem(
+    color: Color,
+    label: String
 ) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(ObsidianCard)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            fontSize = 8.sp,
-            color = ObsidianTextSecondary,
-            maxLines = 1
+            fontSize = 10.sp,
+            color = ObsidianTextSecondary
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(5.dp)
-                    .clip(CircleShape)
-                    .background(accent)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.labelMedium,
-                fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = ObsidianTextPrimary,
-                maxLines = 1
-            )
-        }
     }
 }

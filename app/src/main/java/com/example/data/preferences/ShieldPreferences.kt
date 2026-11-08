@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityManager
 import com.example.service.ShieldAccessibilityService
 import com.example.widget.StreakWidgetProvider
@@ -25,22 +27,31 @@ class ShieldPreferences(private val context: Context) {
         context.getSharedPreferences("shield_block_prefs", Context.MODE_PRIVATE)
 
     init {
+        val now = System.currentTimeMillis()
+        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
+
         if (!prefs.getBoolean(KEY_FRESH_SCRATCH_V4_INIT, false)) {
-            val now = System.currentTimeMillis()
             val defaultPledge =
                 "I am reclaiming my focus, energy, and self-respect. A 5-minute urge is never worth trading my clean streak."
             val preservedDark = prefs.getBoolean(KEY_IS_DARK_THEME, true)
             val preservedPersian = prefs.getBoolean(KEY_IS_PERSIAN_LANGUAGE, false)
-            val preservedRepo = prefs.getString(KEY_GITHUB_REPO_SLUG, DEFAULT_GITHUB_REPO) ?: DEFAULT_GITHUB_REPO
             prefs.edit()
                 .clear()
                 .putBoolean(KEY_FRESH_SCRATCH_V4_INIT, true)
-                .putBoolean(KEY_PROTECTION_ENABLED, true)
+                .putBoolean(KEY_V04_DEFAULTS_MIGRATED, true)
+                .putBoolean(KEY_V04_GITHUB_REPO_MIGRATED, true)
+                .putBoolean(KEY_V04_ALL_OFF_DEFAULT_MIGRATED, true)
+                .putBoolean(KEY_PROTECTION_ENABLED, false)
                 .putInt(KEY_LOCK_DURATION_MINUTES, 5)
-                .putBoolean(KEY_STRICT_MODE_ENABLED, true)
+                .putBoolean(KEY_STRICT_MODE_ENABLED, false)
+                .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
                 .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
                 .putLong(KEY_STREAK_START_TIME, now)
+                .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
                 .putInt(KEY_LONGEST_STREAK, 0)
+                .putInt(KEY_COINS_BALANCE, 0)
+                .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
+                .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
                 .putInt(KEY_SLIPS_COUNT, 0)
                 .putString(KEY_LAST_SLIP_REASON, "")
                 .putInt(KEY_URGES_DEFEATED_COUNT, 0)
@@ -49,12 +60,41 @@ class ShieldPreferences(private val context: Context) {
                 .putString(KEY_SECURITY_PIN_CODE, "0000")
                 .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
                 .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
-                .putBoolean(KEY_SMART_FOCUS_ENABLED, true)
+                .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
                 .putBoolean(KEY_IS_DARK_THEME, preservedDark)
                 .putBoolean(KEY_IS_PERSIAN_LANGUAGE, preservedPersian)
-                .putString(KEY_GITHUB_REPO_SLUG, preservedRepo)
-                .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, true)
+                .putString(KEY_GITHUB_REPO_SLUG, DEFAULT_GITHUB_REPO)
+                .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
                 .apply()
+        } else {
+            val editor = prefs.edit()
+            var needsApply = false
+            if (!prefs.getBoolean(KEY_V04_DEFAULTS_MIGRATED, false)) {
+                editor.putBoolean(KEY_V04_DEFAULTS_MIGRATED, true)
+                editor.putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
+                if (!prefs.contains(KEY_FIRST_INSTALL_EPOCH_DAY)) {
+                    editor.putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
+                }
+                needsApply = true
+            }
+            if (!prefs.getBoolean(KEY_V04_GITHUB_REPO_MIGRATED, false)) {
+                editor.putBoolean(KEY_V04_GITHUB_REPO_MIGRATED, true)
+                editor.putString(KEY_GITHUB_REPO_SLUG, DEFAULT_GITHUB_REPO)
+                needsApply = true
+            }
+            if (!prefs.getBoolean(KEY_V04_ALL_OFF_DEFAULT_MIGRATED, false)) {
+                editor.putBoolean(KEY_V04_ALL_OFF_DEFAULT_MIGRATED, true)
+                editor.putBoolean(KEY_PROTECTION_ENABLED, false)
+                editor.putBoolean(KEY_STRICT_MODE_ENABLED, false)
+                editor.putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
+                editor.putBoolean(KEY_SMART_FOCUS_ENABLED, false)
+                editor.putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
+                editor.putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
+                needsApply = true
+            }
+            if (needsApply) {
+                editor.apply()
+            }
         }
     }
 
@@ -66,6 +106,12 @@ class ShieldPreferences(private val context: Context) {
 
     private val _strictModeEnabled = MutableStateFlow(getStrictModeEnabled())
     val strictModeEnabled: StateFlow<Boolean> = _strictModeEnabled.asStateFlow()
+
+    private val _isPreventUninstallEnabled = MutableStateFlow(getIsPreventUninstallEnabled())
+    val isPreventUninstallEnabled: StateFlow<Boolean> = _isPreventUninstallEnabled.asStateFlow()
+
+    private val _coinsBalance = MutableStateFlow(getCoinsBalance())
+    val coinsBalance: StateFlow<Int> = _coinsBalance.asStateFlow()
 
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
@@ -120,9 +166,22 @@ class ShieldPreferences(private val context: Context) {
     private val _githubRepoSlug = MutableStateFlow(getGithubRepoSlug())
     val githubRepoSlug: StateFlow<String> = _githubRepoSlug.asStateFlow()
 
-    // Section Blocker Mode: true = Stop/Exit ONLY that section (Instagram Reels / Telegram Search), false = Full Lockdown
+    // Section Blocker Mode: false = Show Full Block Page (Default for v0.4), true = Exit Only
     private val _isSectionExitOnlyMode = MutableStateFlow(getIsSectionExitOnlyMode())
     val isSectionExitOnlyMode: StateFlow<Boolean> = _isSectionExitOnlyMode.asStateFlow()
+
+    // Scientific Addiction Quiz State
+    private val _hasCompletedQuiz = MutableStateFlow(hasCompletedOnboardingQuiz())
+    val hasCompletedQuiz: StateFlow<Boolean> = _hasCompletedQuiz.asStateFlow()
+
+    private val _quizScorePercent = MutableStateFlow(getAddictionQuizScore())
+    val quizScorePercent: StateFlow<Int> = _quizScorePercent.asStateFlow()
+
+    private val _quizSeverityEn = MutableStateFlow(getAddictionQuizSeverityEn())
+    val quizSeverityEn: StateFlow<String> = _quizSeverityEn.asStateFlow()
+
+    private val _quizSeverityFa = MutableStateFlow(getAddictionQuizSeverityFa())
+    val quizSeverityFa: StateFlow<String> = _quizSeverityFa.asStateFlow()
 
     fun getIsDarkTheme(): Boolean {
         return prefs.getBoolean(KEY_IS_DARK_THEME, true)
@@ -179,6 +238,9 @@ class ShieldPreferences(private val context: Context) {
             put("isProtectionEnabled", getIsProtectionEnabled())
             put("lockDurationMinutes", getLockDurationMinutes())
             put("strictModeEnabled", getStrictModeEnabled())
+            put("isPreventUninstallEnabled", getIsPreventUninstallEnabled())
+            put("coinsBalance", getCoinsBalance())
+            put("firstInstallEpochDay", getFirstInstallEpochDay())
             put("streakStartTimestamp", getStreakStartTimestamp())
             put("longestStreakDays", getLongestStreakDays())
             put("slipsCount", getSlipsCount())
@@ -193,6 +255,10 @@ class ShieldPreferences(private val context: Context) {
             put("isPersianLanguage", getIsPersianLanguage())
             put("githubRepoSlug", getGithubRepoSlug())
             put("isSectionExitOnlyMode", getIsSectionExitOnlyMode())
+            put("hasCompletedQuiz", hasCompletedOnboardingQuiz())
+            put("quizScorePercent", getAddictionQuizScore())
+            put("quizSeverityEn", getAddictionQuizSeverityEn())
+            put("quizSeverityFa", getAddictionQuizSeverityFa())
         }
     }
 
@@ -201,6 +267,9 @@ class ShieldPreferences(private val context: Context) {
         val prot = json.optBoolean("isProtectionEnabled", getIsProtectionEnabled())
         val dur = json.optInt("lockDurationMinutes", getLockDurationMinutes()).coerceIn(1, 1440)
         val strict = json.optBoolean("strictModeEnabled", getStrictModeEnabled())
+        val preventUninst = json.optBoolean("isPreventUninstallEnabled", getIsPreventUninstallEnabled())
+        val coins = json.optInt("coinsBalance", getCoinsBalance()).coerceAtLeast(0)
+        val firstInstallDay = json.optLong("firstInstallEpochDay", getFirstInstallEpochDay())
         val streakStart = json.optLong("streakStartTimestamp", getStreakStartTimestamp()).takeIf { it > 0L } ?: now
         val longest = json.optInt("longestStreakDays", getLongestStreakDays()).coerceAtLeast(0)
         val slips = json.optInt("slipsCount", getSlipsCount()).coerceAtLeast(0)
@@ -215,11 +284,18 @@ class ShieldPreferences(private val context: Context) {
         val persian = json.optBoolean("isPersianLanguage", getIsPersianLanguage())
         val repo = normalizeGithubSlug(json.optString("githubRepoSlug", getGithubRepoSlug()))
         val exitOnly = json.optBoolean("isSectionExitOnlyMode", getIsSectionExitOnlyMode())
+        val quizDone = json.optBoolean("hasCompletedQuiz", hasCompletedOnboardingQuiz())
+        val quizScore = json.optInt("quizScorePercent", getAddictionQuizScore())
+        val quizSevEn = json.optString("quizSeverityEn", getAddictionQuizSeverityEn())
+        val quizSevFa = json.optString("quizSeverityFa", getAddictionQuizSeverityFa())
 
         prefs.edit()
             .putBoolean(KEY_PROTECTION_ENABLED, prot)
             .putInt(KEY_LOCK_DURATION_MINUTES, dur)
             .putBoolean(KEY_STRICT_MODE_ENABLED, strict)
+            .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, preventUninst)
+            .putInt(KEY_COINS_BALANCE, coins)
+            .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, firstInstallDay)
             .putLong(KEY_STREAK_START_TIME, streakStart)
             .putInt(KEY_LONGEST_STREAK, longest)
             .putInt(KEY_SLIPS_COUNT, slips)
@@ -234,13 +310,19 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian)
             .putString(KEY_GITHUB_REPO_SLUG, repo)
             .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, exitOnly)
+            .putBoolean(KEY_HAS_COMPLETED_QUIZ, quizDone)
+            .putInt(KEY_QUIZ_SCORE_PERCENT, quizScore)
+            .putString(KEY_QUIZ_SEVERITY_EN, quizSevEn)
+            .putString(KEY_QUIZ_SEVERITY_FA, quizSevFa)
             .apply()
 
         _isProtectionEnabled.value = prot
         _lockDurationMinutes.value = dur
         _strictModeEnabled.value = strict
+        _isPreventUninstallEnabled.value = preventUninst
+        _coinsBalance.value = coins
         _streakStartTimestamp.value = streakStart
-        _longestStreakDays.value = longest
+        _longestStreakDays.value = maxOf(longest, getStreakDays())
         _slipsCount.value = slips
         _lastSlipReason.value = slipReason
         _urgesDefeatedCount.value = urges
@@ -253,13 +335,17 @@ class ShieldPreferences(private val context: Context) {
         _isPersianLanguage.value = persian
         _githubRepoSlug.value = repo
         _isSectionExitOnlyMode.value = exitOnly
+        _hasCompletedQuiz.value = quizDone
+        _quizScorePercent.value = quizScore
+        _quizSeverityEn.value = quizSevEn
+        _quizSeverityFa.value = quizSevFa
         _usageRefreshTrigger.value = now
 
         StreakWidgetProvider.updateAllWidgets(context)
     }
 
     fun getIsSectionExitOnlyMode(): Boolean {
-        return prefs.getBoolean(KEY_SECTION_EXIT_ONLY_MODE, true)
+        return prefs.getBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
     }
 
     fun setSectionExitOnlyMode(exitOnly: Boolean) {
@@ -268,7 +354,7 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun getIsProtectionEnabled(): Boolean {
-        return prefs.getBoolean(KEY_PROTECTION_ENABLED, true)
+        return prefs.getBoolean(KEY_PROTECTION_ENABLED, false)
     }
 
     fun setProtectionEnabled(enabled: Boolean) {
@@ -287,12 +373,176 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun getStrictModeEnabled(): Boolean {
-        return prefs.getBoolean(KEY_STRICT_MODE_ENABLED, true)
+        return prefs.getBoolean(KEY_STRICT_MODE_ENABLED, false)
     }
 
     fun setStrictModeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_STRICT_MODE_ENABLED, enabled).apply()
         _strictModeEnabled.value = enabled
+    }
+
+    // Prevent Uninstall Guard
+    fun getIsPreventUninstallEnabled(): Boolean {
+        return prefs.getBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
+    }
+
+    fun setPreventUninstallEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, enabled).apply()
+        _isPreventUninstallEnabled.value = enabled
+    }
+
+    // Coin Reward System (+1 Coin for each Clean Day)
+    fun getCoinsBalance(): Int {
+        return prefs.getInt(KEY_COINS_BALANCE, 0).coerceAtLeast(0)
+    }
+
+    fun addCoins(amount: Int): Int {
+        if (amount <= 0) return getCoinsBalance()
+        val updated = getCoinsBalance() + amount
+        prefs.edit().putInt(KEY_COINS_BALANCE, updated).apply()
+        _coinsBalance.value = updated
+        return updated
+    }
+
+    fun spendCoins(cost: Int = 20): Boolean {
+        if (cost <= 0) return true
+        val current = getCoinsBalance()
+        if (current < cost) return false
+        val updated = current - cost
+        prefs.edit().putInt(KEY_COINS_BALANCE, updated).apply()
+        _coinsBalance.value = updated
+        return true
+    }
+
+    /**
+     * Synchronizes daily clean streak coins (+1 coin per clean streak day reached)
+     * and returns the new clean day milestone if a new day (Day 1, Day 2, Day 3...) was just reached
+     * and hasn't been notified yet, or 0 otherwise.
+     */
+    fun syncCleanDaysCoinsAndCheckMilestone(): Int {
+        val currentStreakDays = getStreakDays()
+        // Always ensure Best Chain is updated & remembered
+        val recordedBest = prefs.getInt(KEY_LONGEST_STREAK, 0)
+        if (currentStreakDays > recordedBest) {
+            prefs.edit().putInt(KEY_LONGEST_STREAK, currentStreakDays).apply()
+            _longestStreakDays.value = currentStreakDays
+        }
+
+        val lastRewardedDay = prefs.getInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
+        if (currentStreakDays > lastRewardedDay) {
+            val newlyEarnedCoins = (currentStreakDays - lastRewardedDay).coerceAtLeast(1)
+            val newBalance = getCoinsBalance() + newlyEarnedCoins
+            prefs.edit()
+                .putInt(KEY_COINS_BALANCE, newBalance)
+                .putInt(KEY_LAST_REWARDED_STREAK_DAY, currentStreakDays)
+                .apply()
+            _coinsBalance.value = newBalance
+        }
+
+        val lastNotifiedDay = prefs.getInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
+        if (currentStreakDays >= 1 && currentStreakDays > lastNotifiedDay) {
+            prefs.edit().putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, currentStreakDays).apply()
+            return currentStreakDays
+        }
+        return 0
+    }
+
+    // Install Day & Duolingo-Style Daily Clean Status Tracking
+    fun getFirstInstallEpochDay(): Long {
+        val today = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+        val saved = prefs.getLong(KEY_FIRST_INSTALL_EPOCH_DAY, -1L)
+        if (saved <= 0L) {
+            prefs.edit().putLong(KEY_FIRST_INSTALL_EPOCH_DAY, today).apply()
+            return today
+        }
+        return saved
+    }
+
+    fun isDayBeforeInstall(daysAgo: Int, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(nowMs)
+        val targetEpochDay = todayEpochDay - daysAgo
+        return targetEpochDay < getFirstInstallEpochDay()
+    }
+
+    fun didRelapseOnDay(daysAgo: Int, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(nowMs)
+        val targetEpochDay = todayEpochDay - daysAgo
+        return prefs.getBoolean("relapse_day_$targetEpochDay", false)
+    }
+
+    // Scientific Addiction Assessment Quiz Methods
+    fun hasCompletedOnboardingQuiz(): Boolean {
+        return prefs.getBoolean(KEY_HAS_COMPLETED_QUIZ, false)
+    }
+
+    fun getAddictionQuizScore(): Int {
+        return prefs.getInt(KEY_QUIZ_SCORE_PERCENT, -1)
+    }
+
+    fun getAddictionQuizSeverityEn(): String {
+        return prefs.getString(KEY_QUIZ_SEVERITY_EN, "Not Assessed") ?: "Not Assessed"
+    }
+
+    fun getAddictionQuizSeverityFa(): String {
+        return prefs.getString(KEY_QUIZ_SEVERITY_FA, "ارزیابی نشده") ?: "ارزیابی نشده"
+    }
+
+    fun saveAddictionQuizResult(
+        scorePercent: Int,
+        severityEn: String,
+        severityFa: String
+    ) {
+        val safeScore = scorePercent.coerceIn(0, 100)
+        prefs.edit()
+            .putBoolean(KEY_HAS_COMPLETED_QUIZ, true)
+            .putInt(KEY_QUIZ_SCORE_PERCENT, safeScore)
+            .putString(KEY_QUIZ_SEVERITY_EN, severityEn)
+            .putString(KEY_QUIZ_SEVERITY_FA, severityFa)
+            .apply()
+        _hasCompletedQuiz.value = true
+        _quizScorePercent.value = safeScore
+        _quizSeverityEn.value = severityEn
+        _quizSeverityFa.value = severityFa
+    }
+
+    // Temporary Emergency Call / SMS Whitelist Window During Block Page Countdown
+    fun grantTemporaryCallOrSmsAccess(durationSeconds: Int = 120) {
+        val until = System.currentTimeMillis() + (durationSeconds * 1000L)
+        prefs.edit().putLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, until).apply()
+    }
+
+    fun isPackageAllowedDuringLockdown(packageName: String): Boolean {
+        val pkgLower = packageName.lowercase()
+        if (pkgLower == context.packageName.lowercase()) return true
+
+        // Always allow active incall UI / emergency dialer packages
+        val knownDialerOrSmsMarkers = listOf(
+            "com.android.dialer",
+            "com.google.android.dialer",
+            "com.samsung.android.dialer",
+            "com.samsung.android.incallui",
+            "com.android.incallui",
+            "com.android.server.telecom",
+            "com.android.phone",
+            "com.android.mms",
+            "com.google.android.apps.messaging",
+            "com.samsung.android.messaging",
+            "com.miui.mms"
+        )
+        val defaultSmsPkg = runCatching { Telephony.Sms.getDefaultSmsPackage(context)?.lowercase() }.getOrNull()
+        val defaultDialerPkg = runCatching {
+            val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+            tm?.defaultDialerPackage?.lowercase()
+        }.getOrNull()
+
+        val isDialerOrSmsPkg = knownDialerOrSmsMarkers.any { pkgLower.contains(it) } ||
+            (defaultSmsPkg != null && pkgLower == defaultSmsPkg) ||
+            (defaultDialerPkg != null && pkgLower == defaultDialerPkg)
+
+        if (!isDialerOrSmsPkg) return false
+
+        val whitelistUntil = prefs.getLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L)
+        return System.currentTimeMillis() <= whitelistUntil
     }
 
     // Biometric Lodge Methods
@@ -320,7 +570,6 @@ class ShieldPreferences(private val context: Context) {
     }
 
     // Anti-Agent Blackout Shield (FLAG_SECURE)
-    // Off by default so the app is visible in the browser streaming emulator until enabled by user
     fun getIsBlackoutPrivacyShieldEnabled(): Boolean {
         return prefs.getBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
     }
@@ -354,7 +603,7 @@ class ShieldPreferences(private val context: Context) {
 
     // Smart Focus Methods
     fun getIsSmartFocusEnabled(): Boolean {
-        return prefs.getBoolean(KEY_SMART_FOCUS_ENABLED, true)
+        return prefs.getBoolean(KEY_SMART_FOCUS_ENABLED, false)
     }
 
     fun setSmartFocusEnabled(enabled: Boolean) {
@@ -415,6 +664,7 @@ class ShieldPreferences(private val context: Context) {
     fun clearLockdown() {
         prefs.edit()
             .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
+            .putLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L)
             .remove(KEY_ACTIVE_LOCK_TRIGGER)
             .remove(KEY_ACTIVE_LOCK_APP)
             .apply()
@@ -439,13 +689,22 @@ class ShieldPreferences(private val context: Context) {
     fun getStreakDays(): Int {
         val start = getStreakStartTimestamp()
         val diff = (System.currentTimeMillis() - start).coerceAtLeast(0L)
-        return (diff / TimeUnit.DAYS.toMillis(1)).toInt()
+        val currentDays = (diff / TimeUnit.DAYS.toMillis(1)).toInt()
+        val recordedBest = prefs.getInt(KEY_LONGEST_STREAK, 0)
+        if (currentDays > recordedBest) {
+            prefs.edit().putInt(KEY_LONGEST_STREAK, currentDays).apply()
+        }
+        return currentDays
     }
 
     fun getLongestStreakDays(): Int {
         val currentDays = getStreakDays()
         val recordedBest = prefs.getInt(KEY_LONGEST_STREAK, 0)
-        return maxOf(currentDays, recordedBest)
+        val best = maxOf(currentDays, recordedBest)
+        if (best > recordedBest) {
+            prefs.edit().putInt(KEY_LONGEST_STREAK, best).apply()
+        }
+        return best
     }
 
     fun getSlipsCount(): Int {
@@ -500,22 +759,28 @@ class ShieldPreferences(private val context: Context) {
         val newBest = maxOf(currentDays, best)
         val slips = prefs.getInt(KEY_SLIPS_COUNT, 0) + 1
         val now = System.currentTimeMillis()
+        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
+
         prefs.edit()
             .putInt(KEY_LONGEST_STREAK, newBest)
             .putLong(KEY_STREAK_START_TIME, now)
+            .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
+            .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
             .putInt(KEY_SLIPS_COUNT, slips)
             .putString(KEY_LAST_SLIP_REASON, reason)
+            .putBoolean("relapse_day_$todayEpochDay", true)
             .apply()
 
         _streakStartTimestamp.value = now
         _longestStreakDays.value = newBest
         _slipsCount.value = slips
         _lastSlipReason.value = reason
+        _usageRefreshTrigger.value = now
 
         StreakWidgetProvider.updateAllWidgets(context)
     }
 
-    // Daily App Usage Tracking (accurate to the second + optional UsageStatsManager sync with resettable baseline)
+    // Daily App Usage Tracking
     private fun getTodaySecondsKey(packageName: String): String {
         val todayDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
         return "usage_sec_${todayDay}_$packageName"
@@ -589,10 +854,6 @@ class ShieldPreferences(private val context: Context) {
         addAppUsageSeconds(packageName, minutes * 60)
     }
 
-    /**
-     * Resets today's usage counter for the given app and records the current OS UsageStatsManager
-     * baseline so that the usage progress bar immediately resets to 0m 0s and refreshes live.
-     */
     fun resetTodayAppUsage(packageName: String, appName: String = "") {
         val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
         val editor = prefs.edit()
@@ -606,9 +867,6 @@ class ShieldPreferences(private val context: Context) {
         _usageRefreshTrigger.value = System.currentTimeMillis()
     }
 
-    /**
-     * Forces an immediate live refresh of usage counters in the UI.
-     */
     fun refreshLiveUsageStats() {
         _usageRefreshTrigger.value = System.currentTimeMillis()
     }
@@ -639,10 +897,6 @@ class ShieldPreferences(private val context: Context) {
         }
     }
 
-    /**
-     * Queries UsageStatsManager for the most recently foregrounded package within the last 60 seconds
-     * when Usage Access permission is granted.
-     */
     fun queryRecentForegroundPackageFromSystem(): String? {
         if (!hasUsageStatsPermission(context)) return null
         return try {
@@ -679,25 +933,35 @@ class ShieldPreferences(private val context: Context) {
         return false
     }
 
-    /**
-     * Completely resets all preferences, usage timers, cooldowns, streaks, slips, urges,
-     * active lockdowns, and security locks so the user can test the app from scratch.
-     */
     fun resetAllPreferencesToFreshScratch() {
         val now = System.currentTimeMillis()
+        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
         val defaultPledge = "I am reclaiming my focus, energy, and self-respect. A 5-minute urge is never worth trading my clean streak."
         val preservedDark = getIsDarkTheme()
         val preservedPersian = getIsPersianLanguage()
         val preservedRepo = getGithubRepoSlug()
+        val preservedQuizDone = hasCompletedOnboardingQuiz()
+        val preservedQuizScore = getAddictionQuizScore()
+        val preservedQuizSevEn = getAddictionQuizSeverityEn()
+        val preservedQuizSevFa = getAddictionQuizSeverityFa()
+
         prefs.edit()
             .clear()
             .putBoolean(KEY_FRESH_SCRATCH_V4_INIT, true)
-            .putBoolean(KEY_PROTECTION_ENABLED, true)
+            .putBoolean(KEY_V04_DEFAULTS_MIGRATED, true)
+            .putBoolean(KEY_V04_GITHUB_REPO_MIGRATED, true)
+            .putBoolean(KEY_V04_ALL_OFF_DEFAULT_MIGRATED, true)
+            .putBoolean(KEY_PROTECTION_ENABLED, false)
             .putInt(KEY_LOCK_DURATION_MINUTES, 5)
-            .putBoolean(KEY_STRICT_MODE_ENABLED, true)
+            .putBoolean(KEY_STRICT_MODE_ENABLED, false)
+            .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
             .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
             .putLong(KEY_STREAK_START_TIME, now)
+            .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
             .putInt(KEY_LONGEST_STREAK, 0)
+            .putInt(KEY_COINS_BALANCE, 0)
+            .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
+            .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
             .putInt(KEY_SLIPS_COUNT, 0)
             .putString(KEY_LAST_SLIP_REASON, "")
             .putInt(KEY_URGES_DEFEATED_COUNT, 0)
@@ -706,16 +970,22 @@ class ShieldPreferences(private val context: Context) {
             .putString(KEY_SECURITY_PIN_CODE, "0000")
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
             .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
-            .putBoolean(KEY_SMART_FOCUS_ENABLED, true)
+            .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
             .putBoolean(KEY_IS_DARK_THEME, preservedDark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, preservedPersian)
             .putString(KEY_GITHUB_REPO_SLUG, preservedRepo)
-            .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, true)
+            .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
+            .putBoolean(KEY_HAS_COMPLETED_QUIZ, preservedQuizDone)
+            .putInt(KEY_QUIZ_SCORE_PERCENT, preservedQuizScore)
+            .putString(KEY_QUIZ_SEVERITY_EN, preservedQuizSevEn)
+            .putString(KEY_QUIZ_SEVERITY_FA, preservedQuizSevFa)
             .apply()
 
-        _isProtectionEnabled.value = true
+        _isProtectionEnabled.value = false
         _lockDurationMinutes.value = 5
-        _strictModeEnabled.value = true
+        _strictModeEnabled.value = false
+        _isPreventUninstallEnabled.value = false
+        _coinsBalance.value = 0
         _activeLockEndTime.value = 0L
         _streakStartTimestamp.value = now
         _longestStreakDays.value = 0
@@ -727,21 +997,39 @@ class ShieldPreferences(private val context: Context) {
         _securityPinCode.value = "0000"
         _isBlackoutPrivacyShieldEnabled.value = false
         _screenshotTemporaryUnlockUntil.value = 0L
-        _isSmartFocusEnabled.value = true
+        _isSmartFocusEnabled.value = false
         _isDarkTheme.value = preservedDark
         _isPersianLanguage.value = preservedPersian
         _githubRepoSlug.value = preservedRepo
-        _isSectionExitOnlyMode.value = true
+        _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
 
         StreakWidgetProvider.updateAllWidgets(context)
     }
 
+    fun consumeSectionRulesOffMigration(): Boolean {
+        if (!prefs.getBoolean(KEY_V04_SECTIONS_OFF_MIGRATED, false)) {
+            prefs.edit().putBoolean(KEY_V04_SECTIONS_OFF_MIGRATED, true).apply()
+            return true
+        }
+        return false
+    }
+
     companion object {
-        const val DEFAULT_GITHUB_REPO = "mehdisrmd/x-blocker"
+        const val DEFAULT_GITHUB_REPO = "mehdisrmd/My-google-app"
         private const val KEY_PROTECTION_ENABLED = "key_protection_enabled"
         private const val KEY_LOCK_DURATION_MINUTES = "key_lock_duration_minutes"
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
+        private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
+        private const val KEY_COINS_BALANCE = "key_coins_balance"
+        private const val KEY_LAST_REWARDED_STREAK_DAY = "key_last_rewarded_streak_day"
+        private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
+        private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
+        private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"
+        private const val KEY_HAS_COMPLETED_QUIZ = "key_has_completed_quiz"
+        private const val KEY_QUIZ_SCORE_PERCENT = "key_quiz_score_percent"
+        private const val KEY_QUIZ_SEVERITY_EN = "key_quiz_severity_en"
+        private const val KEY_QUIZ_SEVERITY_FA = "key_quiz_severity_fa"
         private const val KEY_ACTIVE_LOCK_END_TIME = "key_active_lock_end_time"
         private const val KEY_ACTIVE_LOCK_DURATION = "key_active_lock_duration"
         private const val KEY_ACTIVE_LOCK_TRIGGER = "key_active_lock_trigger"
@@ -763,6 +1051,10 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_GITHUB_REPO_SLUG = "key_github_repo_slug"
         private const val KEY_SECTION_EXIT_ONLY_MODE = "key_section_exit_only_mode"
         private const val KEY_FRESH_SCRATCH_V4_INIT = "key_fresh_scratch_v4_init"
+        private const val KEY_V04_DEFAULTS_MIGRATED = "key_v04_defaults_migrated"
+        private const val KEY_V04_GITHUB_REPO_MIGRATED = "key_v04_github_repo_migrated"
+        private const val KEY_V04_ALL_OFF_DEFAULT_MIGRATED = "key_v04_all_off_default_migrated"
+        private const val KEY_V04_SECTIONS_OFF_MIGRATED = "key_v04_sections_off_migrated"
 
         fun isAccessibilityServiceEnabled(context: Context): Boolean {
             val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager

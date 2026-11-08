@@ -1,5 +1,7 @@
 package com.example.ui.lockdown
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -34,16 +36,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Air
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -62,12 +67,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ShieldApplication
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.TacticalBreathingStudioCard
 import com.example.ui.i18n.AppStrings.tr
@@ -75,6 +82,7 @@ import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
+import com.example.ui.theme.IndigoAccent
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianSurface
@@ -93,12 +101,14 @@ fun LockdownScreen(
     onLockExpired: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
     // Disable back button while locked
     BackHandler(enabled = true) {
         // Intentionally no-op to prevent bypass during lockdown
     }
 
-    var remainingMillis by remember {
+    var remainingMillis by remember(endTimeEpoch) {
         mutableLongStateOf(
             (endTimeEpoch - System.currentTimeMillis()).coerceAtLeast(0L)
         )
@@ -169,7 +179,7 @@ fun LockdownScreen(
                 Box(
                     modifier = Modifier
                         .scale(if (isFinished) 1f else pulseScale)
-                        .size(84.dp)
+                        .size(76.dp)
                         .clip(CircleShape)
                         .background(
                             if (isFinished) EmeraldShield.copy(alpha = 0.2f)
@@ -186,11 +196,11 @@ fun LockdownScreen(
                         imageVector = if (isFinished) Icons.Default.CheckCircle else Icons.Default.Shield,
                         contentDescription = "Shield Status",
                         tint = if (isFinished) EmeraldShield else CrimsonPrimary,
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier.size(40.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 val isPanicLock = triggerWord.contains("Panic", ignoreCase = true)
 
@@ -213,24 +223,24 @@ fun LockdownScreen(
                             "شما با موفقیت بر وسوسه غلبه کردید. زنجیره را نشکن!"
                         )
                         isPanicLock -> tr(
-                            "Voluntary Panic Mode lock active to protect your clean streak.",
-                            "قفل اضطراری داوطلبانه برای محافظت از زنجیره روزهای پاک شما فعال است."
+                            "Voluntary Panic Mode lock active. Only Calls & Texts are allowed.",
+                            "قفل اضطراری فعال است. فقط تماس تلفنی و پیامک مجاز است."
                         )
                         else -> tr(
-                            "Blocked trigger or restriction detected. Step back and protect your chain.",
-                            "محتوا یا محدودیت غیرمجاز تشخیص داده شد. از زنجیره پاکی خود محافظت کنید."
+                            "All other apps are blocked until the timer ends. Only Calls & Texts are accessible.",
+                            "تمام برنامه‌های دیگر تا پایان تایمر مسدودند. فقط تماس و پیامک در دسترس است."
                         )
                     },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 20.dp)
+                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
                 )
 
                 // Countdown Timer Gauge
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(220.dp)
+                    modifier = Modifier.size(200.dp)
                 ) {
                     val progress = if (totalDurationMillis > 0) {
                         (remainingMillis.toFloat() / totalDurationMillis).coerceIn(0f, 1f)
@@ -238,14 +248,14 @@ fun LockdownScreen(
 
                     CircularProgressIndicator(
                         progress = { 1f },
-                        modifier = Modifier.size(220.dp),
+                        modifier = Modifier.size(200.dp),
                         color = ObsidianBorder,
                         strokeWidth = 14.dp
                     )
 
                     CircularProgressIndicator(
                         progress = { progress },
-                        modifier = Modifier.size(220.dp),
+                        modifier = Modifier.size(200.dp),
                         color = if (isFinished) EmeraldShield else CrimsonPrimary,
                         strokeWidth = 14.dp
                     )
@@ -274,7 +284,7 @@ fun LockdownScreen(
                             )
 
                             Text(
-                                text = tr("REMAINING", "زمان باقی‌مانده"),
+                                text = tr("LOCKED", "در حال شمارش"),
                                 style = MaterialTheme.typography.labelSmall,
                                 letterSpacing = 2.sp,
                                 color = ObsidianTextSecondary,
@@ -284,7 +294,110 @@ fun LockdownScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Emergency Phone Calls & SMS Texting Access Buttons (Item 8)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, EmeraldShield.copy(alpha = 0.45f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = tr(
+                                "Allowed During Lock: Phone Calls & SMS Only",
+                                "دسترسی مجاز هنگام قفل: فقط تماس تلفنی و پیامک"
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = EmeraldShield
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    runCatching {
+                                        ShieldApplication.instance.preferences.grantTemporaryCallOrSmsAccess(120)
+                                        val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivity(dialIntent)
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = EmeraldShield.copy(alpha = 0.18f),
+                                    contentColor = EmeraldShield
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("lockdown_phone_call_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = "Phone Call",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = tr("Phone Call", "تماس تلفنی"),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            FilledTonalButton(
+                                onClick = {
+                                    runCatching {
+                                        ShieldApplication.instance.preferences.grantTemporaryCallOrSmsAccess(120)
+                                        val smsIntent = Intent(Intent.ACTION_VIEW, Uri.parse("sms:")).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivity(smsIntent)
+                                    }.onFailure {
+                                        runCatching {
+                                            val fallback = Intent(Intent.ACTION_MAIN).apply {
+                                                addCategory(Intent.CATEGORY_APP_MESSAGING)
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            }
+                                            context.startActivity(fallback)
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = IndigoAccent.copy(alpha = 0.2f),
+                                    contentColor = CyanTelemetry
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("lockdown_sms_text_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Sms,
+                                    contentDescription = "Text Message",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = tr("Text / SMS", "ارسال پیامک"),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Detection trigger details card
                 Card(
@@ -293,7 +406,7 @@ fun LockdownScreen(
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, ObsidianBorder)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -313,7 +426,7 @@ fun LockdownScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -339,12 +452,12 @@ fun LockdownScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = tr("Lock duration:", "مدت قفل:"),
+                                text = tr("Source / Duration:", "منبع / مدت قفل:"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ObsidianTextSecondary
                             )
                             Text(
-                                text = "$totalDurationMinutes min",
+                                text = "${sourceApp.ifEmpty { "System" }} • $totalDurationMinutes min",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
                                 color = ObsidianTextPrimary
@@ -353,14 +466,14 @@ fun LockdownScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Motivational "Don't Break the Chain" & Famous Quotes Card
+                // Daily Motivational Quote Card (Non-tappable, 1 new quote per day)
                 MotivationalQuoteBannerCard()
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Button to Open / Hide Breathing Exercise (Not shown by default until tapped!)
+                // Button to Open / Hide Breathing Exercise
                 OutlinedButton(
                     onClick = { showBreathingExercise = !showBreathingExercise },
                     shape = RoundedCornerShape(14.dp),
@@ -371,7 +484,7 @@ fun LockdownScreen(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
+                        .height(48.dp)
                         .testTag("toggle_lockdown_breathing_button")
                 ) {
                     Icon(
@@ -410,7 +523,7 @@ fun LockdownScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(22.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
                 if (isFinished) {
                     Button(
@@ -434,8 +547,8 @@ fun LockdownScreen(
                 } else {
                     Text(
                         text = tr(
-                            "Phone is locked to protect your clean streak. Wait for timer to finish.",
-                            "گوشی برای محافظت از زنجیره پاکی شما قفل شده است. تا پایان تایمر صبر کنید."
+                            "Leaving to any other app is blocked while the timer is counting down.",
+                            "خروج به هر برنامه دیگری در حین شمارش تایمر مسدود است."
                         ),
                         style = MaterialTheme.typography.labelSmall,
                         color = ObsidianTextSecondary,

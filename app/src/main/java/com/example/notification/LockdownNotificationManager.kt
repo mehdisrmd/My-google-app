@@ -25,15 +25,18 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Manages:
- * 1. Persistent live countdown notification during an active X Blocker lockdown.
- * 2. Always-On Quick Panic SOS Notification Bar control so the user can trigger
- *    Emergency Panic Mode or Instant Self-Lockdown from any app at any time.
+ * 1. Short, efficient Always-On Quick Panic SOS Notification Bar control.
+ * 2. Concise live countdown notification during an active X Blocker lockdown.
+ * 3. Celebratory motivational notification whenever the user reaches Day 1, Day 2, Day 3... Clean (+1 Coin).
  */
 object LockdownNotificationManager {
     private const val CHANNEL_ID_LOCKDOWN = "x_blocker_lockdown_channel_v2"
     private const val CHANNEL_ID_ALWAYS_ON_PANIC = "x_blocker_panic_sos_channel_v2"
+    private const val CHANNEL_ID_MILESTONE = "x_blocker_streak_milestone_channel_v1"
+
     private const val NOTIFICATION_ID_LOCKDOWN = 4001
     private const val NOTIFICATION_ID_ALWAYS_ON_PANIC = 4002
+    private const val NOTIFICATION_ID_MILESTONE = 4003
 
     const val ACTION_OPEN_MAIN_DASHBOARD = "com.example.action.OPEN_MAIN_DASHBOARD"
     const val ACTION_OPEN_PANIC_MODE = "com.example.action.OPEN_PANIC_MODE"
@@ -63,7 +66,7 @@ object LockdownNotificationManager {
                 "X Blocker Lockdown Timer",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Displays remaining lockdown time while X Blocker is active"
+                description = "Active lockdown countdown"
                 setShowBadge(true)
                 setSound(null, null)
                 enableVibration(false)
@@ -71,26 +74,111 @@ object LockdownNotificationManager {
 
             val panicChannel = NotificationChannel(
                 CHANNEL_ID_ALWAYS_ON_PANIC,
-                "X Blocker Emergency Panic SOS Bar",
+                "X Blocker Quick SOS Bar",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Always-on notification bar shortcut for instant Emergency Panic Mode & Self-Lockdown"
+                description = "Quick Panic SOS & Lock shortcut"
                 setShowBadge(false)
                 setSound(null, null)
                 enableVibration(false)
             }
 
+            val milestoneChannel = NotificationChannel(
+                CHANNEL_ID_MILESTONE,
+                "X Blocker Clean Day Milestones",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Motivational notifications for Day 1, Day 2, Day 3+ Clean streaks"
+                setShowBadge(true)
+                enableVibration(true)
+            }
+
             nm.createNotificationChannel(lockdownChannel)
             nm.createNotificationChannel(panicChannel)
+            nm.createNotificationChannel(milestoneChannel)
         }
     }
 
     /**
-     * Posts or refreshes the persistent Always-On Emergency Panic SOS notification in the status bar.
-     * Returns true if posted successfully, or false if notification permission is missing.
+     * Checks if the user has reached a new Clean Day (Day 1, Day 2, Day 3...) and awards +1 Coin
+     * while posting a motivational milestone notification.
+     */
+    fun checkAndNotifyCleanDayMilestone(context: Context) {
+        val app = runCatching { ShieldApplication.instance }.getOrNull() ?: return
+        val prefs = app.preferences
+        val newlyReachedDay = prefs.syncCleanDaysCoinsAndCheckMilestone()
+        if (newlyReachedDay >= 1) {
+            showCleanDayMilestoneNotification(
+                context = context,
+                streakDays = newlyReachedDay,
+                coinsBalance = prefs.getCoinsBalance(),
+                isPersian = prefs.getIsPersianLanguage()
+            )
+        }
+    }
+
+    fun showCleanDayMilestoneNotification(
+        context: Context,
+        streakDays: Int,
+        coinsBalance: Int,
+        isPersian: Boolean = false
+    ): Boolean {
+        createNotificationChannel(context)
+        if (!hasNotificationPermission(context)) return false
+
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return false
+
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_MAIN_DASHBOARD
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val openPendingIntent = PendingIntent.getActivity(
+                context,
+                210,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = if (isPersian) {
+                "روز $streakDays پاک! +۱ سکه جایزه"
+            } else {
+                "Day $streakDays Clean! +1 Coin Earned"
+            }
+
+            val body = if (isPersian) {
+                "زنجیره را نشکن! مجموع سکه‌های شما: $coinsBalance سکه."
+            } else {
+                "Don't break the chain! Keep going strong ($coinsBalance coins)."
+            }
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID_MILESTONE)
+                .setSmallIcon(R.drawable.ic_stat_x_shield)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(openPendingIntent)
+                .build()
+
+            nm.notify(NOTIFICATION_ID_MILESTONE, notification)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Posts or refreshes the short, efficient Always-On Emergency Panic SOS notification.
      */
     fun showOrUpdateAlwaysOnPanicNotification(context: Context): Boolean {
         createNotificationChannel(context)
+        checkAndNotifyCleanDayMilestone(context)
         if (!hasNotificationPermission(context)) {
             return false
         }
@@ -102,10 +190,10 @@ object LockdownNotificationManager {
             val prefs = app?.preferences
             val isProtectionOn = prefs?.getIsProtectionEnabled() ?: true
             val streakDays = prefs?.getStreakDays() ?: 0
-            val urgesDefeated = prefs?.getUrgesDefeatedCount() ?: 0
+            val coins = prefs?.getCoinsBalance() ?: 0
             val lockMins = prefs?.getLockDurationMinutes() ?: 5
+            val isPersian = prefs?.getIsPersianLanguage() ?: false
 
-            // 1. Tap body -> Open X Blocker Dashboard
             val openAppIntent = Intent(context, MainActivity::class.java).apply {
                 action = ACTION_OPEN_MAIN_DASHBOARD
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -119,7 +207,6 @@ object LockdownNotificationManager {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // 2. Action 1 -> Open Emergency Panic Mode SOS Dialog & Breathing Studio
             val panicSosIntent = Intent(context, MainActivity::class.java).apply {
                 action = ACTION_OPEN_PANIC_MODE
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -134,7 +221,6 @@ object LockdownNotificationManager {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // 3. Action 2 -> Instant Emergency Self-Lockdown right from the notification shade
             val quickLockIntent = Intent(context, MainActivity::class.java).apply {
                 action = ACTION_QUICK_EMERGENCY_LOCK
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -149,16 +235,24 @@ object LockdownNotificationManager {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val statusLabel = if (isProtectionOn) "Shield Active" else "Shield Paused"
+            val title = if (isPersian) {
+                val state = if (isProtectionOn) "فعال" else "متوقف"
+                "X Blocker ($state) • ${streakDays} روز پاک • $coins سکه"
+            } else {
+                val state = if (isProtectionOn) "On" else "Paused"
+                "X Blocker ($state) • ${streakDays}d Clean • ${coins}🪙"
+            }
+
+            val shortDesc = if (isPersian) {
+                "دکمه PANIC SOS یا قفل فوری (${lockMins}m)"
+            } else {
+                "Tap PANIC SOS or LOCK NOW (${lockMins}m)"
+            }
+
             val notification = NotificationCompat.Builder(context, CHANNEL_ID_ALWAYS_ON_PANIC)
                 .setSmallIcon(R.drawable.ic_stat_x_shield)
-                .setContentTitle("X Blocker • $statusLabel (${streakDays}d Clean)")
-                .setContentText("Feeling an urge? Don't break the chain! Tap PANIC SOS or LOCK NOW ($urgesDefeated urges beat).")
-                .setStyle(
-                    NotificationCompat.BigTextStyle().bigText(
-                        "Don't break the chain! Streak: ${streakDays}d • Urges Defeated: $urgesDefeated. Tap PANIC SOS for breathing & pledge relief, or LOCK NOW (${lockMins}m) to block your screen immediately."
-                    )
-                )
+                .setContentTitle(title)
+                .setContentText(shortDesc)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
@@ -173,7 +267,7 @@ object LockdownNotificationManager {
                 )
                 .addAction(
                     R.drawable.ic_stat_x_shield,
-                    "LOCK NOW (${lockMins}m)",
+                    "LOCK (${lockMins}m)",
                     quickLockPendingIntent
                 )
                 .build()
@@ -227,8 +321,8 @@ object LockdownNotificationManager {
                     try {
                         val notification = NotificationCompat.Builder(appContext, CHANNEL_ID_LOCKDOWN)
                             .setSmallIcon(R.drawable.ic_stat_x_shield)
-                            .setContentTitle("X Blocker Active • $timeText left")
-                            .setContentText("Trigger: $triggerWord • Don't break the chain! Stay strong.")
+                            .setContentTitle("X Blocker • $timeText left")
+                            .setContentText("Blocked: $triggerWord")
                             .setOngoing(true)
                             .setOnlyAlertOnce(true)
                             .setSilent(true)

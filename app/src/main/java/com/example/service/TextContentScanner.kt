@@ -1,363 +1,362 @@
 package com.example.service
 
-import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.model.BlockedCategory
 import com.example.data.model.BlockedKeyword
 import com.example.data.model.SectionBlockRule
-import java.util.Locale
+import com.example.util.AppPackageResolver
+
+data class ScanMatchResult(
+    val matchedKeyword: String,
+    val category: BlockedCategory = BlockedCategory.ADULT_EXPLICIT
+)
 
 object TextContentScanner {
 
-    data class MatchResult(
-        val matchedKeyword: String,
-        val category: BlockedCategory,
-        val snippet: String
-    )
-
-    fun scanForSectionRule(
-        root: AccessibilityNodeInfo?,
-        rules: List<SectionBlockRule>,
-        currentPackage: String
-    ): SectionBlockRule? {
-        if (root == null || rules.isEmpty()) return null
-        val applicable = rules.filter {
-            it.isEnabled && com.example.util.AppPackageResolver.matchesPackageOrVariant(
-                ruleTargetPackage = it.targetPackage,
-                ruleSectionOrAppName = it.sectionName,
-                candidatePackage = currentPackage
-            )
-        }
-        if (applicable.isEmpty()) return null
-
-        // Collect a quick snapshot of all screen text to check if Telegram Search filter tabs are visible
-        val screenSnapshotBuilder = StringBuilder()
-        collectText(root, screenSnapshotBuilder, maxDepth = 10, currentDepth = 0)
-        val screenLower = screenSnapshotBuilder.toString().lowercase(Locale.ROOT)
-
-        return findMatchingSectionNode(
-            node = root,
-            rules = applicable,
-            screenLower = screenLower,
-            maxDepth = 14,
-            currentDepth = 0
-        )
+    fun extractScreenText(root: AccessibilityNodeInfo?): List<String> {
+        if (root == null) return emptyList()
+        val results = mutableListOf<String>()
+        traverseNode(root, results, depth = 0)
+        return results
     }
 
-    private fun findMatchingSectionNode(
+    private fun traverseNode(
         node: AccessibilityNodeInfo?,
-        rules: List<SectionBlockRule>,
-        screenLower: String,
-        maxDepth: Int,
-        currentDepth: Int
-    ): SectionBlockRule? {
-        if (node == null || currentDepth > maxDepth) return null
+        results: MutableList<String>,
+        depth: Int
+    ) {
+        if (node == null || depth > 30) return
 
-        val viewId = node.viewIdResourceName?.lowercase(Locale.ROOT) ?: ""
-        val text = node.text?.toString()?.lowercase(Locale.ROOT) ?: ""
-        val desc = node.contentDescription?.toString()?.lowercase(Locale.ROOT) ?: ""
-        val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            node.hintText?.toString()?.lowercase(Locale.ROOT) ?: ""
-        } else {
-            ""
+        node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            results.add(it)
         }
-        val className = node.className?.toString()?.lowercase(Locale.ROOT) ?: ""
-
-        val isEditText = className.contains("edittext")
-        val isFocused = node.isFocused || node.isAccessibilityFocused
-        val isSelected = node.isSelected
-
-        for (rule in rules) {
-            val isSearchRule = rule.triggerPattern.contains("search", ignoreCase = true) ||
-                rule.sectionName.contains("search", ignoreCase = true)
-            val isInstagramReelsRule = rule.targetPackage.contains("instagram", ignoreCase = true) ||
-                rule.sectionName.contains("reels", ignoreCase = true)
-
-            if (isSearchRule) {
-                // CAREFUL TELEGRAM SEARCH BOX DETECTION:
-                // Must ONLY trigger when the user enters the Search box in Telegram,
-                // NEVER when opening Telegram chat list or typing a normal chat message!
-                val isChatMessageInput = text.contains("message") ||
-                    text.contains("پیام") ||
-                    hint.contains("message") ||
-                    hint.contains("پیام") ||
-                    desc.contains("message")
-
-                val hasExplicitSearchViewId = viewId.isNotEmpty() && (
-                    viewId.contains("search_src_text") ||
-                        viewId.contains("chat_search") ||
-                        viewId.contains("search_field") ||
-                        viewId.contains("search_edit")
-                    )
-
-                val hasTelegramSearchFilterTabsOnScreen =
-                    screenLower.contains("global search") ||
-                        screenLower.contains("جستجوی جهانی") ||
-                        screenLower.contains("search messages") ||
-                        screenLower.contains("recent searches") ||
-                        (screenLower.contains("downloads") && screenLower.contains("links") && screenLower.contains("media")) ||
-                        (screenLower.contains("رسانه") && screenLower.contains("لینک"))
-
-                val editTextHasSearchLabel = isEditText && !isChatMessageInput && (
-                    text.contains("search") ||
-                        text.contains("جستجو") ||
-                        hint.contains("search") ||
-                        hint.contains("جستجو") ||
-                        desc.contains("search") ||
-                        desc.contains("جستجو") ||
-                        viewId.contains("search") ||
-                        (isFocused && hasTelegramSearchFilterTabsOnScreen)
-                    )
-
-                if (hasExplicitSearchViewId || editTextHasSearchLabel || (isEditText && hasTelegramSearchFilterTabsOnScreen && !isChatMessageInput)) {
-                    return rule
-                }
-                continue
+        node.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            results.add(it)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                results.add(it)
             }
-
-            if (isInstagramReelsRule) {
-                // CAREFUL INSTAGRAM REELS DETECTION:
-                // Must ONLY trigger when the user is actually inside the Reels section/tab,
-                // NEVER when opening Instagram Home/DM where the unselected Reels bottom tab icon sits!
-                if (viewId.isNotEmpty()) {
-                    val isReelsActiveViewerId = viewId.contains("clips_viewer") ||
-                        viewId.contains("reel_viewer") ||
-                        viewId.contains("clips_video_container") ||
-                        viewId.contains("clips_swipe_refresh")
-                    val isReelsBottomTabSelected = viewId.contains("clips_tab") && isSelected
-                    if (isReelsActiveViewerId || isReelsBottomTabSelected) {
-                        return rule
-                    }
-                }
-                // Or if the selected Reels tab / active Reels header is selected
-                val matchesReelsLabel = text == "reels" || text == "ریلز" || desc == "reels" || desc == "ریلز"
-                if (matchesReelsLabel && isSelected) {
-                    return rule
-                }
-                continue
-            }
-
-            // 1. Generic Section Rule: Check View ID pattern
-            if (rule.viewIdPattern.isNotBlank() && viewId.isNotEmpty()) {
-                val viewMatches = matchesPatternSafely(viewId, rule.viewIdPattern)
-                if (viewMatches) {
-                    val isTabId = viewId.contains("tab")
-                    if (!isTabId || isSelected) {
-                        return rule
-                    }
-                }
-            }
-
-            // 2. Generic Section Rule: Check Trigger Pattern on node text / contentDescription
-            if (rule.triggerPattern.isNotBlank()) {
-                val textMatches = text.isNotEmpty() && matchesPatternSafely(text, rule.triggerPattern)
-                val descMatches = desc.isNotEmpty() && matchesPatternSafely(desc, rule.triggerPattern)
-
-                if (textMatches || descMatches) {
-                    val isUnselectedTabIcon = descMatches && !textMatches && node.isClickable && !isSelected
-                    if (!isUnselectedTabIcon) {
-                        return rule
-                    }
-                }
-            }
+        }
+        node.viewIdResourceName?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            results.add(it)
         }
 
         val childCount = node.childCount
         for (i in 0 until childCount) {
-            val child = node.getChild(i) ?: continue
-            val match = findMatchingSectionNode(child, rules, screenLower, maxDepth, currentDepth + 1)
-            if (match != null) return match
+            val child = try {
+                node.getChild(i)
+            } catch (_: Exception) {
+                null
+            }
+            if (child != null) {
+                traverseNode(child, results, depth + 1)
+            }
+        }
+    }
+
+    /**
+     * Detects if the user is attempting to uninstall or force-stop X Blocker in Android Settings
+     * or Package Installer while Prevent Uninstall is enabled.
+     */
+    fun isAttemptingToUninstallOrDisableXBlocker(
+        root: AccessibilityNodeInfo?,
+        currentPackage: String
+    ): Boolean {
+        if (root == null) return false
+        val pkgLower = currentPackage.lowercase()
+        val isInstallerOrSettings = pkgLower.contains("packageinstaller") ||
+            pkgLower == "com.android.settings" ||
+            pkgLower.contains("miui.securitycenter") ||
+            pkgLower.contains("permissioncontroller")
+
+        if (!isInstallerOrSettings) return false
+
+        val texts = extractScreenText(root)
+        val combinedLower = texts.joinToString(" | ").lowercase()
+        val mentionsOurApp = combinedLower.contains("x blocker") ||
+            combinedLower.contains("com.aistudio.shieldblock") ||
+            combinedLower.contains("shieldaccessibilityservice")
+
+        if (!mentionsOurApp) return false
+
+        if (pkgLower.contains("packageinstaller")) {
+            return true
+        }
+
+        val hasDangerAction = combinedLower.contains("do you want to uninstall") ||
+            combinedLower.contains("uninstall this app") ||
+            combinedLower.contains("آیا می‌خواهید این برنامه را حذف کنید") ||
+            combinedLower.contains("حذف نصب شود")
+        return hasDangerAction
+    }
+
+    /**
+     * Checks if the current screen in `currentPackage` matches any enabled `SectionBlockRule`.
+     */
+    fun findMatchingSectionRule(
+        root: AccessibilityNodeInfo?,
+        currentPackage: String,
+        rules: List<SectionBlockRule>
+    ): SectionBlockRule? {
+        if (root == null || rules.isEmpty()) return null
+
+        val applicableRules = rules.filter { rule ->
+            rule.isEnabled && AppPackageResolver.matchesPackageOrVariant(
+                ruleTargetPackage = rule.targetPackage,
+                ruleSectionOrAppName = rule.sectionName,
+                candidatePackage = currentPackage
+            )
+        }
+        if (applicableRules.isEmpty()) return null
+
+        val allScreenTexts = extractScreenText(root)
+        val combinedScreenLower = allScreenTexts.joinToString(" | ").lowercase()
+
+        for (rule in applicableRules) {
+            val textTokens = rule.triggerPattern.split("|")
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+            val viewIdTokens = rule.viewIdPattern.split("|")
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+
+            if (findMatchingSectionNode(
+                    node = root,
+                    rule = rule,
+                    textTokens = textTokens,
+                    viewIdTokens = viewIdTokens,
+                    screenLower = combinedScreenLower,
+                    depth = 0
+                )
+            ) {
+                return rule
+            }
         }
         return null
     }
 
     /**
-     * Evaluates section block rules against simulated screen text and package name (used in Test Sandbox & tests).
+     * Text-based section match helper (also verifies that Telegram Archived Chats are never blocked).
      */
     fun findFirstSectionMatch(
         rawScreenText: String,
         currentPackage: String,
         rules: List<SectionBlockRule>
-    ): MatchResult? {
+    ): ScanMatchResult? {
         if (rawScreenText.isBlank() || rules.isEmpty()) return null
-        val lowerText = rawScreenText.lowercase(Locale.ROOT)
-        for (rule in rules) {
-            if (!rule.isEnabled) continue
-            val pkgMatches = currentPackage == "*" ||
-                rule.targetPackage.equals(currentPackage, ignoreCase = true) ||
-                rule.targetPackage == "*" ||
-                lowerText.contains(rule.targetPackage.lowercase(Locale.ROOT))
-            if (!pkgMatches) continue
+        val normalizedScreen = normalizeText(rawScreenText)
 
-            if (rule.triggerPattern.isNotBlank() && matchesPatternSafely(lowerText, rule.triggerPattern)) {
-                return MatchResult(
-                    matchedKeyword = "Section Blocked: ${rule.sectionName}",
-                    category = BlockedCategory.CUSTOM_KEYWORD,
-                    snippet = rawScreenText.take(60)
-                )
-            }
-            if (rule.viewIdPattern.isNotBlank() && matchesPatternSafely(lowerText, rule.viewIdPattern)) {
-                return MatchResult(
-                    matchedKeyword = "Section Blocked: ${rule.sectionName}",
-                    category = BlockedCategory.CUSTOM_KEYWORD,
-                    snippet = rawScreenText.take(60)
+        // Never trigger on Telegram Archived Chats
+        if (currentPackage.contains("telegram", ignoreCase = true) &&
+            (normalizedScreen.contains("archived chats") ||
+                normalizedScreen.contains("archive") ||
+                normalizedScreen.contains("ارشیو") ||
+                normalizedScreen.contains("آرشیو"))
+        ) {
+            return null
+        }
+
+        val applicableRules = rules.filter { rule ->
+            rule.isEnabled && AppPackageResolver.matchesPackageOrVariant(
+                ruleTargetPackage = rule.targetPackage,
+                ruleSectionOrAppName = rule.sectionName,
+                candidatePackage = currentPackage
+            )
+        }
+        for (rule in applicableRules) {
+            val tokens = rule.triggerPattern.split("|")
+                .map { normalizeText(it) }
+                .filter { it.isNotEmpty() }
+            if (tokens.any { token -> normalizedScreen.contains(token) }) {
+                return ScanMatchResult(
+                    matchedKeyword = "${rule.sectionName} (${rule.targetPackage})",
+                    category = BlockedCategory.CUSTOM_KEYWORD
                 )
             }
         }
         return null
     }
 
-    private fun matchesPatternSafely(target: String, pattern: String): Boolean {
-        return try {
-            Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(target)
-        } catch (_: Exception) {
-            target.contains(pattern.lowercase(Locale.ROOT))
-        }
-    }
-
-    fun scanNodeTree(
-        root: AccessibilityNodeInfo?,
-        activeKeywords: List<BlockedKeyword>,
-        ignorePackage: String
-    ): MatchResult? {
-        if (root == null) return null
-        if (root.packageName != null && root.packageName.toString() == ignorePackage) {
-            return null
-        }
-
-        val textCollector = StringBuilder()
-        collectText(root, textCollector, maxDepth = 15, currentDepth = 0)
-        val fullText = textCollector.toString()
-        if (fullText.isBlank()) return null
-
-        return findFirstMatch(fullText, activeKeywords)
-    }
-
-    private fun collectText(
+    private fun findMatchingSectionNode(
         node: AccessibilityNodeInfo?,
-        collector: StringBuilder,
-        maxDepth: Int,
-        currentDepth: Int
-    ) {
-        if (node == null || currentDepth > maxDepth) return
+        rule: SectionBlockRule,
+        textTokens: List<String>,
+        viewIdTokens: List<String>,
+        screenLower: String,
+        depth: Int
+    ): Boolean {
+        if (node == null || depth > 30) return false
 
-        val text = node.text
-        if (!text.isNullOrBlank()) {
-            collector.append(text).append(" ")
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val text = node.text?.toString()?.trim()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+        val hint = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            node.hintText?.toString()?.trim()?.lowercase() ?: ""
+        } else {
+            ""
         }
-        val desc = node.contentDescription
-        if (!desc.isNullOrBlank()) {
-            collector.append(desc).append(" ")
+        val className = node.className?.toString()?.lowercase() ?: ""
+
+        val secNameLower = rule.sectionName.lowercase()
+        val isSearchRule = secNameLower.contains("search") ||
+            rule.triggerPattern.lowercase().contains("search") ||
+            secNameLower.contains("جستجو")
+        val isReelsRule = secNameLower.contains("reel") ||
+            rule.targetPackage.lowercase().contains("instagram")
+
+        if (isSearchRule) {
+            // CRITICAL FIX (Item 3): Never block when the user opens Telegram Archived Chats!
+            val isInsideArchivedChats = screenLower.contains("archived chats") ||
+                screenLower.contains("archived") ||
+                screenLower.contains("archive") ||
+                screenLower.contains("آرشیو") ||
+                screenLower.contains("ارشیو") ||
+                screenLower.contains("چت‌های آرشیو") ||
+                screenLower.contains("گفتگوهای آرشیو")
+
+            if (isInsideArchivedChats && !node.isFocused) {
+                return false
+            }
+
+            // Only trigger when an EditText search field is actively focused by the user
+            // or when Global Search results are displayed alongside an active EditText.
+            val isEditText = className.contains("edittext")
+            val hasSearchLabelOrId = textTokens.any { token ->
+                text.contains(token) || desc.contains(token) || hint.contains(token)
+            } || viewIdTokens.any { token -> viewId.contains(token) } ||
+                viewId.contains("search_src_text") ||
+                viewId.contains("search_field")
+
+            val hasGlobalSearchSectionHeader =
+                screenLower.contains("global search") || screenLower.contains("جستجوی جهانی")
+
+            if (isEditText && node.isFocused && (hasSearchLabelOrId || hasGlobalSearchSectionHeader || !isInsideArchivedChats)) {
+                return true
+            }
+            if (isEditText && hasGlobalSearchSectionHeader && !isInsideArchivedChats) {
+                return true
+            }
+        } else if (isReelsRule) {
+            val isDedicatedReelsPlayerView = viewId.contains("clips_viewer") ||
+                viewId.contains("reel_viewer") ||
+                viewId.contains("clips_video_container") ||
+                viewId.contains("WatchReels".lowercase())
+
+            val isReelsTabActivelySelected = node.isSelected && (
+                viewId.contains("clips_tab") ||
+                    desc == "reels" ||
+                    text == "reels" ||
+                    desc.contains("ریلز")
+                )
+
+            if (isDedicatedReelsPlayerView || isReelsTabActivelySelected) {
+                return true
+            }
+        } else {
+            if (viewId.isNotEmpty() && viewIdTokens.any { token -> viewId.contains(token) }) {
+                return true
+            }
+            if (textTokens.any { token ->
+                    (text.isNotEmpty() && text == token) ||
+                        (desc.isNotEmpty() && desc == token)
+                }
+            ) {
+                return true
+            }
         }
 
         val childCount = node.childCount
         for (i in 0 until childCount) {
-            val child = node.getChild(i) ?: continue
-            collectText(child, collector, maxDepth, currentDepth + 1)
+            val child = try {
+                node.getChild(i)
+            } catch (_: Exception) {
+                null
+            }
+            if (child != null) {
+                if (findMatchingSectionNode(child, rule, textTokens, viewIdTokens, screenLower, depth + 1)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    fun normalizeText(raw: String): String {
+        val withoutDiacritics = raw
+            .replace(Regex("[\\u064B-\\u065F\\u0670\\u0640]"), "")
+            .replace('ي', 'ی')
+            .replace('ك', 'ک')
+            .replace('ة', 'ه')
+            .replace('\u200C', ' ')
+            .lowercase()
+
+        return buildString(withoutDiacritics.length) {
+            for (ch in withoutDiacritics) {
+                when (ch) {
+                    '0' -> append('o')
+                    '1' -> append('i')
+                    '3' -> append('e')
+                    '4' -> append('a')
+                    '5' -> append('s')
+                    '@' -> append('a')
+                    '$' -> append('s')
+                    else -> append(ch)
+                }
+            }
         }
     }
 
-    fun findFirstMatch(rawText: String, keywords: List<BlockedKeyword>): MatchResult? {
+    fun findFirstMatch(
+        rawText: String,
+        keywords: List<BlockedKeyword>
+    ): ScanMatchResult? {
         if (rawText.isBlank() || keywords.isEmpty()) return null
+        val lowerRaw = rawText.lowercase()
+        val normalized = normalizeText(rawText)
 
-        val lowerRaw = rawText.lowercase(Locale.ROOT)
-        val normalized = normalizeText(lowerRaw)
+        for (keyword in keywords) {
+            if (!keyword.isEnabled) continue
+            val targetRaw = keyword.text.trim().lowercase()
+            val targetNorm = normalizeText(targetRaw)
+            if (targetNorm.isEmpty()) continue
 
-        // Prioritize specific domain matches and longer phrases first
-        val sortedKeywords = keywords.sortedWith(
-            compareByDescending<BlockedKeyword> {
-                it.category == BlockedCategory.ADULT_DOMAIN || it.category == BlockedCategory.CUSTOM_DOMAIN
-            }.thenByDescending { it.text.length }
-        )
-
-        for (item in sortedKeywords) {
-            if (!item.isEnabled) continue
-            val pattern = item.text.lowercase(Locale.ROOT).trim()
-            if (pattern.isEmpty()) continue
-
-            // 1. Direct domain or URL substring match
-            if (item.category == BlockedCategory.ADULT_DOMAIN ||
-                item.category == BlockedCategory.CUSTOM_DOMAIN ||
-                pattern.contains(".")
-            ) {
-                val strippedDomain = pattern.replace(".", "")
-                if (lowerRaw.contains(pattern) || (strippedDomain.length >= 5 && normalized.contains(strippedDomain))) {
-                    return MatchResult(
-                        matchedKeyword = item.text,
-                        category = item.category,
-                        snippet = extractSnippet(rawText, pattern)
-                    )
-                }
-            }
-
-            // 2. Keyword / Phrase match (supports both English and Persian with normalized text)
-            val normalizedPattern = normalizeText(pattern)
-            if (normalizedPattern.isEmpty()) continue
-
-            if (lowerRaw.contains(pattern) || normalized.contains(normalizedPattern)) {
-                if (normalizedPattern.length <= 3) {
-                    val tokenBoundaryRegex = Regex("(?<=^|\\s)${Regex.escape(normalizedPattern)}(?=$|\\s)")
-                    if (tokenBoundaryRegex.containsMatchIn(normalized)) {
-                        return MatchResult(
-                            matchedKeyword = item.text,
-                            category = item.category,
-                            snippet = extractSnippet(rawText, pattern)
-                        )
+            if (keyword.isRegex) {
+                try {
+                    if (Regex(targetRaw, RegexOption.IGNORE_CASE).containsMatchIn(lowerRaw)) {
+                        return ScanMatchResult(keyword.text, keyword.category)
                     }
-                } else {
-                    return MatchResult(
-                        matchedKeyword = item.text,
-                        category = item.category,
-                        snippet = extractSnippet(rawText, pattern)
-                    )
+                } catch (_: Exception) {
+                }
+            } else {
+                when (keyword.category) {
+                    BlockedCategory.ADULT_DOMAIN,
+                    BlockedCategory.CUSTOM_DOMAIN -> {
+                        if (lowerRaw.contains(targetRaw) || normalized.contains(targetNorm)) {
+                            return ScanMatchResult(keyword.text, keyword.category)
+                        }
+                    }
+
+                    BlockedCategory.ADULT_EXPLICIT,
+                    BlockedCategory.CUSTOM_KEYWORD -> {
+                        val escaped = Regex.escape(targetNorm)
+                        val boundaryRegex = Regex("(^|[^a-zA-Z0-9\\u0600-\\u06FF])$escaped([^a-zA-Z0-9\\u0600-\\u06FF]|$)")
+                        if (boundaryRegex.containsMatchIn(normalized)) {
+                            return ScanMatchResult(keyword.text, keyword.category)
+                        }
+                    }
                 }
             }
         }
         return null
     }
 
-    fun normalizeText(input: String): String {
-        val sb = StringBuilder(input.length)
-        var lastWasSpace = true
-        for (ch in input) {
-            val mapped: Char? = when (ch) {
-                '0' -> 'o'
-                '@' -> 'a'
-                '$' -> 's'
-                '1', '!', '|' -> 'i'
-                '3' -> 'e'
-                '5' -> 's'
-                // Persian / Arabic normalizations
-                'ي', 'ى' -> 'ی'
-                'ك' -> 'ک'
-                'ة' -> 'ه'
-                'ؤ', 'إ', 'أ', 'آ' -> 'ا'
-                '\u200c', '\u200b', '\u200d' -> ' ' // Half-space / zero-width space
-                // Arabic/Persian diacritics to ignore
-                '\u064B', '\u064C', '\u064D', '\u064E', '\u064F', '\u0650', '\u0651', '\u0652' -> null
-                ' ', '\t', '\n', '\r', '-', '_', '.', '*', '/', '\\', ',', ';', ':', '(', ')', '[', ']', '{', '}', '"', '\'' -> ' '
-                else -> if (ch.isLetterOrDigit()) ch else ' '
-            }
-            if (mapped != null) {
-                if (mapped == ' ') {
-                    if (!lastWasSpace) {
-                        sb.append(' ')
-                        lastWasSpace = true
-                    }
-                } else {
-                    sb.append(mapped)
-                    lastWasSpace = false
-                }
-            }
-        }
-        return sb.toString().trim()
-    }
-
-    private fun extractSnippet(fullText: String, matched: String): String {
-        val idx = fullText.indexOf(matched, ignoreCase = true)
-        if (idx == -1) return fullText.take(60).replace("\n", " ").trim()
-        val start = (idx - 20).coerceAtLeast(0)
-        val end = (idx + matched.length + 20).coerceAtMost(fullText.length)
-        return fullText.substring(start, end).replace("\n", " ").trim()
+    fun findMatchingKeyword(
+        screenTexts: List<String>,
+        keywords: List<BlockedKeyword>
+    ): String? {
+        if (screenTexts.isEmpty() || keywords.isEmpty()) return null
+        val combined = screenTexts.joinToString(separator = " \n ")
+        return findFirstMatch(combined, keywords)?.matchedKeyword
     }
 }
