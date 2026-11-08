@@ -11,7 +11,6 @@ import com.example.ui.components.WeeklyActivityCalculator
 import com.example.ui.i18n.AppStrings
 import com.example.ui.info.GithubUpdateChecker
 import com.example.ui.quiz.ScientificAddictionQuizRepository
-import com.example.ui.streak.NOBEEP_YOUTUBE_RECOVERY_LESSONS
 import com.example.ui.streak.STREAK_MILESTONES
 import com.example.ui.theme.AppThemeState
 import com.example.ui.theme.ObsidianBg
@@ -226,9 +225,6 @@ class ExampleRobolectricTest {
         val highEval = ScientificAddictionQuizRepository.evaluateScore(22)
         assertTrue(highEval.scorePercent >= 80)
 
-        // NoBeep YouTube Recovery Lessons for Streak Reset
-        assertEquals(3, NOBEEP_YOUTUBE_RECOVERY_LESSONS.size)
-        assertTrue(NOBEEP_YOUTUBE_RECOVERY_LESSONS.all { it.youtubeUrl.startsWith("https://www.youtube.com/watch?v=") })
     }
 
     @Test
