@@ -100,7 +100,11 @@ import com.example.ui.quiz.ScientificAddictionQuizDialog
 import com.example.ui.security.BiometricLockOverlay
 import com.example.ui.security.BlackoutPrivacyCurtain
 import com.example.ui.streak.NoBeepStreakScreen
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import com.example.ui.theme.AmberWarning
+import com.example.ui.theme.AppThemeState
+import com.example.ui.theme.GlassGlowBackground
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
@@ -434,9 +438,12 @@ fun MainContent(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Liquid Glass: ambient purple glows live behind the whole UI;
+        // translucent surfaces above them read as real glass.
+        GlassGlowBackground()
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            containerColor = ObsidianBg,
+            containerColor = Color.Transparent,
             topBar = {
                 XBlockerCompactTopBar(
                     isDarkTheme = isDarkTheme,
@@ -447,9 +454,30 @@ fun MainContent(
                 )
             },
             bottomBar = {
+                // Liquid Glass floating tab bar: detached pill, translucent
+                // surface, hairline border — content scrolls beneath it.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
                 NavigationBar(
-                    containerColor = ObsidianSurface,
-                    tonalElevation = 8.dp
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(32.dp))
+                        .border(
+                            BorderStroke(
+                                1.dp,
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = if (AppThemeState.isDarkTheme) 0.38f else 0.7f),
+                                        ObsidianBorder.copy(alpha = 0.5f)
+                                    )
+                                )
+                            ),
+                            RoundedCornerShape(32.dp)
+                        ),
+                    containerColor = ObsidianSurface.copy(alpha = 0.62f),
+                    tonalElevation = 0.dp
                 ) {
                     NavigationBarItem(
                         selected = currentTab == ScreenTab.DASHBOARD,
@@ -604,6 +632,7 @@ fun MainContent(
                         colors = navigationBarColors(),
                         modifier = Modifier.testTag("nav_tab_info")
                     )
+                }
                 }
             }
         ) { innerPadding ->
@@ -895,7 +924,7 @@ private fun XBlockerCompactTopBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ObsidianSurface)
+            .background(ObsidianSurface.copy(alpha = 0.82f))
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         Row(
@@ -1026,7 +1055,7 @@ private fun XBlockerCompactTopBar(
 private fun navigationBarColors() = NavigationBarItemDefaults.colors(
     selectedIconColor = EmeraldShield,
     selectedTextColor = ObsidianTextPrimary,
-    indicatorColor = EmeraldShield.copy(alpha = 0.18f),
+    indicatorColor = EmeraldShield.copy(alpha = 0.24f),
     unselectedIconColor = ObsidianTextSecondary,
     unselectedTextColor = ObsidianTextSecondary
 )

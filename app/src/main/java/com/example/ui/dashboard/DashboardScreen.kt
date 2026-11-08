@@ -253,10 +253,11 @@ fun DashboardScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. Compact Material Design 3 Hero Card (Master Shield + Coins + Best Chain)
+        // Liquid Glass: translucent surface so the ambient glows shine through.
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.elevatedCardColors(containerColor = ObsidianSurface),
-            shape = RoundedCornerShape(22.dp)
+            colors = CardDefaults.elevatedCardColors(containerColor = ObsidianSurface.copy(alpha = 0.78f)),
+            shape = RoundedCornerShape(28.dp)
         ) {
             Box(
                 modifier = Modifier

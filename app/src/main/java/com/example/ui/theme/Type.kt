@@ -28,49 +28,49 @@ val JetBrainsMonoFontFamily = FontFamily(
 
 val Typography = Typography(
     displayLarge = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 56.sp,
         lineHeight = 62.sp,
         letterSpacing = (-1.0).sp
     ),
     displayMedium = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 44.sp,
         lineHeight = 50.sp,
         letterSpacing = (-0.5).sp
     ),
     headlineMedium = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 28.sp,
         lineHeight = 34.sp,
         letterSpacing = (-0.25).sp
     ),
     headlineSmall = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 24.sp,
         lineHeight = 30.sp,
         letterSpacing = (-0.2).sp
     ),
     titleLarge = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
         lineHeight = 26.sp,
         letterSpacing = 0.sp
     ),
     titleMedium = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.SemiBold,
         fontSize = 16.sp,
         lineHeight = 22.sp,
         letterSpacing = 0.1.sp
     ),
     titleSmall = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 20.sp,
@@ -98,7 +98,7 @@ val Typography = Typography(
         letterSpacing = 0.2.sp
     ),
     labelLarge = TextStyle(
-        fontFamily = SpaceGroteskFontFamily,
+        fontFamily = PlusJakartaSansFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 13.sp,
         lineHeight = 18.sp,

@@ -1,8 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:gravity="center"
-        android:drawable="@drawable/ic_stop_sign_x_blocker_1794123976741" />
-</layer-list>
+<!-- X Blocker launcher mark: beautiful purple stop sign (octagon) with a bold white X.
+     Flat iOS-style, matching the Liquid Glass purple UI. Drawn inside the
+     adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- soft outer glow ring of the sign -->
+    <path
+        android:fillColor="#5B4BC4"
+        android:pathData="M42.5,23.3 L65.5,23.3 L84.7,42.5 L84.7,65.5 L65.5,84.7 L42.5,84.7 L23.3,65.5 L23.3,42.5 Z" />
+    <!-- sign body -->
+    <path
+        android:fillColor="#755FE0"
+        android:pathData="M42.5,26.3 L65.5,26.3 L81.7,42.5 L81.7,65.5 L65.5,81.7 L42.5,81.7 L26.3,65.5 L26.3,42.5 Z" />
+    <!-- top light sheen -->
+    <path
+        android:fillColor="#8B76E8"
+        android:fillAlpha="0.55"
+        android:pathData="M42.5,26.3 L65.5,26.3 L81.7,42.5 L81.7,50 L26.3,50 L26.3,42.5 Z" />
+    <!-- the X -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46.6,41.6 L66.4,61.4 L61.4,66.4 L41.6,46.6 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M61.4,41.6 L66.4,46.6 L46.6,66.4 L41.6,61.4 Z" />
+</vector>
