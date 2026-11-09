@@ -1,6 +1,7 @@
 package com.example.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -12,48 +13,49 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
-// Liquid Glass Purple color schemes: one violet seed, tonal surfaces,
-// error reserved strictly for over-limit / danger states.
-private val ShieldDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFA78BFA),
-    onPrimary = Color(0xFF22104A),
-    primaryContainer = Color(0xFF4B3699),
-    onPrimaryContainer = Color(0xFFE4DEFF),
-    secondary = Color(0xFFCDBFFD),
-    onSecondary = Color(0xFF2A2150),
-    secondaryContainer = Color(0xFF241A4D),
-    onSecondaryContainer = Color(0xFFE4DEFF),
-    tertiary = AmberWarning,
-    background = Color(0xFF0D0A17),
-    onBackground = Color(0xFFF4F1FF),
-    surface = Color(0xFF171228),
-    onSurface = Color(0xFFF4F1FF),
-    surfaceVariant = Color(0xFF1F1838),
-    onSurfaceVariant = Color(0xFFA79FC2),
-    outline = Color(0xFF3A2E66),
+// Liquid Glass color schemes, built from the active seasonal palette
+// (default PURPLE_GLASS = the original violet system). Error colors stay
+// fixed across palettes: danger must always read as danger.
+private fun shieldDarkColorScheme(palette: SeasonPaletteSet): ColorScheme = darkColorScheme(
+    primary = palette.schemePrimary,
+    onPrimary = palette.schemeOnPrimary,
+    primaryContainer = palette.schemePrimaryContainer,
+    onPrimaryContainer = palette.schemeOnPrimaryContainer,
+    secondary = palette.schemeSecondary,
+    onSecondary = palette.schemeOnSecondary,
+    secondaryContainer = palette.schemeSecondaryContainer,
+    onSecondaryContainer = palette.schemeOnSecondaryContainer,
+    tertiary = palette.schemeTertiary,
+    background = palette.bg,
+    onBackground = palette.textPrimary,
+    surface = palette.surface,
+    onSurface = palette.textPrimary,
+    surfaceVariant = palette.card,
+    onSurfaceVariant = palette.textSecondary,
+    outline = palette.border,
     error = Color(0xFFFF8A80),
     onError = Color(0xFF3B0A0A),
     errorContainer = Color(0xFF4A1620),
     onErrorContainer = Color(0xFFFFC9C2)
 )
 
-private val ShieldLightColorScheme = lightColorScheme(
-    primary = Color(0xFF6D4AC8),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFE4DEFF),
-    onPrimaryContainer = Color(0xFF2E1065),
-    secondary = Color(0xFF6D5BD0),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE9E2FD),
-    onSecondaryContainer = Color(0xFF2A2150),
-    tertiary = Color(0xFFD97706),
-    background = Color(0xFFF7F5FC),
-    onBackground = Color(0xFF1D1830),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1D1830),
-    surfaceVariant = Color(0xFFF0EBFA),
-    onSurfaceVariant = Color(0xFF6A6284),
-    outline = Color(0xFFD5C8F2),
+private fun shieldLightColorScheme(palette: SeasonPaletteSet): ColorScheme = lightColorScheme(
+    primary = palette.schemePrimary,
+    onPrimary = palette.schemeOnPrimary,
+    primaryContainer = palette.schemePrimaryContainer,
+    onPrimaryContainer = palette.schemeOnPrimaryContainer,
+    secondary = palette.schemeSecondary,
+    onSecondary = palette.schemeOnSecondary,
+    secondaryContainer = palette.schemeSecondaryContainer,
+    onSecondaryContainer = palette.schemeOnSecondaryContainer,
+    tertiary = palette.schemeTertiary,
+    background = palette.bg,
+    onBackground = palette.textPrimary,
+    surface = palette.surface,
+    onSurface = palette.textPrimary,
+    surfaceVariant = palette.card,
+    onSurfaceVariant = palette.textSecondary,
+    outline = palette.border,
     error = Color(0xFFC62828),
     onError = Color.White,
     errorContainer = Color(0xFFFDECEA),
@@ -73,12 +75,19 @@ private val ShieldShapes = Shapes(
 fun MyApplicationTheme(
     darkTheme: Boolean = AppThemeState.isDarkTheme,
     isPersianRtl: Boolean = AppThemeState.isPersianLanguage,
+    seasonalTheme: SeasonalTheme = AppThemeState.seasonalTheme,
     content: @Composable () -> Unit
 ) {
     AppThemeState.isDarkTheme = darkTheme
     AppThemeState.isPersianLanguage = isPersianRtl
+    AppThemeState.seasonalTheme = seasonalTheme
 
-    val colorScheme = if (darkTheme) ShieldDarkColorScheme else ShieldLightColorScheme
+    val palette = SeasonalPalettes.getValue(seasonalTheme)
+    val colorScheme = if (darkTheme) {
+        shieldDarkColorScheme(palette.dark)
+    } else {
+        shieldLightColorScheme(palette.light)
+    }
     val layoutDirection = if (isPersianRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
 
     CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {

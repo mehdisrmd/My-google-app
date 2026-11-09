@@ -14,7 +14,10 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityManager
+import com.example.service.KeywordGraceEpisode
+import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
+import com.example.ui.theme.SeasonalTheme
 import com.example.widget.StreakWidgetProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -166,6 +169,14 @@ class ShieldPreferences(private val context: Context) {
     private val _githubRepoSlug = MutableStateFlow(getGithubRepoSlug())
     val githubRepoSlug: StateFlow<String> = _githubRepoSlug.asStateFlow()
 
+    // Uninstall Guard: persisted wall-clock deadline of the 5-hour wait
+    private val _uninstallUnlockDeadline = MutableStateFlow(getUninstallUnlockDeadline())
+    val uninstallUnlockDeadline: StateFlow<Long> = _uninstallUnlockDeadline.asStateFlow()
+
+    // Seasonal Theme palette selection (stored as the enum name)
+    private val _seasonalThemeName = MutableStateFlow(getSeasonalTheme().name)
+    val seasonalThemeName: StateFlow<String> = _seasonalThemeName.asStateFlow()
+
     // Section Blocker Mode: false = Show Full Block Page (Default for v0.4), true = Exit Only
     private val _isSectionExitOnlyMode = MutableStateFlow(getIsSectionExitOnlyMode())
     val isSectionExitOnlyMode: StateFlow<Boolean> = _isSectionExitOnlyMode.asStateFlow()
@@ -199,6 +210,16 @@ class ShieldPreferences(private val context: Context) {
     fun setPersianLanguage(persian: Boolean) {
         prefs.edit().putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian).apply()
         _isPersianLanguage.value = persian
+    }
+
+    // Seasonal Theme (Spring / Summer / Autumn / Winter + Purple Glass default)
+    fun getSeasonalTheme(): SeasonalTheme {
+        return SeasonalTheme.fromName(prefs.getString(KEY_SEASONAL_THEME, null))
+    }
+
+    fun setSeasonalTheme(theme: SeasonalTheme) {
+        prefs.edit().putString(KEY_SEASONAL_THEME, theme.name).apply()
+        _seasonalThemeName.value = theme.name
     }
 
     fun getGithubRepoSlug(): String {
@@ -253,6 +274,7 @@ class ShieldPreferences(private val context: Context) {
             put("isSmartFocusEnabled", getIsSmartFocusEnabled())
             put("isDarkTheme", getIsDarkTheme())
             put("isPersianLanguage", getIsPersianLanguage())
+            put("seasonalTheme", getSeasonalTheme().name)
             put("githubRepoSlug", getGithubRepoSlug())
             put("isSectionExitOnlyMode", getIsSectionExitOnlyMode())
             put("hasCompletedQuiz", hasCompletedOnboardingQuiz())
@@ -282,6 +304,9 @@ class ShieldPreferences(private val context: Context) {
         val focus = json.optBoolean("isSmartFocusEnabled", getIsSmartFocusEnabled())
         val dark = json.optBoolean("isDarkTheme", getIsDarkTheme())
         val persian = json.optBoolean("isPersianLanguage", getIsPersianLanguage())
+        val seasonalTheme = SeasonalTheme.fromName(
+            json.optString("seasonalTheme", getSeasonalTheme().name)
+        )
         val repo = normalizeGithubSlug(json.optString("githubRepoSlug", getGithubRepoSlug()))
         val exitOnly = json.optBoolean("isSectionExitOnlyMode", getIsSectionExitOnlyMode())
         val quizDone = json.optBoolean("hasCompletedQuiz", hasCompletedOnboardingQuiz())
@@ -308,6 +333,7 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_SMART_FOCUS_ENABLED, focus)
             .putBoolean(KEY_IS_DARK_THEME, dark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian)
+            .putString(KEY_SEASONAL_THEME, seasonalTheme.name)
             .putString(KEY_GITHUB_REPO_SLUG, repo)
             .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, exitOnly)
             .putBoolean(KEY_HAS_COMPLETED_QUIZ, quizDone)
@@ -333,6 +359,7 @@ class ShieldPreferences(private val context: Context) {
         _isSmartFocusEnabled.value = focus
         _isDarkTheme.value = dark
         _isPersianLanguage.value = persian
+        _seasonalThemeName.value = seasonalTheme.name
         _githubRepoSlug.value = repo
         _isSectionExitOnlyMode.value = exitOnly
         _hasCompletedQuiz.value = quizDone
@@ -358,7 +385,14 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun setProtectionEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_PROTECTION_ENABLED, enabled).apply()
+        val editor = prefs.edit().putBoolean(KEY_PROTECTION_ENABLED, enabled)
+        if (enabled) {
+            // Re-arming the shield consumes any pending/elapsed uninstall
+            // unlock: switching protection off again needs a fresh 5h wait.
+            editor.putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, 0L)
+            _uninstallUnlockDeadline.value = 0L
+        }
+        editor.apply()
         _isProtectionEnabled.value = enabled
     }
 
@@ -389,6 +423,42 @@ class ShieldPreferences(private val context: Context) {
     fun setPreventUninstallEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, enabled).apply()
         _isPreventUninstallEnabled.value = enabled
+    }
+
+    // Uninstall Guard — 5-hour wait before protection may be turned off.
+    // The deadline is a persisted wall-clock timestamp, so the countdown
+    // keeps running across reboots with no receiver or service needed.
+    fun getUninstallUnlockDeadline(): Long {
+        return prefs.getLong(KEY_UNINSTALL_UNLOCK_DEADLINE, 0L)
+    }
+
+    /**
+     * Starts the 5-hour uninstall wait and returns the deadline. If a wait is
+     * already running, the original deadline is kept (tapping again never
+     * extends or restarts the countdown).
+     */
+    fun requestUninstallUnlock(nowMs: Long = System.currentTimeMillis()): Long {
+        val existing = getUninstallUnlockDeadline()
+        if (UninstallGuard.isRequested(existing) && !UninstallGuard.isUnlocked(existing, nowMs)) {
+            return existing
+        }
+        val deadline = UninstallGuard.deadlineForRequest(nowMs)
+        prefs.edit().putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, deadline).apply()
+        _uninstallUnlockDeadline.value = deadline
+        return deadline
+    }
+
+    fun isUninstallUnlocked(nowMs: Long = System.currentTimeMillis()): Boolean {
+        return UninstallGuard.isUnlocked(getUninstallUnlockDeadline(), nowMs)
+    }
+
+    /** Master protection may be switched OFF only after the wait elapsed. */
+    fun canDisableProtection(nowMs: Long = System.currentTimeMillis()): Boolean {
+        return UninstallGuard.canDisableProtection(getUninstallUnlockDeadline(), nowMs)
+    }
+
+    fun getUninstallWaitRemainingMillis(nowMs: Long = System.currentTimeMillis()): Long {
+        return UninstallGuard.remainingMillis(getUninstallUnlockDeadline(), nowMs)
     }
 
     // Coin Reward System (+1 Coin for each Clean Day)
@@ -470,6 +540,20 @@ class ShieldPreferences(private val context: Context) {
         return prefs.getBoolean("relapse_day_$targetEpochDay", false)
     }
 
+    /** All epoch days in [fromEpochDay, toEpochDay] that have a recorded relapse. */
+    fun getRelapseEpochDaysInRange(fromEpochDay: Long, toEpochDay: Long): Set<Long> {
+        if (toEpochDay < fromEpochDay) return emptySet()
+        val result = mutableSetOf<Long>()
+        var day = fromEpochDay
+        while (day <= toEpochDay) {
+            if (prefs.getBoolean("relapse_day_$day", false)) {
+                result.add(day)
+            }
+            day++
+        }
+        return result
+    }
+
     // Scientific Addiction Assessment Quiz Methods
     fun hasCompletedOnboardingQuiz(): Boolean {
         return prefs.getBoolean(KEY_HAS_COMPLETED_QUIZ, false)
@@ -539,10 +623,23 @@ class ShieldPreferences(private val context: Context) {
             (defaultSmsPkg != null && pkgLower == defaultSmsPkg) ||
             (defaultDialerPkg != null && pkgLower == defaultDialerPkg)
 
-        if (!isDialerOrSmsPkg) return false
+        // Calls & Messages stay fully accessible for the whole block episode:
+        // the default dialer / SMS app (and known dialer, messaging and
+        // in-call packages) are never overlay-blocked while a block is active.
+        // (Previously they were only allowed inside a short 120s window after
+        // tapping the block screen's Call/SMS buttons.)
+        return isDialerOrSmsPkg
+    }
 
+    /**
+     * True while the short "user just tapped Call/SMS on the block screen"
+     * window is open. LockdownActivity uses this — not the package check
+     * above — to decide whether leaving the block screen is a deliberate
+     * trip to the dialer/messages or an attempt to escape the lock.
+     */
+    fun hasActiveEmergencyCommWindow(nowMs: Long = System.currentTimeMillis()): Boolean {
         val whitelistUntil = prefs.getLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L)
-        return System.currentTimeMillis() <= whitelistUntil
+        return nowMs <= whitelistUntil
     }
 
     // Biometric Lodge Methods
@@ -647,7 +744,8 @@ class ShieldPreferences(private val context: Context) {
     fun startLockdown(
         durationMinutes: Int,
         triggerWord: String,
-        sourceApp: String
+        sourceApp: String,
+        graceAvailable: Boolean = false
     ): Long {
         val endTime = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(durationMinutes.toLong())
         prefs.edit()
@@ -655,6 +753,7 @@ class ShieldPreferences(private val context: Context) {
             .putInt(KEY_ACTIVE_LOCK_DURATION, durationMinutes)
             .putString(KEY_ACTIVE_LOCK_TRIGGER, triggerWord)
             .putString(KEY_ACTIVE_LOCK_APP, sourceApp)
+            .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, graceAvailable)
             .putLong(KEY_LAST_INCIDENT_TIME, System.currentTimeMillis())
             .apply()
         _activeLockEndTime.value = endTime
@@ -665,10 +764,51 @@ class ShieldPreferences(private val context: Context) {
         prefs.edit()
             .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
             .putLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L)
+            .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, false)
             .remove(KEY_ACTIVE_LOCK_TRIGGER)
             .remove(KEY_ACTIVE_LOCK_APP)
             .apply()
         _activeLockEndTime.value = 0L
+    }
+
+    /** True when the current lock may offer the one-time 10-second grace. */
+    fun getActiveLockGraceAvailable(): Boolean {
+        return prefs.getBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, false)
+    }
+
+    // Keyword Grace episode state (see KeywordGraceLogic). Stored in prefs so
+    // the accessibility service, the 1s enforcement ticker and the block
+    // screen all share one consistent episode across the lockdown cycle.
+    fun getKeywordGraceEpisode(): KeywordGraceEpisode {
+        return KeywordGraceEpisode(
+            word = prefs.getString(KEY_GRACE_EPISODE_WORD, "") ?: "",
+            graceOffered = prefs.getBoolean(KEY_GRACE_EPISODE_OFFERED, false),
+            graceUsed = prefs.getBoolean(KEY_GRACE_EPISODE_USED, false),
+            graceUntilMs = prefs.getLong(KEY_KEYWORD_GRACE_UNTIL, 0L)
+        )
+    }
+
+    fun saveKeywordGraceEpisode(episode: KeywordGraceEpisode) {
+        prefs.edit()
+            .putString(KEY_GRACE_EPISODE_WORD, episode.word)
+            .putBoolean(KEY_GRACE_EPISODE_OFFERED, episode.graceOffered)
+            .putBoolean(KEY_GRACE_EPISODE_USED, episode.graceUsed)
+            .putLong(KEY_KEYWORD_GRACE_UNTIL, episode.graceUntilMs)
+            .apply()
+    }
+
+    /**
+     * The user tapped "10 seconds free" on a keyword block screen: mark the
+     * current episode's grace as used, open the 10-second free window, and
+     * end the current lockdown so the block screen dismisses immediately.
+     * After the window, the accessibility service re-checks the screen: if
+     * the trigger word is still there it re-blocks WITHOUT the grace button.
+     */
+    fun beginKeywordGracePeriod(nowMs: Long = System.currentTimeMillis()) {
+        val episode = getKeywordGraceEpisode()
+        val updated = KeywordGraceLogic.onGraceButtonTapped(episode, nowMs)
+        saveKeywordGraceEpisode(updated)
+        clearLockdown()
     }
 
     fun isCurrentlyLocked(): Boolean {
@@ -939,6 +1079,7 @@ class ShieldPreferences(private val context: Context) {
         val defaultPledge = "I am reclaiming my focus, energy, and self-respect. A 5-minute urge is never worth trading my clean streak."
         val preservedDark = getIsDarkTheme()
         val preservedPersian = getIsPersianLanguage()
+        val preservedSeasonalTheme = getSeasonalTheme()
         val preservedRepo = getGithubRepoSlug()
         val preservedQuizDone = hasCompletedOnboardingQuiz()
         val preservedQuizScore = getAddictionQuizScore()
@@ -973,6 +1114,7 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
             .putBoolean(KEY_IS_DARK_THEME, preservedDark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, preservedPersian)
+            .putString(KEY_SEASONAL_THEME, preservedSeasonalTheme.name)
             .putString(KEY_GITHUB_REPO_SLUG, preservedRepo)
             .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
             .putBoolean(KEY_HAS_COMPLETED_QUIZ, preservedQuizDone)
@@ -1000,6 +1142,8 @@ class ShieldPreferences(private val context: Context) {
         _isSmartFocusEnabled.value = false
         _isDarkTheme.value = preservedDark
         _isPersianLanguage.value = preservedPersian
+        _seasonalThemeName.value = preservedSeasonalTheme.name
+        _uninstallUnlockDeadline.value = 0L
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
@@ -1048,6 +1192,13 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_SMART_FOCUS_ENABLED = "key_smart_focus_enabled"
         private const val KEY_IS_DARK_THEME = "key_is_dark_theme"
         private const val KEY_IS_PERSIAN_LANGUAGE = "key_is_persian_language"
+        private const val KEY_SEASONAL_THEME = "key_seasonal_theme"
+        private const val KEY_UNINSTALL_UNLOCK_DEADLINE = "key_uninstall_unlock_deadline"
+        private const val KEY_ACTIVE_LOCK_GRACE_AVAILABLE = "key_active_lock_grace_available"
+        private const val KEY_GRACE_EPISODE_WORD = "key_grace_episode_word"
+        private const val KEY_GRACE_EPISODE_OFFERED = "key_grace_episode_offered"
+        private const val KEY_GRACE_EPISODE_USED = "key_grace_episode_used"
+        private const val KEY_KEYWORD_GRACE_UNTIL = "key_keyword_grace_until"
         private const val KEY_GITHUB_REPO_SLUG = "key_github_repo_slug"
         private const val KEY_SECTION_EXIT_ONLY_MODE = "key_section_exit_only_mode"
         private const val KEY_FRESH_SCRATCH_V4_INIT = "key_fresh_scratch_v4_init"

@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ShieldApplication
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.SeasonalTheme
 
 class LockdownActivity : ComponentActivity() {
 
@@ -25,6 +26,7 @@ class LockdownActivity : ComponentActivity() {
     private var lockDurationState by mutableIntStateOf(5)
     private var lockTriggerState by mutableStateOf("Protected Content")
     private var lockSourceAppState by mutableStateOf("System")
+    private var lockGraceAvailableState by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,16 +39,26 @@ class LockdownActivity : ComponentActivity() {
         setContent {
             val isDarkTheme = prefs.isDarkTheme.collectAsStateWithLifecycle().value
             val isPersian = prefs.isPersianLanguage.collectAsStateWithLifecycle().value
+            val seasonalThemeName = prefs.seasonalThemeName.collectAsStateWithLifecycle().value
 
             MyApplicationTheme(
                 darkTheme = isDarkTheme,
-                isPersianRtl = isPersian
+                isPersianRtl = isPersian,
+                seasonalTheme = SeasonalTheme.fromName(seasonalThemeName)
             ) {
                 LockdownScreen(
                     endTimeEpoch = lockEndTimeState,
                     totalDurationMinutes = lockDurationState,
                     triggerWord = lockTriggerState,
                     sourceApp = lockSourceAppState,
+                    graceAvailable = lockGraceAvailableState,
+                    onGraceFreeRequested = {
+                        // Opens the 10-second free window and ends this lock;
+                        // the accessibility service re-blocks without the
+                        // button if the trigger word is still on screen.
+                        prefs.beginKeywordGracePeriod()
+                        finish()
+                    },
                     onLockExpired = {
                         prefs.clearLockdown()
                         finish()
@@ -74,6 +86,7 @@ class LockdownActivity : ComponentActivity() {
         lockSourceAppState = incoming?.getStringExtra(EXTRA_SOURCE_APP)
             ?.takeIf { it.isNotBlank() }
             ?: prefs.getActiveLockApp()
+        lockGraceAvailableState = prefs.getActiveLockGraceAvailable()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -102,7 +115,10 @@ class LockdownActivity : ComponentActivity() {
         super.onPause()
         val prefs = ShieldApplication.instance.preferences
         // If user did not tap Phone Call / SMS and tries to leave while timer is counting down, pull back!
-        if (prefs.isCurrentlyLocked() && !prefs.isPackageAllowedDuringLockdown("com.android.dialer")) {
+        // (The comm window — not the package allowlist — marks a deliberate
+        // trip to the dialer/messages; dialer/SMS packages themselves are
+        // always allowed during a block, see ShieldPreferences.)
+        if (prefs.isCurrentlyLocked() && !prefs.hasActiveEmergencyCommWindow()) {
             try {
                 val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
                 am?.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME)
@@ -114,7 +130,7 @@ class LockdownActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val prefs = ShieldApplication.instance.preferences
-        if (prefs.isCurrentlyLocked() && !prefs.isPackageAllowedDuringLockdown("com.android.dialer")) {
+        if (prefs.isCurrentlyLocked() && !prefs.hasActiveEmergencyCommWindow()) {
             val relaunch = Intent(this, LockdownActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or

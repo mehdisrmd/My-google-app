@@ -4,9 +4,13 @@ import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
+import com.example.data.preferences.UninstallGuard
 import com.example.notification.LockdownNotificationManager
+import com.example.service.KeywordGraceEpisode
+import com.example.service.KeywordGraceLogic
 import com.example.service.TextContentScanner
 import com.example.ui.components.CalendarDayStatus
+import com.example.ui.components.StreakDayClassifier
 import com.example.ui.components.MotivationalQuotesRepository
 import com.example.ui.components.WeeklyActivityCalculator
 import com.example.ui.i18n.AppStrings
@@ -302,5 +306,140 @@ class ExampleRobolectricTest {
             installedApps = emptyList()
         )
         assertEquals("com.discord", resolvedDiscord)
+    }
+
+    @Test
+    fun `test uninstall guard 5 hour deadline math`() {
+        val t0 = 1_700_000_000_000L
+        val fiveHoursMs = 5L * 60L * 60L * 1000L
+        val deadline = UninstallGuard.deadlineForRequest(t0)
+        assertEquals(t0 + fiveHoursMs, deadline)
+
+        // No request yet: not requested, never unlocked, protection stays locked on
+        assertFalse(UninstallGuard.isRequested(0L))
+        assertTrue(UninstallGuard.isRequested(deadline))
+        assertFalse(UninstallGuard.isUnlocked(0L, t0 + fiveHoursMs + 1L))
+        assertFalse(UninstallGuard.canDisableProtection(0L, t0 + fiveHoursMs + 1L))
+        assertEquals(0L, UninstallGuard.remainingMillis(0L, t0))
+
+        // During the wait: full remaining at start, still locked 1ms before the end
+        assertEquals(fiveHoursMs, UninstallGuard.remainingMillis(deadline, t0))
+        assertFalse(UninstallGuard.isUnlocked(deadline, deadline - 1L))
+        assertFalse(UninstallGuard.canDisableProtection(deadline, deadline - 1L))
+        assertEquals(1L, UninstallGuard.remainingMillis(deadline, deadline - 1L))
+
+        // At and after the deadline: unlocked, remaining clamps to 0
+        assertTrue(UninstallGuard.isUnlocked(deadline, deadline))
+        assertTrue(UninstallGuard.canDisableProtection(deadline, deadline + 60_000L))
+        assertEquals(0L, UninstallGuard.remainingMillis(deadline, deadline + 60_000L))
+
+        // Countdown formatting H:MM:SS
+        assertEquals("5:00:00", UninstallGuard.formatRemainingHms(fiveHoursMs))
+        assertEquals("4:59:32", UninstallGuard.formatRemainingHms(17_972_000L))
+        assertEquals("0:00:00", UninstallGuard.formatRemainingHms(0L))
+        assertEquals("0:00:00", UninstallGuard.formatRemainingHms(-5L))
+    }
+
+    @Test
+    fun `test keyword grace episode - button once, suppress during grace, reblock without button`() {
+        val t0 = 1_700_000_000_000L
+        var episode = KeywordGraceEpisode()
+
+        // First match of a new episode: block WITH the 10-second button
+        val first = KeywordGraceLogic.onKeywordMatch(episode, "xxx", t0)
+        assertTrue(first is KeywordGraceLogic.MatchDecision.Block)
+        val firstBlock = first as KeywordGraceLogic.MatchDecision.Block
+        assertTrue(firstBlock.graceAvailable)
+        episode = firstBlock.episode
+        assertEquals("xxx", episode.word)
+        assertTrue(episode.graceOffered)
+        assertFalse(episode.graceUsed)
+
+        // The button is offered once per episode: if that first block is
+        // simply waited out (never tapped) and the word is met again, the
+        // block already comes WITHOUT the button.
+        val waitedOut = KeywordGraceLogic.onKeywordMatch(episode, "xxx", t0 + 600_000L)
+        assertTrue(waitedOut is KeywordGraceLogic.MatchDecision.Block)
+        assertFalse((waitedOut as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+
+        // Tapping the button opens exactly a 10-second free window, once
+        episode = KeywordGraceLogic.onGraceButtonTapped(episode, t0 + 1_000L)
+        assertTrue(episode.graceUsed)
+        assertEquals(t0 + 1_000L + KeywordGraceLogic.GRACE_MILLIS, episode.graceUntilMs)
+        val tappedAgain = KeywordGraceLogic.onGraceButtonTapped(episode, t0 + 2_000L)
+        assertEquals(episode, tappedAgain)
+
+        // During the window matches are suppressed (user is unblocked)
+        val during = KeywordGraceLogic.onKeywordMatch(episode, "xxx", t0 + 5_000L)
+        assertTrue(during is KeywordGraceLogic.MatchDecision.Suppress)
+
+        // Word "disappearing" mid-window does NOT end the episode yet
+        assertEquals(episode, KeywordGraceLogic.onKeywordAbsent(episode, t0 + 5_000L))
+
+        // After the window, word still on screen: block again WITHOUT button
+        val reblock = KeywordGraceLogic.onKeywordMatch(episode, "xxx", t0 + 11_001L)
+        assertTrue(reblock is KeywordGraceLogic.MatchDecision.Block)
+        assertFalse((reblock as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+
+        // Word gone after the window: episode closes...
+        val cleared = KeywordGraceLogic.onKeywordAbsent(episode, t0 + 11_001L)
+        assertEquals("", cleared.word)
+        assertFalse(cleared.graceOffered)
+        assertFalse(cleared.graceUsed)
+        assertEquals(0L, cleared.graceUntilMs)
+
+        // ...so a genuinely new appearance blocks WITH the button again
+        val fresh = KeywordGraceLogic.onKeywordMatch(cleared, "xxx", t0 + 12_000L)
+        assertTrue(fresh is KeywordGraceLogic.MatchDecision.Block)
+        assertTrue((fresh as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+
+        // A different word is always a brand-new episode with the button
+        val other = KeywordGraceLogic.onKeywordMatch(episode, "porn", t0 + 100L)
+        assertTrue(other is KeywordGraceLogic.MatchDecision.Block)
+        assertTrue((other as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+        assertEquals("porn", other.episode.word)
+    }
+
+    @Test
+    fun `test streak day classifier - today gray, passed green, relapse red`() {
+        val today = 20_000L
+        val install = 19_990L
+        val relapses = setOf(19_995L, today)
+
+        // Today is gray/in-progress regardless — even with a relapse logged today
+        assertEquals(
+            CalendarDayStatus.TODAY_IN_PROGRESS,
+            StreakDayClassifier.classify(today, today, install, relapses)
+        )
+        // Yesterday, inside the running streak, no relapse: passed clean (green)
+        assertEquals(
+            CalendarDayStatus.CLEAN_STREAK_DAY,
+            StreakDayClassifier.classify(today - 1, today, install, relapses)
+        )
+        // A recorded relapse day in the past: failed (red)
+        assertEquals(
+            CalendarDayStatus.RELAPSE_DAY,
+            StreakDayClassifier.classify(19_995L, today, install, relapses)
+        )
+        // A passed day from an earlier, already-broken streak still counts green
+        assertEquals(
+            CalendarDayStatus.CLEAN_STREAK_DAY,
+            StreakDayClassifier.classify(19_992L, today, install, relapses)
+        )
+        // Install day itself, ended without relapse: green
+        assertEquals(
+            CalendarDayStatus.CLEAN_STREAK_DAY,
+            StreakDayClassifier.classify(install, today, install, relapses)
+        )
+        // Before install: muted pre-install gray
+        assertEquals(
+            CalendarDayStatus.PRE_INSTALL_GRAY,
+            StreakDayClassifier.classify(install - 1, today, install, relapses)
+        )
+        // Future days are never classified as clean
+        assertEquals(
+            CalendarDayStatus.PRE_INSTALL_GRAY,
+            StreakDayClassifier.classify(today + 1, today, install, relapses)
+        )
     }
 }

@@ -20,8 +20,8 @@ import androidx.compose.ui.unit.dp
  * Liquid Glass material for X Blocker.
  *
  * Android has no built-in backdrop-blur material like iOS 26, so the glass
- * look is built the performant way: living purple glows sit behind the whole
- * UI ([GlassGlowBackground]) and key surfaces use [liquidGlass] — a
+ * look is built the performant way: living seasonal glows sit behind the
+ * whole UI ([GlassGlowBackground]) and key surfaces use [liquidGlass] — a
  * translucent fill with a specular gradient edge (bright at the top, fading
  * down), exactly like light catching the rim of real glass.
  */
@@ -40,7 +40,7 @@ fun GlassGlowBackground(modifier: Modifier = Modifier) {
                 .size(260.dp)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0xFF6D5BD0).copy(alpha = violetAlpha), Color.Transparent)
+                        listOf(activeSeasonPaletteSet.glowA.copy(alpha = violetAlpha), Color.Transparent)
                     ),
                     CircleShape
                 )
@@ -52,7 +52,7 @@ fun GlassGlowBackground(modifier: Modifier = Modifier) {
                 .size(230.dp)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0xFFB45CFF).copy(alpha = magentaAlpha), Color.Transparent)
+                        listOf(activeSeasonPaletteSet.glowB.copy(alpha = magentaAlpha), Color.Transparent)
                     ),
                     CircleShape
                 )
@@ -64,7 +64,7 @@ fun GlassGlowBackground(modifier: Modifier = Modifier) {
                 .size(180.dp)
                 .background(
                     Brush.radialGradient(
-                        listOf(Color(0xFF5A6EFF).copy(alpha = blueAlpha), Color.Transparent)
+                        listOf(activeSeasonPaletteSet.glowC.copy(alpha = blueAlpha), Color.Transparent)
                     ),
                     CircleShape
                 )

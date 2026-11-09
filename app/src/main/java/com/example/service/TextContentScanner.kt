@@ -81,13 +81,21 @@ object TextContentScanner {
         if (!mentionsOurApp) return false
 
         if (pkgLower.contains("packageinstaller")) {
-            return true
+            // The package installer also hosts INSTALL / UPDATE dialogs for
+            // this app (e.g. sideloading a newer X Blocker APK). Those must
+            // stay usable — only the UNINSTALL confirmation counts.
+            return combinedLower.contains("uninstall") ||
+                combinedLower.contains("حذف نصب") ||
+                combinedLower.contains("حذف شود")
         }
 
         val hasDangerAction = combinedLower.contains("do you want to uninstall") ||
             combinedLower.contains("uninstall this app") ||
+            combinedLower.contains("disable this app") ||
+            combinedLower.contains("if you disable this app") ||
             combinedLower.contains("آیا می‌خواهید این برنامه را حذف کنید") ||
-            combinedLower.contains("حذف نصب شود")
+            combinedLower.contains("حذف نصب شود") ||
+            combinedLower.contains("غیرفعال کردن این برنامه")
         return hasDangerAction
     }
 
