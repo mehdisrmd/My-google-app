@@ -17,7 +17,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ShieldApplication
-import com.example.notification.LockdownNotificationManager
 import com.example.ui.theme.MyApplicationTheme
 
 class LockdownActivity : ComponentActivity() {
@@ -50,7 +49,6 @@ class LockdownActivity : ComponentActivity() {
                     sourceApp = lockSourceAppState,
                     onLockExpired = {
                         prefs.clearLockdown()
-                        LockdownNotificationManager.cancelNotification(this@LockdownActivity)
                         finish()
                     }
                 )
@@ -96,7 +94,6 @@ class LockdownActivity : ComponentActivity() {
         val prefs = ShieldApplication.instance.preferences
         refreshStateFromPrefsAndIntent(intent)
         if (!prefs.isCurrentlyLocked()) {
-            LockdownNotificationManager.cancelNotification(this)
             finish()
         }
     }

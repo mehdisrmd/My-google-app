@@ -29,24 +29,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Launch
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.NewReleases
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -94,199 +88,20 @@ import com.example.util.BackupManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-data class GithubUpdateStatus(
-    val isChecking: Boolean = false,
-    val checkedTimestamp: Long = 0L,
-    val currentVersion: String = GithubUpdateChecker.CURRENT_APP_VERSION,
-    val latestVersionTag: String? = null,
-    val releaseTitle: String? = null,
-    val releaseNotes: String? = null,
-    val releaseHtmlUrl: String? = null,
-    val apkDownloadUrl: String? = null,
-    val isUpdateAvailable: Boolean = false,
-    val statusMessageEn: String = "Ready to check GitHub Releases",
-    val statusMessageFa: String = "آماده بررسی بروزرسانی در گیت‌هاب"
-)
-
-object GithubUpdateChecker {
+/**
+ * Static app identity shown on the Info screen.
+ *
+ * There is intentionally NO update checker anymore: the in-app GitHub
+ * update feature was removed completely at the owner's request (no
+ * release checks, no status, no update prompts). The GitHub entry on
+ * this screen is a plain outbound link to the repository, nothing more.
+ */
+object AppInfo {
     const val CURRENT_APP_VERSION = "0.4"
     const val TELEGRAM_HANDLE = "@mehdisrmd"
     const val TELEGRAM_URL = "https://t.me/mehdisrmd"
-    const val DEFAULT_GITHUB_REPO_SLUG = "mehdisrmd/My-google-app"
-    const val DEFAULT_GITHUB_REPO_URL = "https://github.com/mehdisrmd/My-google-app"
-
-    fun extractSlugFromUrlOrInput(rawInput: String): String {
-        val trimmed = rawInput.trim()
-            .removePrefix("https://www.github.com/")
-            .removePrefix("http://www.github.com/")
-            .removePrefix("https://github.com/")
-            .removePrefix("http://github.com/")
-            .removePrefix("github.com/")
-            .removeSuffix("/")
-            .removeSuffix(".git")
-        val parts = trimmed.split("/").filter { it.isNotBlank() }
-        return if (parts.size >= 2) {
-            "${parts[0]}/${parts[1]}"
-        } else {
-            trimmed.ifEmpty { DEFAULT_GITHUB_REPO_SLUG }
-        }
-    }
-
-    private fun parseReleaseJson(
-        json: JSONObject,
-        cleanSlug: String,
-        repoReleasesWebUrl: String,
-        now: Long
-    ): GithubUpdateStatus {
-        val tagName = json.optString("tag_name", "").trim()
-        val releaseName = json.optString("name", tagName).trim()
-        val releaseNotes = json.optString("body", "").trim()
-        val htmlUrl = json.optString("html_url", repoReleasesWebUrl)
-
-        var apkUrl: String? = null
-        val assets = json.optJSONArray("assets")
-        if (assets != null) {
-            val deviceAbis = runCatching { android.os.Build.SUPPORTED_ABIS?.toList().orEmpty() }.getOrDefault(emptyList())
-            val apkAssets = mutableListOf<Pair<String, String>>()
-            for (i in 0 until assets.length()) {
-                val asset = assets.optJSONObject(i) ?: continue
-                val name = asset.optString("name", "")
-                val downloadUrl = asset.optString("browser_download_url", "")
-                if (name.endsWith(".apk", ignoreCase = true) && downloadUrl.isNotBlank()) {
-                    apkAssets.add(name to downloadUrl)
-                }
-            }
-            val matchedByAbi = deviceAbis.firstNotNullOfOrNull { abi ->
-                apkAssets.firstOrNull { (name, _) -> name.contains(abi, ignoreCase = true) }?.second
-            }
-            val universalApk = apkAssets.firstOrNull { (name, _) ->
-                name.contains("universal", ignoreCase = true)
-            }?.second
-            apkUrl = matchedByAbi ?: universalApk ?: apkAssets.firstOrNull()?.second
-        }
-
-        val versionCandidate = tagName.ifEmpty { releaseName }
-        val newer = isRemoteVersionNewer(versionCandidate, CURRENT_APP_VERSION)
-        val displayTag = tagName.ifEmpty { "v$CURRENT_APP_VERSION" }
-
-        return GithubUpdateStatus(
-            isChecking = false,
-            checkedTimestamp = now,
-            currentVersion = CURRENT_APP_VERSION,
-            latestVersionTag = displayTag,
-            releaseTitle = releaseName.ifEmpty { "Release $displayTag" },
-            releaseNotes = releaseNotes,
-            releaseHtmlUrl = htmlUrl,
-            apkDownloadUrl = apkUrl ?: htmlUrl,
-            isUpdateAvailable = newer,
-            statusMessageEn = if (newer) {
-                "New update $displayTag is available on GitHub!"
-            } else {
-                "You are running the latest version (v$CURRENT_APP_VERSION)."
-            },
-            statusMessageFa = if (newer) {
-                "نسخه جدید $displayTag در گیت‌هاب آماده دانلود است!"
-            } else {
-                "شما از آخرین نسخه برنامه (v$CURRENT_APP_VERSION) استفاده می‌کنید."
-            }
-        )
-    }
-
-    suspend fun checkLatestReleaseFromGithub(
-        repoSlugOrUrl: String = DEFAULT_GITHUB_REPO_SLUG
-    ): GithubUpdateStatus = withContext(Dispatchers.IO) {
-        val cleanSlug = extractSlugFromUrlOrInput(repoSlugOrUrl)
-        val repoReleasesWebUrl = "https://github.com/$cleanSlug/releases"
-        val latestApiUrl = "https://api.github.com/repos/$cleanSlug/releases/latest"
-        val allReleasesApiUrl = "https://api.github.com/repos/$cleanSlug/releases"
-
-        try {
-            val connection = (URL(latestApiUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 7000
-                readTimeout = 7000
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "X-Blocker-Android-Updater")
-            }
-
-            val code = connection.responseCode
-            val now = System.currentTimeMillis()
-            if (code == 200) {
-                val body = connection.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(body)
-                return@withContext parseReleaseJson(json, cleanSlug, repoReleasesWebUrl, now)
-            }
-
-            // Fallback: check /releases list in case the latest release is a pre-release
-            val listConn = (URL(allReleasesApiUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 7000
-                readTimeout = 7000
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "X-Blocker-Android-Updater")
-            }
-            if (listConn.responseCode == 200) {
-                val listBody = listConn.inputStream.bufferedReader().use { it.readText() }
-                val arr = JSONArray(listBody)
-                if (arr.length() > 0) {
-                    val firstRelease = arr.optJSONObject(0)
-                    if (firstRelease != null) {
-                        return@withContext parseReleaseJson(firstRelease, cleanSlug, repoReleasesWebUrl, now)
-                    }
-                }
-            }
-
-            GithubUpdateStatus(
-                isChecking = false,
-                checkedTimestamp = now,
-                currentVersion = CURRENT_APP_VERSION,
-                latestVersionTag = "v$CURRENT_APP_VERSION",
-                releaseHtmlUrl = repoReleasesWebUrl,
-                isUpdateAvailable = false,
-                statusMessageEn = "You are on the latest version (v$CURRENT_APP_VERSION).",
-                statusMessageFa = "شما از آخرین نسخه برنامه (v$CURRENT_APP_VERSION) استفاده می‌کنید."
-            )
-        } catch (_: Exception) {
-            GithubUpdateStatus(
-                isChecking = false,
-                checkedTimestamp = System.currentTimeMillis(),
-                currentVersion = CURRENT_APP_VERSION,
-                releaseHtmlUrl = repoReleasesWebUrl,
-                isUpdateAvailable = false,
-                statusMessageEn = "Checked https://github.com/$cleanSlug (v$CURRENT_APP_VERSION installed).",
-                statusMessageFa = "بررسی بروزرسانی انجام شد (نسخه v$CURRENT_APP_VERSION فعال است)."
-            )
-        }
-    }
-
-    fun isRemoteVersionNewer(remoteTag: String, currentVersion: String): Boolean {
-        val numberRegex = Regex("""\d+(\.\d+)+""")
-        val extractedRemote = numberRegex.find(remoteTag)?.value
-            ?: remoteTag.trim().removePrefix("v").removePrefix("V").substringBefore("-")
-        val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").substringBefore("-")
-        if (extractedRemote.isEmpty() || extractedRemote == cleanCurrent) return false
-
-        val remoteParts = extractedRemote.split(".").mapNotNull { it.toIntOrNull() }
-        val currentParts = cleanCurrent.split(".").mapNotNull { it.toIntOrNull() }
-        if (remoteParts.isEmpty()) return false
-
-        val maxLen = maxOf(remoteParts.size, currentParts.size)
-        for (i in 0 until maxLen) {
-            val r = remoteParts.getOrElse(i) { 0 }
-            val c = currentParts.getOrElse(i) { 0 }
-            if (r > c) return true
-            if (r < c) return false
-        }
-        return false
-    }
+    const val GITHUB_REPO_URL = "https://github.com/mehdisrmd/My-google-app"
 
     fun openUrlSafely(context: Context, url: String) {
         try {
@@ -299,201 +114,8 @@ object GithubUpdateChecker {
     }
 }
 
-/**
- * Material Design 3 Update Available Panel / Dialog.
- * Automatically shown when the user enters the app and a new release exists on
- * https://github.com/mehdisrmd/My-google-app.
- */
-@Composable
-fun GithubUpdateAvailablePanelDialog(
-    updateStatus: GithubUpdateStatus,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val downloadTargetUrl = updateStatus.apkDownloadUrl
-        ?: updateStatus.releaseHtmlUrl
-        ?: "${GithubUpdateChecker.DEFAULT_GITHUB_REPO_URL}/releases"
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = ObsidianSurface,
-        modifier = Modifier.testTag("github_update_available_panel_dialog"),
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                    contentDescription = "X Blocker Icon",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .border(1.5.dp, AmberWarning, RoundedCornerShape(14.dp))
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.NewReleases,
-                            contentDescription = null,
-                            tint = AmberWarning,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("NEW UPDATE AVAILABLE", "بروزرسانی جدید منتشر شد"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Black,
-                            color = AmberWarning
-                        )
-                    }
-                    Text(
-                        text = updateStatus.releaseTitle?.takeIf { it.isNotBlank() }
-                            ?: tr("X Blocker ${updateStatus.latestVersionTag ?: ""}", "ایکس بلاکر ${updateStatus.latestVersionTag ?: ""}"),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Black,
-                        color = ObsidianTextPrimary
-                    )
-                }
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = AmberWarning.copy(alpha = 0.14f),
-                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = tr("Installed", "نسخه فعلی"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = ObsidianTextSecondary
-                            )
-                            Text(
-                                text = "v${updateStatus.currentVersion}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                        }
-                        Text(
-                            text = "→",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Black,
-                            color = AmberWarning
-                        )
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = tr("Latest Release", "نسخه جدید"),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AmberWarning
-                            )
-                            Text(
-                                text = updateStatus.latestVersionTag ?: "New",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Black,
-                                color = EmeraldShield
-                            )
-                        }
-                    }
-                }
-
-                if (!updateStatus.releaseNotes.isNullOrBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = ObsidianCard,
-                        border = BorderStroke(1.dp, ObsidianBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = tr("What's New:", "تغییرات نسخه جدید:"),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = CyanTelemetry
-                            )
-                            Text(
-                                text = updateStatus.releaseNotes.take(400),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ObsidianTextSecondary
-                            )
-                        }
-                    }
-                } else {
-                    Text(
-                        text = tr(
-                            "A newer build of X Blocker is available on GitHub (mehdisrmd/My-google-app). Tap below to download and install the update.",
-                            "نسخه جدیدتری از برنامه ایکس بلاکر در مخزن گیت‌هاب شما منتشر شده است. برای دریافت و نصب روی دکمه زیر بزنید."
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ObsidianTextSecondary
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    GithubUpdateChecker.openUrlSafely(context, downloadTargetUrl)
-                    onDismiss()
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = EmeraldShield,
-                    contentColor = Color.Black
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.testTag("update_panel_download_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CloudDownload,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = tr("Download Update", "دانلود و نصب آپدیت"),
-                    fontWeight = FontWeight.Black
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("update_panel_later_button")
-            ) {
-                Text(
-                    text = tr("Later", "بعداً"),
-                    color = ObsidianTextSecondary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-    )
-}
-
 @Composable
 fun InfoAndUpdateScreen(
-    githubRepoSlug: String,
-    updateStatus: GithubUpdateStatus,
-    onSaveGithubRepoSlug: (String) -> Unit,
-    onCheckForUpdateNow: () -> Unit,
-    onOpenUpdatePanel: () -> Unit = {},
     onExportBackupJson: suspend () -> String = { "{}" },
     onImportBackupJson: suspend (String) -> BackupRestoreSummary = {
         BackupRestoreSummary(false, messageEn = "Not configured")
@@ -504,7 +126,7 @@ fun InfoAndUpdateScreen(
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    val fullRealGithubUrl = GithubUpdateChecker.DEFAULT_GITHUB_REPO_URL
+    val fullRealGithubUrl = AppInfo.GITHUB_REPO_URL
 
     var backupStatusBanner by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var showPasteBackupDialog by remember { mutableStateOf(false) }
@@ -549,15 +171,6 @@ fun InfoAndUpdateScreen(
                     backupStatusBanner = summary.success to tr(summary.messageEn, summary.messageFa)
                 }
             }
-        }
-    }
-
-    val formattedCheckTime = remember(updateStatus.checkedTimestamp) {
-        if (updateStatus.checkedTimestamp <= 0L) {
-            tr("Auto-checking...", "در حال بررسی خودکار...")
-        } else {
-            val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            sdf.format(Date(updateStatus.checkedTimestamp))
         }
     }
 
@@ -658,7 +271,7 @@ fun InfoAndUpdateScreen(
                             modifier = Modifier.testTag("app_version_badge")
                         ) {
                             Text(
-                                text = "v${GithubUpdateChecker.CURRENT_APP_VERSION}",
+                                text = "v${AppInfo.CURRENT_APP_VERSION}",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Black,
@@ -678,7 +291,7 @@ fun InfoAndUpdateScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                GithubUpdateChecker.openUrlSafely(context, GithubUpdateChecker.TELEGRAM_URL)
+                                AppInfo.openUrlSafely(context, AppInfo.TELEGRAM_URL)
                             }
                             .testTag("telegram_contact_card")
                     ) {
@@ -718,7 +331,7 @@ fun InfoAndUpdateScreen(
                                         color = ObsidianTextSecondary
                                     )
                                     Text(
-                                        text = GithubUpdateChecker.TELEGRAM_HANDLE,
+                                        text = AppInfo.TELEGRAM_HANDLE,
                                         style = MaterialTheme.typography.titleSmall,
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Black,
@@ -729,7 +342,7 @@ fun InfoAndUpdateScreen(
 
                             Button(
                                 onClick = {
-                                    GithubUpdateChecker.openUrlSafely(context, GithubUpdateChecker.TELEGRAM_URL)
+                                    AppInfo.openUrlSafely(context, AppInfo.TELEGRAM_URL)
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = CyanTelemetry,
@@ -754,18 +367,16 @@ fun InfoAndUpdateScreen(
             }
         }
 
-        // 2. Streamlined GitHub Auto-Update Card (https://github.com/mehdisrmd/My-google-app)
-        // Extra buttons & manual URL inputs under this section have been removed as requested.
+        // 2. GitHub Repository Card — a plain outbound link only.
+        // (The in-app update checker was removed completely at the owner's
+        // request: no release checks, no update status, no update prompts.)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("github_update_card"),
+                .testTag("github_repo_card"),
             colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
             shape = RoundedCornerShape(22.dp),
-            border = BorderStroke(
-                1.5.dp,
-                if (updateStatus.isUpdateAvailable) AmberWarning else EmeraldShield.copy(alpha = 0.55f)
-            )
+            border = BorderStroke(1.5.dp, EmeraldShield.copy(alpha = 0.55f))
         ) {
             Column(
                 modifier = Modifier
@@ -775,198 +386,64 @@ fun InfoAndUpdateScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (updateStatus.isUpdateAvailable) AmberWarning.copy(alpha = 0.2f)
-                                    else EmeraldShield.copy(alpha = 0.16f)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SystemUpdate,
-                                contentDescription = null,
-                                tint = if (updateStatus.isUpdateAvailable) AmberWarning else EmeraldShield,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = tr("App Update Checker", "بررسی خودکار بروزرسانی برنامه"),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Code,
-                                    contentDescription = null,
-                                    tint = CyanTelemetry,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = fullRealGithubUrl,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    color = CyanTelemetry,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-
-                    if (updateStatus.isChecking) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(22.dp),
-                            color = CyanTelemetry,
-                            strokeWidth = 2.5.dp
-                        )
-                    }
-                }
-
-                // Live Update Check Status Box
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (updateStatus.isUpdateAvailable) {
-                        AmberWarning.copy(alpha = 0.14f)
-                    } else {
-                        ObsidianCard
-                    },
-                    border = BorderStroke(
-                        1.dp,
-                        if (updateStatus.isUpdateAvailable) AmberWarning else ObsidianBorder
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = updateStatus.isUpdateAvailable) {
-                            onOpenUpdatePanel()
-                        }
-                        .testTag("github_update_status_box")
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (updateStatus.isUpdateAvailable) Icons.Default.CloudDownload else Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = if (updateStatus.isUpdateAvailable) AmberWarning else EmeraldShield,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = tr(updateStatus.statusMessageEn, updateStatus.statusMessageFa),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                        }
-
-                        Text(
-                            text = tr(
-                                "Current: v${updateStatus.currentVersion} • Latest: ${updateStatus.latestVersionTag ?: "v${updateStatus.currentVersion}"} • Checked: $formattedCheckTime",
-                                "نسخه فعلی: v${updateStatus.currentVersion} • آخرین نسخه: ${updateStatus.latestVersionTag ?: "v${updateStatus.currentVersion}"} • زمان بررسی: $formattedCheckTime"
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontSize = 10.sp,
-                            color = ObsidianTextSecondary
-                        )
-                    }
-                }
-
-                // Single clean primary action button (or Download Update if an update exists)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Button(
-                        onClick = onCheckForUpdateNow,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = EmeraldShield,
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(12.dp),
+                    Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("check_github_update_button")
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(EmeraldShield.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Refresh,
+                            imageVector = Icons.Default.Code,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp)
+                            tint = EmeraldShield,
+                            modifier = Modifier.size(24.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = tr("Check for Update", "بررسی بروزرسانی"),
+                            text = tr("GitHub", "گیت‌هاب"),
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = fullRealGithubUrl,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            color = CyanTelemetry,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                }
 
-                    if (updateStatus.isUpdateAvailable) {
-                        Button(
-                            onClick = onOpenUpdatePanel,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = AmberWarning,
-                                contentColor = Color.Black
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_github_releases_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDownload,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = tr("Show Update Panel", "مشاهده پنل آپدیت"),
-                                fontWeight = FontWeight.Black,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = {
-                                GithubUpdateChecker.openUrlSafely(context, "$fullRealGithubUrl/releases")
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, CyanTelemetry.copy(alpha = 0.7f)),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_github_releases_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Launch,
-                                contentDescription = null,
-                                tint = CyanTelemetry,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = tr("GitHub Releases", "صفحه ریلیز گیت‌هاب"),
-                                color = CyanTelemetry,
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                    }
+                OutlinedButton(
+                    onClick = {
+                        AppInfo.openUrlSafely(context, fullRealGithubUrl)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CyanTelemetry.copy(alpha = 0.7f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("open_github_repo_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Launch,
+                        contentDescription = null,
+                        tint = CyanTelemetry,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Open GitHub", "مشاهده در گیت‌هاب"),
+                        color = CyanTelemetry,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }

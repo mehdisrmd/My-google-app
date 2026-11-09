@@ -4,12 +4,13 @@ import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
+import com.example.notification.LockdownNotificationManager
 import com.example.service.TextContentScanner
 import com.example.ui.components.CalendarDayStatus
 import com.example.ui.components.MotivationalQuotesRepository
 import com.example.ui.components.WeeklyActivityCalculator
 import com.example.ui.i18n.AppStrings
-import com.example.ui.info.GithubUpdateChecker
+import com.example.ui.info.AppInfo
 import com.example.ui.quiz.ScientificAddictionQuizRepository
 import com.example.ui.streak.STREAK_MILESTONES
 import com.example.ui.theme.AppThemeState
@@ -192,18 +193,35 @@ class ExampleRobolectricTest {
         AppThemeState.isPersianLanguage = false
         assertEquals("X Blocker", AppStrings.tr("X Blocker", "ایکس بلاکر"))
 
-        // Item 9 & Update Repo: Current app version is 0.4, repo is https://github.com/mehdisrmd/My-google-app
-        assertEquals("0.4", GithubUpdateChecker.CURRENT_APP_VERSION)
-        assertEquals("@mehdisrmd", GithubUpdateChecker.TELEGRAM_HANDLE)
-        assertEquals("https://t.me/mehdisrmd", GithubUpdateChecker.TELEGRAM_URL)
-        assertEquals("mehdisrmd/My-google-app", GithubUpdateChecker.DEFAULT_GITHUB_REPO_SLUG)
-        assertEquals("https://github.com/mehdisrmd/My-google-app", GithubUpdateChecker.DEFAULT_GITHUB_REPO_URL)
+        // Item 9 & App Info: static identity — app version 0.4, developer Telegram,
+        // GitHub repo as a plain link (the in-app update checker was removed).
+        assertEquals("0.4", AppInfo.CURRENT_APP_VERSION)
+        assertEquals("@mehdisrmd", AppInfo.TELEGRAM_HANDLE)
+        assertEquals("https://t.me/mehdisrmd", AppInfo.TELEGRAM_URL)
+        assertEquals("https://github.com/mehdisrmd/My-google-app", AppInfo.GITHUB_REPO_URL)
+
+        // Daily 9:00 AM streak alarm: before 9 AM it fires today at 9:00,
+        // at/after 9 AM it rolls to tomorrow at 9:00.
+        val cal = java.util.Calendar.getInstance()
+        cal.set(2026, java.util.Calendar.NOVEMBER, 9, 8, 30, 15)
+        cal.set(java.util.Calendar.MILLISECOND, 250)
+        val beforeNine = cal.timeInMillis
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 9)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
         assertEquals(
-            "mehdisrmd/My-google-app",
-            GithubUpdateChecker.extractSlugFromUrlOrInput("https://github.com/mehdisrmd/My-google-app")
+            cal.timeInMillis,
+            LockdownNotificationManager.nextDailyStreakTriggerMillis(beforeNine)
         )
-        assertTrue(GithubUpdateChecker.isRemoteVersionNewer("v0.5", "0.4"))
-        assertFalse(GithubUpdateChecker.isRemoteVersionNewer("v0.4", "0.4"))
+        cal.set(java.util.Calendar.MILLISECOND, 1)
+        val justAfterNine = cal.timeInMillis
+        cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        assertEquals(
+            cal.timeInMillis,
+            LockdownNotificationManager.nextDailyStreakTriggerMillis(justAfterNine)
+        )
 
         // Item 10: Expanded quotes (32+) & deterministic Daily Quote
         val quotes = MotivationalQuotesRepository.allQuotes

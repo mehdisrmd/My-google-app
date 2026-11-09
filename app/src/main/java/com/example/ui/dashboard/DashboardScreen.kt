@@ -54,7 +54,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MonetizationOn
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
@@ -226,9 +225,6 @@ fun DashboardScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasNotificationPermission = granted
-        if (granted) {
-            com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
-        }
     }
 
     val checkPermissions = {
@@ -940,57 +936,6 @@ fun DashboardScreen(
             testTag = "dropdown_security_and_permissions"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Notification Bar SOS Pin Button
-                Surface(
-                    onClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        } else {
-                            com.example.notification.LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianCard,
-                    border = BorderStroke(1.dp, if (hasNotificationPermission) EmeraldShield.copy(alpha = 0.5f) else AmberWarning),
-                    modifier = Modifier.testTag("dashboard_pin_notification_bar_button")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.NotificationsActive,
-                                contentDescription = null,
-                                tint = if (hasNotificationPermission) EmeraldShield else AmberWarning,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = tr(
-                                    "Short Panic SOS Notification Bar (Tap to refresh)",
-                                    "نوار اعلان کوتاه و سریع پنیک (برای بروزرسانی ضربه بزنید)"
-                                ),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = ObsidianTextPrimary
-                            )
-                        }
-                        Text(
-                            text = if (hasNotificationPermission) tr("ACTIVE", "فعال") else tr("ALLOW", "اجازه"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            color = if (hasNotificationPermission) EmeraldShield else AmberWarning
-                        )
-                    }
-                }
-
                 BiometricAndPrivacyDashboardSection(
                     preferences = effectivePrefs,
                     isBiometricLockEnabled = isBiometricLockEnabled,

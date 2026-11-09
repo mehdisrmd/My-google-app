@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -88,9 +87,7 @@ import com.example.notification.LockdownNotificationManager
 import com.example.ui.dashboard.DashboardScreen
 import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
-import com.example.ui.info.GithubUpdateAvailablePanelDialog
-import com.example.ui.info.GithubUpdateChecker
-import com.example.ui.info.GithubUpdateStatus
+import com.example.ui.info.AppInfo
 import com.example.ui.info.InfoAndUpdateScreen
 import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
@@ -137,9 +134,10 @@ class MainActivity : ComponentActivity() {
 
         syncWindowSecureFlag()
 
-        // Initialize persistent lockdown & short Panic SOS notifications + Clean Day Milestone check
+        // Notifications are minimal by design: create the streak channel and
+        // make sure the single daily 9:00 AM streak alarm is scheduled.
         LockdownNotificationManager.createNotificationChannel(this)
-        LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(this)
+        LockdownNotificationManager.scheduleDailyStreakAlarm(this)
 
         handleNotificationIntent(intent)
 
@@ -220,7 +218,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         syncWindowSecureFlag()
-        LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(this)
         checkActiveLockdown()
     }
 
@@ -242,11 +239,6 @@ class MainActivity : ComponentActivity() {
             durationMinutes = minutes,
             triggerWord = triggerWord,
             sourceApp = "X Blocker Enforcement"
-        )
-        LockdownNotificationManager.startLockdownNotification(
-            context = this,
-            endTimeEpoch = endTime,
-            triggerWord = triggerWord
         )
         val intent = Intent(this, LockdownActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -292,7 +284,7 @@ fun MainContent(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
+            LockdownNotificationManager.scheduleDailyStreakAlarm(context)
         }
     }
 
@@ -303,8 +295,6 @@ fun MainContent(
             runCatching {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        } else {
-            LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
         }
     }
 
@@ -320,25 +310,6 @@ fun MainContent(
 
     val isDarkTheme by preferences.isDarkTheme.collectAsStateWithLifecycle()
     val isPersianLanguage by preferences.isPersianLanguage.collectAsStateWithLifecycle()
-    val githubRepoSlug by preferences.githubRepoSlug.collectAsStateWithLifecycle()
-
-    var githubUpdateStatus by remember { mutableStateOf(GithubUpdateStatus()) }
-    var showUpdateAvailablePanel by remember { mutableStateOf(false) }
-
-    val runBackgroundGithubUpdateCheck = {
-        coroutineScope.launch {
-            githubUpdateStatus = githubUpdateStatus.copy(isChecking = true)
-            val result = GithubUpdateChecker.checkLatestReleaseFromGithub(githubRepoSlug)
-            githubUpdateStatus = result
-            if (result.isUpdateAvailable) {
-                showUpdateAvailablePanel = true
-            }
-        }
-    }
-
-    LaunchedEffect(githubRepoSlug) {
-        runBackgroundGithubUpdateCheck()
-    }
 
     var isBiometricSessionLocked by remember {
         mutableStateOf(preferences.getIsBiometricLockEnabled())
@@ -355,16 +326,12 @@ fun MainContent(
         }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> {
-                    runBackgroundGithubUpdateCheck()
-                }
                 Lifecycle.Event.ON_PAUSE -> {
                     isAppInBackgroundCurtain = isBlackoutPrivacyShieldEnabled
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     isAppInBackgroundCurtain = false
                     onSyncWindowSecureFlag()
-                    LockdownNotificationManager.checkAndNotifyCleanDayMilestone(context)
                 }
                 else -> {}
             }
@@ -399,10 +366,9 @@ fun MainContent(
 
     val streakDays = remember(streakStartTimestamp, incidents) { preferences.getStreakDays() }
 
-    // Periodic Smart Focus Deep Work schedule evaluator & Clean Day Milestone notifier
+    // Periodic Smart Focus Deep Work schedule evaluator
     LaunchedEffect(focusSlots, isSmartFocusEnabled, isProtectionEnabled) {
         while (true) {
-            LockdownNotificationManager.checkAndNotifyCleanDayMilestone(context)
             if (isProtectionEnabled && isSmartFocusEnabled && focusSlots.isNotEmpty()) {
                 val activeMatch = SmartFocusEngine.checkAndFindActiveSlotToTrigger(
                     slots = focusSlots,
@@ -426,11 +392,6 @@ fun MainContent(
             }
             delay(15_000L)
         }
-    }
-
-    // Keep the Always-On Panic Notification synchronized whenever key states change
-    LaunchedEffect(isProtectionEnabled, lockDurationMinutes, streakDays, urgesDefeatedCount, coinsBalance) {
-        LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
     }
 
     BackHandler(enabled = currentTab != ScreenTab.DASHBOARD) {
@@ -595,26 +556,19 @@ fun MainContent(
                         modifier = Modifier.testTag("nav_tab_keywords")
                     )
 
-                    // When an update is available, change the Info icon & label to Update!
-                    val isUpdateReady = githubUpdateStatus.isUpdateAvailable
                     NavigationBarItem(
                         selected = currentTab == ScreenTab.INFO,
-                        onClick = {
-                            currentTab = ScreenTab.INFO
-                            if (isUpdateReady) {
-                                showUpdateAvailablePanel = true
-                            }
-                        },
+                        onClick = { currentTab = ScreenTab.INFO },
                         icon = {
                             val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.INFO || isUpdateReady) 1.18f else 1f,
+                                targetValue = if (currentTab == ScreenTab.INFO) 1.18f else 1f,
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_info_update_scale"
+                                label = "nav_info_scale"
                             )
                             Icon(
-                                imageVector = if (isUpdateReady) Icons.Default.SystemUpdate else Icons.Default.Info,
-                                contentDescription = if (isUpdateReady) "Update Available" else "Info & Backup",
-                                tint = if (isUpdateReady) AmberWarning else if (currentTab == ScreenTab.INFO) EmeraldShield else ObsidianTextSecondary,
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "Info & Backup",
+                                tint = if (currentTab == ScreenTab.INFO) EmeraldShield else ObsidianTextSecondary,
                                 modifier = Modifier
                                     .size(22.dp)
                                     .scale(iconScale)
@@ -622,9 +576,9 @@ fun MainContent(
                         },
                         label = {
                             Text(
-                                text = if (isUpdateReady) tr("Update", "آپدیت") else tr("Info", "اطلاعات"),
-                                fontWeight = if (isUpdateReady) FontWeight.Black else FontWeight.SemiBold,
-                                color = if (isUpdateReady) AmberWarning else if (currentTab == ScreenTab.INFO) ObsidianTextPrimary else ObsidianTextSecondary,
+                                text = tr("Info", "اطلاعات"),
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (currentTab == ScreenTab.INFO) ObsidianTextPrimary else ObsidianTextSecondary,
                                 fontSize = 10.sp,
                                 maxLines = 1
                             )
@@ -817,17 +771,6 @@ fun MainContent(
 
                 ScreenTab.INFO -> {
                     InfoAndUpdateScreen(
-                        githubRepoSlug = githubRepoSlug,
-                        updateStatus = githubUpdateStatus,
-                        onSaveGithubRepoSlug = { newSlug ->
-                            preferences.setGithubRepoSlug(newSlug)
-                        },
-                        onCheckForUpdateNow = {
-                            runBackgroundGithubUpdateCheck()
-                        },
-                        onOpenUpdatePanel = {
-                            showUpdateAvailablePanel = true
-                        },
                         onExportBackupJson = {
                             repository.exportFullBackupJson()
                         },
@@ -838,13 +781,6 @@ fun MainContent(
                     )
                 }
                 }
-            }
-
-            if (showUpdateAvailablePanel && githubUpdateStatus.isUpdateAvailable) {
-                GithubUpdateAvailablePanelDialog(
-                    updateStatus = githubUpdateStatus,
-                    onDismiss = { showUpdateAvailablePanel = false }
-                )
             }
 
             if (showPanicModeDialog) {
@@ -953,7 +889,7 @@ private fun XBlockerCompactTopBar(
                         color = ObsidianTextPrimary
                     )
                     Text(
-                        text = "v${GithubUpdateChecker.CURRENT_APP_VERSION} • @mehdisrmd",
+                        text = "v${AppInfo.CURRENT_APP_VERSION} • @mehdisrmd",
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 9.sp,

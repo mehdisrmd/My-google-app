@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,14 +47,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.notification.LockdownNotificationManager
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.TacticalBreathingStudioCard
 import com.example.ui.i18n.AppStrings.tr
@@ -87,12 +84,10 @@ fun PanicModeDialog(
     onTriggerEmergencyLockdown: (durationMinutes: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
     var selectedEmergencyMinutes by remember { mutableIntStateOf(15) }
     var isEditingPledge by remember { mutableStateOf(false) }
     var pledgeDraft by remember(personalPledge) { mutableStateOf(personalPledge) }
     var urgeVictoryFeedback by remember { mutableStateOf(false) }
-    var notificationSyncedFeedback by remember { mutableStateOf<String?>(null) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -344,7 +339,6 @@ fun PanicModeDialog(
                         Button(
                             onClick = {
                                 onUrgeDefeated()
-                                LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
                                 onTriggerEmergencyLockdown(selectedEmergencyMinutes)
                             },
                             modifier = Modifier
@@ -374,85 +368,6 @@ fun PanicModeDialog(
                         }
                     }
                 }
-
-                // Pin / Refresh Emergency Notification Bar SOS Button
-                Surface(
-                    onClick = {
-                        val posted = LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
-                        notificationSyncedFeedback = if (posted) {
-                            tr(
-                                "Emergency Panic SOS notification is pinned & active in your Notification Bar!",
-                                "اعلان اضطراری پنیک با موفقیت در نوار اعلان گوشی شما سنجاق شد!"
-                            )
-                        } else {
-                            tr(
-                                "Please grant Notification permission on the Dashboard so the SOS bar can appear.",
-                                "لطفاً دسترسی اعلان (Notifications) را در صفحه اصلی فعال کنید."
-                            )
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    color = ObsidianSurface,
-                    border = BorderStroke(1.dp, CyanTelemetry.copy(alpha = 0.5f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("panic_dialog_pin_notification_button")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.NotificationsActive,
-                                contentDescription = null,
-                                tint = CyanTelemetry,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = tr(
-                                    "Pin / Refresh Panic SOS in Notification Bar",
-                                    "سنجاق و بروزرسانی دکمه پنیک در نوار اعلان"
-                                ),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = ObsidianTextPrimary
-                            )
-                        }
-                        Text(
-                            text = tr("SYNC NOW", "بروزرسانی"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Black,
-                            color = CyanTelemetry
-                        )
-                    }
-                }
-
-                notificationSyncedFeedback?.let { msg ->
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = CyanTelemetry.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, CyanTelemetry),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = CyanTelemetry,
-                            modifier = Modifier.padding(10.dp)
-                        )
-                    }
-                }
-
                 if (urgeVictoryFeedback) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -494,7 +409,6 @@ fun PanicModeDialog(
                     OutlinedButton(
                         onClick = {
                             onUrgeDefeated()
-                            LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(context)
                             urgeVictoryFeedback = true
                         },
                         modifier = Modifier
