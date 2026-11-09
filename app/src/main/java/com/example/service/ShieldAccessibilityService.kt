@@ -12,7 +12,6 @@ import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
-import com.example.notification.LockdownNotificationManager
 import com.example.ui.lockdown.LockdownActivity
 import com.example.util.AppPackageResolver
 import kotlinx.coroutines.CoroutineScope
@@ -78,15 +77,10 @@ class ShieldAccessibilityService : AccessibilityService() {
         // 1. Active Lockdown Strict Screen Pinning (allows only X Blocker + temporary Call/SMS window)
         // 2. Real-time Per-App Daily Usage Limits
         // 3. Scheduled Smart Focus Auto-Activation
-        // 4. Daily Clean Day Milestone & Coin Reward check
         serviceScope.launch {
             while (true) {
                 delay(1000L)
                 val now = System.currentTimeMillis()
-                try {
-                    LockdownNotificationManager.checkAndNotifyCleanDayMilestone(this@ShieldAccessibilityService)
-                } catch (_: Exception) {
-                }
 
                 // 1. Check Smart Focus Schedules
                 if (preferences.getIsSmartFocusEnabled() && !preferences.isCurrentlyLocked()) {
@@ -318,12 +312,6 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         performGlobalAction(GLOBAL_ACTION_BACK)
         performGlobalAction(GLOBAL_ACTION_HOME)
-
-        LockdownNotificationManager.startLockdownNotification(
-            context = this,
-            endTimeEpoch = endTime,
-            triggerWord = triggerWord
-        )
 
         launchLockdownOverlay(
             triggerWord = triggerWord,

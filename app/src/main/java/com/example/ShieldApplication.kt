@@ -23,8 +23,10 @@ class ShieldApplication : Application() {
         preferences = ShieldPreferences(this)
         repository = ShieldRepository(database.shieldDao(), preferences)
 
-        // Ensure the Always-On Panic SOS notification is active on app startup
-        LockdownNotificationManager.showOrUpdateAlwaysOnPanicNotification(this)
+        // Notifications are minimal by design: create the streak channel and
+        // make sure the single daily 9:00 AM streak alarm is scheduled.
+        LockdownNotificationManager.createNotificationChannel(this)
+        LockdownNotificationManager.scheduleDailyStreakAlarm(this)
     }
 
     companion object {
