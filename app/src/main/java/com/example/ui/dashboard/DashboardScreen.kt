@@ -59,7 +59,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -85,8 +84,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -116,6 +117,7 @@ import com.example.data.model.BlockIncident
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
+import com.example.data.preferences.UninstallGuard
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
@@ -135,6 +137,7 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 private enum class PendingAntiTamperAction {
     DISABLE_MASTER_SHIELD,
@@ -209,6 +212,21 @@ fun DashboardScreen(
     // permissions are granted (Accessibility, Overlay, Battery, Notifications).
     val allPermissionsGranted = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
     var showPermissionsNeededHint by remember { mutableStateOf(false) }
+
+    // Uninstall Guard (5-hour wait): the master switch cannot be turned OFF
+    // until an uninstall request's deadline has passed. The deadline is a
+    // persisted wall-clock timestamp; a 1s ticker keeps the countdown text
+    // fresh while this screen is open.
+    val uninstallUnlockDeadline by effectivePrefs.uninstallUnlockDeadline.collectAsStateWithLifecycle()
+    var showUninstallWaitHint by remember { mutableStateOf(false) }
+    var uninstallNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            uninstallNowMs = System.currentTimeMillis()
+            delay(1000L)
+        }
+    }
+    val uninstallUnlockedNow = UninstallGuard.isUnlocked(uninstallUnlockDeadline, uninstallNowMs)
 
     var pendingAntiTamperAction by remember { mutableStateOf<PendingAntiTamperAction?>(null) }
     var showHomeResetStreakYoutubeDialog by remember { mutableStateOf(false) }
@@ -353,10 +371,18 @@ fun DashboardScreen(
                                     // section so the user can grant what's missing.
                                     showPermissionsNeededHint = true
                                     expandSecurityAndPermissionsDropdown = true
+                                } else if (!targetEnabled && !uninstallUnlockedNow) {
+                                    // Uninstall Guard: protection can only be
+                                    // switched off after the 5-hour uninstall
+                                    // wait has elapsed. Point at the countdown
+                                    // in the Prevent Uninstall section below.
+                                    showUninstallWaitHint = true
+                                    expandUninstallAndLockDropdown = true
                                 } else if (!targetEnabled && (strictModeEnabled || isPreventUninstallEnabled)) {
                                     pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_MASTER_SHIELD
                                 } else {
                                     showPermissionsNeededHint = false
+                                    showUninstallWaitHint = false
                                     onToggleProtection(targetEnabled)
                                 }
                             },
@@ -384,6 +410,41 @@ fun DashboardScreen(
                                     "Protection can't turn on yet — grant all permissions in System Setup below first (Accessibility, Overlay, Battery, Notifications).",
                                     "محافظ هنوز فعال نمی‌شود — ابتدا همه دسترسی‌ها را در بخش تنظیمات سیستم در پایین بدهید (دسترسی‌پذیری، نمایش روی برنامه‌ها، باتری و اعلان‌ها)."
                                 ),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = AmberWarning,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+
+                    if (showUninstallWaitHint && !uninstallUnlockedNow) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = AmberWarning.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, AmberWarning),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("uninstall_wait_hint")
+                        ) {
+                            Text(
+                                text = if (UninstallGuard.isRequested(uninstallUnlockDeadline)) {
+                                    tr(
+                                        "Protection can't turn off yet — the 5-hour uninstall wait is still running: " +
+                                            UninstallGuard.formatRemainingHms(
+                                                UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
+                                            ) + " left. See the countdown in 'Prevent Uninstall & Lock Timer' below.",
+                                        "محافظ هنوز خاموش نمی‌شود — انتظار ۵ ساعته حذف نصب در حال انجام است: " +
+                                            UninstallGuard.formatRemainingHms(
+                                                UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
+                                            ) + " باقی مانده. شمارش معکوس در بخش «محافظ ضدحذف برنامه» در پایین است."
+                                    )
+                                } else {
+                                    tr(
+                                        "Protection can't turn off yet — first tap 'Request Uninstall' in 'Prevent Uninstall & Lock Timer' below and wait 5 hours.",
+                                        "محافظ هنوز خاموش نمی‌شود — ابتدا در بخش «محافظ ضدحذف برنامه» در پایین روی «درخواست حذف نصب» بزنید و ۵ ساعت صبر کنید."
+                                    )
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = AmberWarning,
@@ -435,14 +496,14 @@ fun DashboardScreen(
                             .testTag("hero_i_relapsed_reset_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.SmartDisplay,
+                            imageVector = Icons.Default.Refresh,
                             contentDescription = null,
-                            tint = Color(0xFFFF0000),
+                            tint = CrimsonPrimary,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = tr("I Relapsed • Reset Streak (Watch Lesson)", "لغزش داشتم • ریست زنجیره (آموزش ویدیویی)"),
+                            text = tr("I Relapsed • Reset Streak", "لغزش داشتم • ریست زنجیره"),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = CrimsonPrimary
@@ -807,6 +868,115 @@ fun DashboardScreen(
                                 checkedTrackColor = EmeraldShield
                             )
                         )
+                    }
+                }
+
+                // Uninstall Request Card — 5-Hour Wait (Uninstall Guard feature)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (uninstallUnlockedNow) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(AmberWarning.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.HourglassTop,
+                                    contentDescription = null,
+                                    tint = AmberWarning,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = tr("Uninstall X Blocker (5-Hour Wait)", "حذف نصب ایکس بلاکر (انتظار ۵ ساعته)"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Deleting the app is deliberately slow: request it here, wait 5 hours, then protection can be turned off and the app uninstalled normally.",
+                                        "حذف برنامه عمداً کند است: این‌جا درخواست بدهید، ۵ ساعت صبر کنید، بعد محافظ خاموش و برنامه به‌صورت عادی حذف می‌شود."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        when {
+                            uninstallUnlockedNow -> {
+                                Text(
+                                    text = tr(
+                                        "✓ Wait complete — you can now turn OFF the master switch at the top and uninstall X Blocker from system Settings.",
+                                        "✓ انتظار تمام شد — حالا می‌توانید محافظ اصلی را در بالای صفحه خاموش کنید و ایکس بلاکر را از تنظیمات سیستم حذف کنید."
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EmeraldShield,
+                                    modifier = Modifier.testTag("uninstall_unlocked_text")
+                                )
+                            }
+                            UninstallGuard.isRequested(uninstallUnlockDeadline) -> {
+                                Text(
+                                    text = tr(
+                                        "Uninstall wait running — remaining: " + UninstallGuard.formatRemainingHms(
+                                            UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
+                                        ) + "  (keeps counting even after a reboot)",
+                                        "انتظار حذف نصب در حال انجام — باقی‌مانده: " + UninstallGuard.formatRemainingHms(
+                                            UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
+                                        ) + "  (حتی بعد از راه‌اندازی مجدد هم ادامه دارد)"
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AmberWarning,
+                                    modifier = Modifier.testTag("uninstall_countdown_text")
+                                )
+                            }
+                            else -> {
+                                OutlinedButton(
+                                    onClick = { effectivePrefs.requestUninstallUnlock() },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.7f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AmberWarning),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                        .testTag("request_uninstall_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = tr("Request Uninstall — Start 5h Wait", "درخواست حذف نصب — شروع انتظار ۵ ساعته"),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

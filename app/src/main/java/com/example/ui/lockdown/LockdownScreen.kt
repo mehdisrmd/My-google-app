@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -99,6 +100,8 @@ fun LockdownScreen(
     triggerWord: String,
     sourceApp: String,
     onLockExpired: () -> Unit,
+    graceAvailable: Boolean = false,
+    onGraceFreeRequested: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -398,6 +401,59 @@ fun LockdownScreen(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // One-Time 10-Second Grace (keyword blocks only, once per
+                // continuous trigger episode). After the 10 seconds the
+                // shield re-checks: word still on screen -> block returns
+                // WITHOUT this button; word gone -> no block.
+                if (graceAvailable && !isFinished) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.55f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = tr(
+                                    "One-time chance: peek for 10 seconds — if the trigger word is still there, the shield comes back without this button.",
+                                    "فرصت یک‌باره: ۱۰ ثانیه آزاد — اگر کلمه ممنوعه هنوز روی صفحه باشد، قفل بدون این دکمه برمی‌گردد."
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = ObsidianTextSecondary
+                            )
+                            Button(
+                                onClick = onGraceFreeRequested,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AmberWarning,
+                                    contentColor = Color.Black
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("lockdown_grace_10s_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Timer,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = tr("10 Seconds Free", "۱۰ ثانیه آزاد"),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // Detection trigger details card
                 Card(

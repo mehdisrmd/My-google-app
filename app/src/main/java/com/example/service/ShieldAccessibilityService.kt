@@ -131,7 +131,50 @@ class ShieldAccessibilityService : AccessibilityService() {
                     continue
                 }
 
+                // 2b. Uninstall Guard (ticker path): even between accessibility
+                //     events, cover Settings app-manager / package-uninstaller
+                //     screens that target X Blocker while the guard is armed.
+                if (rootNode != null && activePkg.isNotBlank() && isUninstallGuardArmed() &&
+                    TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, activePkg)
+                ) {
+                    triggerLockdown(
+                        triggerWord = "Prevent Uninstall Guard",
+                        sourceApp = "System Settings"
+                    )
+                    continue
+                }
+
                 if (!preferences.getIsProtectionEnabled()) continue
+
+                // 2c. Keyword Grace re-check: a 10-second free window just ended.
+                //     If the trigger word is still on screen, re-block WITHOUT
+                //     the grace button; if it is gone, close the episode so the
+                //     next appearance starts a fresh episode.
+                val graceEpisode = preferences.getKeywordGraceEpisode()
+                if (graceEpisode.word.isNotBlank() && graceEpisode.graceUsed &&
+                    graceEpisode.graceUntilMs > 0L && graceEpisode.graceUntilMs <= now &&
+                    rootNode != null
+                ) {
+                    val episodeKeyword = cachedKeywords.firstOrNull { it.text == graceEpisode.word }
+                    val stillPresent = episodeKeyword != null &&
+                        TextContentScanner.findMatchingKeyword(
+                            TextContentScanner.extractScreenText(rootNode),
+                            listOf(episodeKeyword)
+                        ) != null
+                    if (stillPresent) {
+                        triggerLockdown(
+                            triggerWord = graceEpisode.word,
+                            sourceApp = resolveReadableAppName(
+                                activePkg.ifBlank { lastForegroundPackage }
+                            ),
+                            graceAvailable = false
+                        )
+                    } else {
+                        preferences.saveKeywordGraceEpisode(
+                            KeywordGraceLogic.onKeywordAbsent(graceEpisode, now)
+                        )
+                    }
+                }
 
                 // 3. Track Per-App Usage & Enforce Daily Limit
                 if (activePkg.isNotBlank() &&
@@ -200,8 +243,11 @@ class ShieldAccessibilityService : AccessibilityService() {
             null
         } ?: event.source
 
-        // 2. Prevent Uninstall Guard (Item 7)
-        if (preferences.getIsPreventUninstallEnabled()) {
+        // 2. Prevent Uninstall Guard (Item 7 + Uninstall Delay feature):
+        //    armed while the standalone toggle is ON or master protection is
+        //    ON — but never after the 5-hour uninstall wait has elapsed,
+        //    which is the owner's deliberate escape hatch.
+        if (isUninstallGuardArmed()) {
             if (TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, pkgName)) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 performGlobalAction(GLOBAL_ACTION_HOME)
@@ -283,23 +329,49 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         val matchedWord = TextContentScanner.findMatchingKeyword(screenTexts, cachedKeywords)
         if (matchedWord != null) {
-            triggerLockdown(
-                triggerWord = matchedWord,
-                sourceApp = resolveReadableAppName(activeRootPkg)
-            )
+            // Keyword Grace: first match of an episode blocks WITH the
+            // one-time 10-second free button; a match inside the free window
+            // is suppressed; a match after the window (word still on screen)
+            // blocks again WITHOUT the button.
+            val episode = preferences.getKeywordGraceEpisode()
+            when (val decision = KeywordGraceLogic.onKeywordMatch(episode, matchedWord, now)) {
+                is KeywordGraceLogic.MatchDecision.Suppress -> {
+                    preferences.saveKeywordGraceEpisode(decision.episode)
+                }
+                is KeywordGraceLogic.MatchDecision.Block -> {
+                    preferences.saveKeywordGraceEpisode(decision.episode)
+                    triggerLockdown(
+                        triggerWord = matchedWord,
+                        sourceApp = resolveReadableAppName(activeRootPkg),
+                        graceAvailable = decision.graceAvailable
+                    )
+                }
+            }
+        } else {
+            // No trigger word on screen: close any finished grace episode so
+            // a genuinely new appearance starts fresh (button available).
+            val episode = preferences.getKeywordGraceEpisode()
+            if (episode.word.isNotBlank()) {
+                val updated = KeywordGraceLogic.onKeywordAbsent(episode, now)
+                if (updated != episode) {
+                    preferences.saveKeywordGraceEpisode(updated)
+                }
+            }
         }
     }
 
     private fun triggerLockdown(
         triggerWord: String,
         sourceApp: String,
-        customDurationMinutes: Int? = null
+        customDurationMinutes: Int? = null,
+        graceAvailable: Boolean = false
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         val endTime = preferences.startLockdown(
             durationMinutes = durationMinutes,
             triggerWord = triggerWord,
-            sourceApp = sourceApp
+            sourceApp = sourceApp,
+            graceAvailable = graceAvailable
         )
 
         serviceScope.launch {
@@ -342,6 +414,16 @@ class ShieldAccessibilityService : AccessibilityService() {
             } catch (_: Exception) {
             }
         }
+    }
+
+    /**
+     * The Settings / package-uninstaller block is armed while the standalone
+     * Prevent Uninstall toggle is ON or master protection is ON — and disarms
+     * for everyone once the owner has completed the 5-hour uninstall wait.
+     */
+    private fun isUninstallGuardArmed(): Boolean {
+        if (preferences.isUninstallUnlocked()) return false
+        return preferences.getIsPreventUninstallEnabled() || preferences.getIsProtectionEnabled()
     }
 
     private fun isIgnoredSystemUiPackage(pkgName: String): Boolean {

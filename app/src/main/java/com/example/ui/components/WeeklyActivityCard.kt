@@ -49,7 +49,6 @@ import com.example.data.model.BlockIncident
 import com.example.data.preferences.ShieldPreferences
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.AmberWarning
-import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.JetBrainsMonoFontFamily
@@ -58,6 +57,9 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.ui.theme.StreakCleanGreen
+import com.example.ui.theme.StreakRelapseRed
+import com.example.ui.theme.StreakTodayGray
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -95,21 +97,25 @@ object WeeklyActivityCalculator {
     ): List<DailyActivityMetric> {
         val dayFmtEn = SimpleDateFormat("EEE", Locale.US)
         val pkgList = appLimits.map { it.packageName }
-        val currentStreakDays = preferences?.getStreakDays() ?: 0
 
         return (6 downTo 0).map { daysAgo ->
             val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -daysAgo) }
             val label = if (daysAgo == 0) "Today" else dayFmtEn.format(cal.time)
             val mins = preferences?.getDayAppUsageMinutes(daysAgo, pkgList) ?: 0
-            val status = when {
-                preferences == null -> {
-                    if (daysAgo == 0) CalendarDayStatus.TODAY_IN_PROGRESS else CalendarDayStatus.PRE_INSTALL_GRAY
-                }
-                preferences.isDayBeforeInstall(daysAgo) -> CalendarDayStatus.PRE_INSTALL_GRAY
-                preferences.didRelapseOnDay(daysAgo) -> CalendarDayStatus.RELAPSE_DAY
-                daysAgo == 0 && currentStreakDays == 0 -> CalendarDayStatus.TODAY_IN_PROGRESS
-                daysAgo <= currentStreakDays -> CalendarDayStatus.CLEAN_STREAK_DAY
-                else -> CalendarDayStatus.TODAY_IN_PROGRESS
+            val status = if (preferences == null) {
+                if (daysAgo == 0) CalendarDayStatus.TODAY_IN_PROGRESS else CalendarDayStatus.PRE_INSTALL_GRAY
+            } else {
+                val nowMs = System.currentTimeMillis()
+                val todayEpochDay = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(nowMs)
+                StreakDayClassifier.classify(
+                    dayEpochDay = todayEpochDay - daysAgo,
+                    todayEpochDay = todayEpochDay,
+                    firstInstallEpochDay = preferences.getFirstInstallEpochDay(),
+                    relapseEpochDays = preferences.getRelapseEpochDaysInRange(
+                        todayEpochDay - 6,
+                        todayEpochDay
+                    )
+                )
             }
             DailyActivityMetric(
                 daysAgo = daysAgo,
@@ -117,6 +123,34 @@ object WeeklyActivityCalculator {
                 trackedAppMinutes = mins,
                 status = status
             )
+        }
+    }
+}
+
+/**
+ * Pure day classification for the streak calendar (Feature: Streak Calendar
+ * Colors). Mapping, exactly as the owner asked:
+ *  - TODAY is always "in progress" (rendered GRAY) — even if a relapse was
+ *    logged earlier today; the day is not over yet.
+ *  - A past day with a recorded reset/relapse is a RELAPSE day (RED).
+ *  - Any other past day since install counts as a passed clean day (GREEN):
+ *    the streak clock runs continuously from install/reset, so every day
+ *    that ended without a relapse was a day the user passed.
+ *  - Days before the app was installed are PRE-INSTALL (muted gray).
+ */
+object StreakDayClassifier {
+    fun classify(
+        dayEpochDay: Long,
+        todayEpochDay: Long,
+        firstInstallEpochDay: Long,
+        relapseEpochDays: Set<Long>
+    ): CalendarDayStatus {
+        return when {
+            dayEpochDay > todayEpochDay -> CalendarDayStatus.PRE_INSTALL_GRAY
+            dayEpochDay == todayEpochDay -> CalendarDayStatus.TODAY_IN_PROGRESS
+            dayEpochDay < firstInstallEpochDay -> CalendarDayStatus.PRE_INSTALL_GRAY
+            relapseEpochDays.contains(dayEpochDay) -> CalendarDayStatus.RELAPSE_DAY
+            else -> CalendarDayStatus.CLEAN_STREAK_DAY
         }
     }
 }
@@ -153,16 +187,20 @@ fun WeeklyActivityCard(
                 Calendar.FRIDAY -> "ج"
                 else -> dayShortEn
             }
-            val isBeforeInstall = preferences.isDayBeforeInstall(daysAgo)
-            val didRelapse = preferences.didRelapseOnDay(daysAgo)
-            // Starts from 0: On Day 0 (just installed or just reset), Today is TODAY_IN_PROGRESS (0 clean days completed)
-            val status = when {
-                isBeforeInstall -> CalendarDayStatus.PRE_INSTALL_GRAY
-                didRelapse -> CalendarDayStatus.RELAPSE_DAY
-                daysAgo == 0 && currentStreakDays == 0 -> CalendarDayStatus.TODAY_IN_PROGRESS
-                daysAgo <= currentStreakDays -> CalendarDayStatus.CLEAN_STREAK_DAY
-                else -> CalendarDayStatus.TODAY_IN_PROGRESS
-            }
+            // Classification (Streak Calendar Colors): TODAY = gray,
+            // passed clean day = green, relapse day = red, pre-install = muted.
+            val todayEpochDay = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(
+                System.currentTimeMillis()
+            )
+            val status = StreakDayClassifier.classify(
+                dayEpochDay = todayEpochDay - daysAgo,
+                todayEpochDay = todayEpochDay,
+                firstInstallEpochDay = preferences.getFirstInstallEpochDay(),
+                relapseEpochDays = preferences.getRelapseEpochDaysInRange(
+                    todayEpochDay - 6,
+                    todayEpochDay
+                )
+            )
             val urges = preferences.getDayUrgesDefeated(daysAgo)
 
             DailyStreakCalendarNode(
@@ -324,23 +362,21 @@ fun WeeklyActivityCard(
                     ) {
                         calendarNodes.forEachIndexed { index, node ->
                             val isSelected = index == selectedIndex
-                            val isClean = node.status == CalendarDayStatus.CLEAN_STREAK_DAY
                             val isPreInstall = node.status == CalendarDayStatus.PRE_INSTALL_GRAY
 
                             val circleBgColor = when (node.status) {
                                 CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianBorder.copy(alpha = 0.45f)
-                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning.copy(alpha = 0.16f)
-                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
-                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary.copy(alpha = 0.25f)
+                                CalendarDayStatus.TODAY_IN_PROGRESS -> StreakTodayGray.copy(alpha = 0.20f)
+                                CalendarDayStatus.CLEAN_STREAK_DAY -> StreakCleanGreen
+                                CalendarDayStatus.RELAPSE_DAY -> StreakRelapseRed.copy(alpha = 0.22f)
                             }
 
                             val circleBorderColor = when {
-                                node.isToday && isClean -> AmberWarning
-                                node.status == CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                node.status == CalendarDayStatus.TODAY_IN_PROGRESS -> StreakTodayGray
                                 isSelected -> CyanTelemetry
                                 node.status == CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianBorder
-                                node.status == CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
-                                else -> CrimsonPrimary
+                                node.status == CalendarDayStatus.CLEAN_STREAK_DAY -> StreakCleanGreen
+                                else -> StreakRelapseRed
                             }
 
                             Column(
@@ -364,7 +400,7 @@ fun WeeklyActivityCard(
                                     fontSize = 9.sp,
                                     fontWeight = if (node.isToday || isSelected) FontWeight.Black else FontWeight.SemiBold,
                                     color = when {
-                                        node.isToday -> AmberWarning
+                                        node.isToday -> StreakTodayGray
                                         isPreInstall -> ObsidianTextSecondary.copy(alpha = 0.55f)
                                         else -> ObsidianTextSecondary
                                     },
@@ -402,12 +438,12 @@ fun WeeklyActivityCard(
 
                                         CalendarDayStatus.TODAY_IN_PROGRESS -> {
                                             Text(
-                                                text = "0d",
+                                                text = "${currentStreakDays}d",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontFamily = JetBrainsMonoFontFamily,
                                                 fontWeight = FontWeight.Black,
                                                 fontSize = 11.sp,
-                                                color = AmberWarning
+                                                color = StreakTodayGray
                                             )
                                         }
 
@@ -424,7 +460,7 @@ fun WeeklyActivityCard(
                                             Icon(
                                                 imageVector = Icons.Default.Refresh,
                                                 contentDescription = "Streak Reset",
-                                                tint = CrimsonPrimary,
+                                                tint = StreakRelapseRed,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -473,10 +509,10 @@ fun WeeklyActivityCard(
                                         .clip(CircleShape)
                                         .background(
                                             when (selectedNode.status) {
-                                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
-                                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                                CalendarDayStatus.CLEAN_STREAK_DAY -> StreakCleanGreen
+                                                CalendarDayStatus.TODAY_IN_PROGRESS -> StreakTodayGray
                                                 CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianTextSecondary.copy(alpha = 0.5f)
-                                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary
+                                                CalendarDayStatus.RELAPSE_DAY -> StreakRelapseRed
                                             }
                                         )
                                 )
@@ -499,8 +535,8 @@ fun WeeklyActivityCard(
                                     "✓ روز پاک (+۱ سکه)"
                                 )
                                 CalendarDayStatus.TODAY_IN_PROGRESS -> tr(
-                                    "Day 0 • In Progress (0 / 1 Day)",
-                                    "روز ۰ • در حال ثبت (۰ از ۱ روز)"
+                                    "Today • In Progress (Day $currentStreakDays)",
+                                    "امروز • در حال انجام (روز $currentStreakDays)"
                                 )
                                 CalendarDayStatus.PRE_INSTALL_GRAY -> tr(
                                     "Before App Install (Gray)",
@@ -513,10 +549,10 @@ fun WeeklyActivityCard(
                             }
 
                             val statusColor = when (selectedNode.status) {
-                                CalendarDayStatus.CLEAN_STREAK_DAY -> EmeraldShield
-                                CalendarDayStatus.TODAY_IN_PROGRESS -> AmberWarning
+                                CalendarDayStatus.CLEAN_STREAK_DAY -> StreakCleanGreen
+                                CalendarDayStatus.TODAY_IN_PROGRESS -> StreakTodayGray
                                 CalendarDayStatus.PRE_INSTALL_GRAY -> ObsidianTextSecondary
-                                CalendarDayStatus.RELAPSE_DAY -> CrimsonPrimary
+                                CalendarDayStatus.RELAPSE_DAY -> StreakRelapseRed
                             }
 
                             Text(
@@ -539,16 +575,20 @@ fun WeeklyActivityCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LegendDotItem(
-                    color = EmeraldShield,
+                    color = StreakCleanGreen,
                     label = tr("Clean Day (+1🪙)", "روز پاک (+۱ سکه)")
+                )
+                LegendDotItem(
+                    color = StreakRelapseRed,
+                    label = tr("Relapse Day", "روز لغزش")
+                )
+                LegendDotItem(
+                    color = StreakTodayGray,
+                    label = tr("Today", "امروز")
                 )
                 LegendDotItem(
                     color = ObsidianTextSecondary.copy(alpha = 0.5f),
                     label = tr("Before Install", "قبل از نصب")
-                )
-                LegendDotItem(
-                    color = AmberWarning,
-                    label = tr("Active Chain: ${currentStreakDays}d", "زنجیره فعلی: ${currentStreakDays} روز")
                 )
             }
         }

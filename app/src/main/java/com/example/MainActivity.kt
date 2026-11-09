@@ -107,6 +107,7 @@ import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.SeasonalTheme
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
@@ -145,10 +146,12 @@ class MainActivity : ComponentActivity() {
             val app = ShieldApplication.instance
             val isDarkTheme by app.preferences.isDarkTheme.collectAsStateWithLifecycle()
             val isPersianLanguage by app.preferences.isPersianLanguage.collectAsStateWithLifecycle()
+            val seasonalThemeName by app.preferences.seasonalThemeName.collectAsStateWithLifecycle()
 
             MyApplicationTheme(
                 darkTheme = isDarkTheme,
-                isPersianRtl = isPersianLanguage
+                isPersianRtl = isPersianLanguage,
+                seasonalTheme = SeasonalTheme.fromName(seasonalThemeName)
             ) {
                 MainContent(
                     openPanicModeExternal = openPanicModeRequest,
@@ -777,6 +780,7 @@ fun MainContent(
                         onImportBackupJson = { rawJson ->
                             repository.importFullBackupJson(rawJson)
                         },
+                        preferences = preferences,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }

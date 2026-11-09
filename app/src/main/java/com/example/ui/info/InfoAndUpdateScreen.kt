@@ -29,7 +29,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Launch
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
@@ -57,6 +59,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.preferences.ShieldPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +88,8 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.ui.theme.SeasonalPalettes
+import com.example.ui.theme.SeasonalTheme
 import com.example.util.BackupManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -120,11 +126,18 @@ fun InfoAndUpdateScreen(
     onImportBackupJson: suspend (String) -> BackupRestoreSummary = {
         BackupRestoreSummary(false, messageEn = "Not configured")
     },
+    preferences: ShieldPreferences? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+
+    val effectivePrefs = remember(context, preferences) {
+        preferences ?: ShieldPreferences(context)
+    }
+    val seasonalThemeName by effectivePrefs.seasonalThemeName.collectAsStateWithLifecycle()
+    val selectedSeasonalTheme = SeasonalTheme.fromName(seasonalThemeName)
 
     val fullRealGithubUrl = AppInfo.GITHUB_REPO_URL
 
@@ -359,6 +372,125 @@ fun InfoAndUpdateScreen(
                                     text = "@mehdisrmd",
                                     fontWeight = FontWeight.Black,
                                     style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1b. Appearance — Seasonal Theme Picker (Spring / Summer / Autumn /
+        // Winter palettes through the same Liquid Glass theme layer; the
+        // original Purple Glass stays the default.)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("seasonal_theme_picker_card"),
+            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.5.dp, IndigoAccent.copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(IndigoAccent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Palette,
+                            contentDescription = null,
+                            tint = IndigoAccent,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = tr("Seasonal Theme", "تم فصلی"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ObsidianTextPrimary
+                        )
+                        Text(
+                            text = tr(
+                                "Recolor the whole app — glass surfaces stay, the palette changes.",
+                                "رنگ کل برنامه عوض می‌شود — سطوح شیشه‌ای می‌مانند، فقط پالت رنگ تغییر می‌کند."
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                val themeOptions = listOf(
+                    SeasonalTheme.PURPLE_GLASS to tr("Purple Glass (Default)", "بنفش شیشه‌ای (پیش‌فرض)"),
+                    SeasonalTheme.SPRING to tr("Spring", "بهار"),
+                    SeasonalTheme.SUMMER to tr("Summer", "تابستان"),
+                    SeasonalTheme.AUTUMN to tr("Autumn", "پاییز"),
+                    SeasonalTheme.WINTER to tr("Winter", "زمستان")
+                )
+                themeOptions.forEach { (theme, label) ->
+                    val isSelected = theme == selectedSeasonalTheme
+                    val paletteSet = SeasonalPalettes.getValue(theme).dark
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = ObsidianCard,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) EmeraldShield else ObsidianBorder
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { effectivePrefs.setSeasonalTheme(theme) }
+                            .testTag("seasonal_theme_option_${theme.name}")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Two-tone season swatch: primary + shield accent
+                            Row {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .background(paletteSet.primary)
+                                        .border(1.dp, ObsidianBorder, CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(CircleShape)
+                                        .background(paletteSet.shield)
+                                        .border(1.dp, ObsidianBorder, CircleShape)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (isSelected) FontWeight.Black else FontWeight.SemiBold,
+                                color = ObsidianTextPrimary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
