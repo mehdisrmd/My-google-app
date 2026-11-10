@@ -27,7 +27,7 @@ import java.util.Calendar
  * - The always-on persistent PANIC SOS notification bar.
  * - The per-second lockdown countdown notification.
  * - Opportunistic Clean Day milestone popups (previously posted from
- *   whichever screen/service happened to run the coin sync).
+ *   whichever screen/service happened to run the streak sync).
  *
  * The in-app Panic Mode and Lockdown features themselves are unchanged —
  * they simply no longer post notifications.
@@ -131,7 +131,7 @@ object LockdownNotificationManager {
 
     /**
      * Runs when the daily 9:00 AM alarm fires: chains tomorrow's alarm,
-     * syncs clean-day coins / best chain, then posts the day's single
+     * syncs the clean-day streak / best chain, then posts the day's single
      * streak notification — but only when the streak is at least 1 day.
      * A streak of 0 stays completely silent.
      */
@@ -144,7 +144,7 @@ object LockdownNotificationManager {
 
         val prefs = runCatching { ShieldApplication.instance.preferences }
             .getOrElse { ShieldPreferences(appContext) }
-        prefs.syncCleanDaysCoinsAndCheckMilestone()
+        prefs.syncCleanDaysAndCheckMilestone()
 
         val streakDays = prefs.getStreakDays()
         if (streakDays >= 1) {

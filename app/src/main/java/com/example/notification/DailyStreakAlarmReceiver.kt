@@ -9,7 +9,7 @@ import android.content.Intent
  *
  * - The alarm intent (scheduled via
  *   [LockdownNotificationManager.scheduleDailyStreakAlarm]) runs the
- *   coin/streak sync and posts the day's one notification.
+ *   streak sync and posts the day's one notification.
  * - BOOT_COMPLETED simply re-arms the alarm for the next 9:00 AM, since
  *   AlarmManager alarms do not survive a reboot.
  */

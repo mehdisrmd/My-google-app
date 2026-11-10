@@ -69,6 +69,15 @@ fun GlassGlowBackground(modifier: Modifier = Modifier) {
                     CircleShape
                 )
         )
+        // Seasonal motifs (Fix 3): leaves / sun / autumn leaves / snow for
+        // the four seasonal themes, drawn over the glows but under all UI
+        // (this background sits behind the whole app). Draws nothing for
+        // the default purple Liquid Glass theme.
+        SeasonalMotifCanvas(
+            theme = AppThemeState.seasonalTheme,
+            palette = activeSeasonPaletteSet,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 

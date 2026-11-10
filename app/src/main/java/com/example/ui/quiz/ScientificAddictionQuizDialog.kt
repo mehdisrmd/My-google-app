@@ -33,7 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MonetizationOn
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
@@ -220,8 +220,8 @@ object ScientificAddictionQuizRepository {
                 severityFa = "عادت و وابستگی متوسط (در معرض خطر)",
                 analysisEn = "Your brain has built conditioned pathways around boredom and social media triggers that periodically break your clean chain.",
                 analysisFa = "مغز شما در برابر بی‌حوصلگی و محرک‌های شبکه‌های اجتماعی شرطی شده و هر از گاهی زنجیره پاکی شما را می‌شکند.",
-                recommendationEn = "Recommended Protocol: Commit to a 30-to-90 day unbroken chain, use Panic SOS breathing when urges hit, and earn +1 Coin each clean day.",
-                recommendationFa = "پروتکل پیشنهادی: متعهد به زنجیره ۳۰ تا ۹۰ روزه شوید، هنگام وسوسه از دکمه اضطراری PANIC SOS استفاده کنید و هر روز پاک ۱ سکه جایزه بگیرید.",
+                recommendationEn = "Recommended Protocol: Commit to a 30-to-90 day unbroken chain, use Panic SOS breathing when urges hit, and watch your Best Chain grow each clean day.",
+                recommendationFa = "پروتکل پیشنهادی: متعهد به زنجیره ۳۰ تا ۹۰ روزه شوید، هنگام وسوسه از دکمه اضطراری PANIC SOS استفاده کنید و هر روز پاک شاهد رشد بهترین زنجیره خود باشید.",
                 badgeColor = AmberWarning
             )
             pct >= 18 -> QuizEvaluation(
@@ -807,12 +807,12 @@ private fun FirstTimeOnboardingWelcomeSection(
         )
 
         OnboardingFeatureItem(
-            icon = Icons.Default.MonetizationOn,
-            accentColor = AmberWarning,
-            title = tr("3. Clean Streak Calendar & Daily Coins", "۳. تقویم زنجیره پاکی و سکه روزانه"),
+            icon = Icons.Default.DateRange,
+            accentColor = EmeraldShield,
+            title = tr("3. Clean Streak Calendar", "۳. تقویم زنجیره پاکی"),
             description = tr(
-                "Track your Duolingo-style 7-day clean calendar and earn +1 Coin for every clean day.",
-                "تقویم زنجیره روزهای پاک به سبک دولینگو و دریافت روزانه ۱ سکه جایزه."
+                "Track your Duolingo-style 7-day clean calendar and grow your Best Chain every clean day.",
+                "تقویم زنجیره روزهای پاک به سبک دولینگو و رشد بهترین زنجیره با هر روز پاک."
             )
         )
 

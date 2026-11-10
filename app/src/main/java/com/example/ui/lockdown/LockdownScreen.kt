@@ -1,7 +1,10 @@
 package com.example.ui.lockdown
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -137,6 +140,17 @@ fun LockdownScreen(
     }
 
     val isFinished = remainingMillis <= 0L
+
+    // Expiry is FINAL for a timed block: the moment the countdown reaches
+    // zero, the block lifts and this screen dismisses itself (clearing the
+    // stored lock). It must not linger on an "UNLOCKED" page — a lingering
+    // block screen can be mistaken for a live block, and (v0.4.9 bug) its
+    // own printed trigger word used to re-arm the lock from underneath it.
+    LaunchedEffect(isFinished) {
+        if (isFinished) {
+            onLockExpired()
+        }
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -325,12 +339,43 @@ fun LockdownScreen(
                         ) {
                             FilledTonalButton(
                                 onClick = {
-                                    runCatching {
-                                        ShieldApplication.instance.preferences.grantTemporaryCallOrSmsAccess(120)
-                                        val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                                    ShieldApplication.instance.preferences
+                                        .grantCallOrSmsAccessForCurrentLock()
+                                    // Open the device's DEFAULT dialer,
+                                    // targeted by package: a bare ACTION_DIAL
+                                    // can silently fail on some builds.
+                                    // Fallbacks: untargeted ACTION_DIAL, then
+                                    // the dialer package's launch intent.
+                                    val dialerPkg = runCatching {
+                                        val tm = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                                        tm?.defaultDialerPackage
+                                    }.getOrNull()
+                                    val opened = runCatching {
+                                        val targeted = Intent(Intent.ACTION_DIAL).apply {
                                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            if (!dialerPkg.isNullOrBlank()) setPackage(dialerPkg)
                                         }
-                                        context.startActivity(dialIntent)
+                                        context.startActivity(targeted)
+                                        true
+                                    }.getOrDefault(false)
+                                    if (!opened) {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_DIAL).apply {
+                                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                }
+                                            )
+                                        }.onFailure {
+                                            if (!dialerPkg.isNullOrBlank()) {
+                                                runCatching {
+                                                    val launch = context.packageManager
+                                                        .getLaunchIntentForPackage(dialerPkg)?.apply {
+                                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                        }
+                                                    if (launch != null) context.startActivity(launch)
+                                                }
+                                            }
+                                        }
                                     }
                                 },
                                 shape = RoundedCornerShape(12.dp),
@@ -358,19 +403,46 @@ fun LockdownScreen(
 
                             FilledTonalButton(
                                 onClick = {
-                                    runCatching {
-                                        ShieldApplication.instance.preferences.grantTemporaryCallOrSmsAccess(120)
-                                        val smsIntent = Intent(Intent.ACTION_VIEW, Uri.parse("sms:")).apply {
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                        }
-                                        context.startActivity(smsIntent)
-                                    }.onFailure {
-                                        runCatching {
-                                            val fallback = Intent(Intent.ACTION_MAIN).apply {
+                                    ShieldApplication.instance.preferences
+                                        .grantCallOrSmsAccessForCurrentLock()
+                                    // Open the DEFAULT SMS app by launching
+                                    // its package directly: the old
+                                    // ACTION_VIEW "sms:" intent has no
+                                    // handler on several Samsung builds and
+                                    // silently did nothing when tapped.
+                                    // Fallbacks: the messaging-category
+                                    // intent, then a SENDTO composer.
+                                    val smsPkg = runCatching {
+                                        Telephony.Sms.getDefaultSmsPackage(context)
+                                    }.getOrNull()
+                                    var opened = false
+                                    if (!smsPkg.isNullOrBlank()) {
+                                        opened = runCatching {
+                                            val launch = context.packageManager
+                                                .getLaunchIntentForPackage(smsPkg)?.apply {
+                                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                }
+                                                ?: throw IllegalStateException("No launch intent for SMS app")
+                                            context.startActivity(launch)
+                                            true
+                                        }.getOrDefault(false)
+                                    }
+                                    if (!opened) {
+                                        opened = runCatching {
+                                            val categoryIntent = Intent(Intent.ACTION_MAIN).apply {
                                                 addCategory(Intent.CATEGORY_APP_MESSAGING)
                                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                             }
-                                            context.startActivity(fallback)
+                                            context.startActivity(categoryIntent)
+                                            true
+                                        }.getOrDefault(false)
+                                    }
+                                    if (!opened) {
+                                        runCatching {
+                                            val sendTo = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                            }
+                                            context.startActivity(sendTo)
                                         }
                                     }
                                 },

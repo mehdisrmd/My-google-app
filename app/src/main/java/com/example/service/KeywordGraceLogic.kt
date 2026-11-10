@@ -100,4 +100,24 @@ object KeywordGraceLogic {
             )
         }
     }
+
+    /**
+     * The post-grace re-check (accessibility ticker) has evaluated this
+     * episode once — whether it re-blocked or found the word gone. The
+     * pending re-check is consumed: [KeywordGraceEpisode.graceUntilMs] is
+     * cleared so the ticker can NEVER fire the same re-check again.
+     *
+     * This matters because the re-check must run at most once per grace
+     * window. Without consumption, a re-block minted by the re-check would
+     * itself expire with the episode still "pending", and the ticker would
+     * re-block again after every expiry — an endless countdown loop.
+     * After consumption the episode still remembers the word and that grace
+     * was used, so a genuine later match blocks WITHOUT the button, and
+     * [onKeywordAbsent] closes the episode once the word is gone.
+     */
+    fun onGraceRecheckConsumed(
+        episode: KeywordGraceEpisode
+    ): KeywordGraceEpisode {
+        return episode.copy(graceUntilMs = 0L)
+    }
 }
