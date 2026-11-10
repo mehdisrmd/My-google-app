@@ -52,8 +52,6 @@ class ShieldPreferences(private val context: Context) {
                 .putLong(KEY_STREAK_START_TIME, now)
                 .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
                 .putInt(KEY_LONGEST_STREAK, 0)
-                .putInt(KEY_COINS_BALANCE, 0)
-                .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
                 .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
                 .putInt(KEY_SLIPS_COUNT, 0)
                 .putString(KEY_LAST_SLIP_REASON, "")
@@ -112,9 +110,6 @@ class ShieldPreferences(private val context: Context) {
 
     private val _isPreventUninstallEnabled = MutableStateFlow(getIsPreventUninstallEnabled())
     val isPreventUninstallEnabled: StateFlow<Boolean> = _isPreventUninstallEnabled.asStateFlow()
-
-    private val _coinsBalance = MutableStateFlow(getCoinsBalance())
-    val coinsBalance: StateFlow<Int> = _coinsBalance.asStateFlow()
 
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
@@ -260,7 +255,6 @@ class ShieldPreferences(private val context: Context) {
             put("lockDurationMinutes", getLockDurationMinutes())
             put("strictModeEnabled", getStrictModeEnabled())
             put("isPreventUninstallEnabled", getIsPreventUninstallEnabled())
-            put("coinsBalance", getCoinsBalance())
             put("firstInstallEpochDay", getFirstInstallEpochDay())
             put("streakStartTimestamp", getStreakStartTimestamp())
             put("longestStreakDays", getLongestStreakDays())
@@ -290,7 +284,8 @@ class ShieldPreferences(private val context: Context) {
         val dur = json.optInt("lockDurationMinutes", getLockDurationMinutes()).coerceIn(1, 1440)
         val strict = json.optBoolean("strictModeEnabled", getStrictModeEnabled())
         val preventUninst = json.optBoolean("isPreventUninstallEnabled", getIsPreventUninstallEnabled())
-        val coins = json.optInt("coinsBalance", getCoinsBalance()).coerceAtLeast(0)
+        // Note: old backups may contain a "coinsBalance" field — the coin
+        // system was removed at the owner's request, so it is ignored here.
         val firstInstallDay = json.optLong("firstInstallEpochDay", getFirstInstallEpochDay())
         val streakStart = json.optLong("streakStartTimestamp", getStreakStartTimestamp()).takeIf { it > 0L } ?: now
         val longest = json.optInt("longestStreakDays", getLongestStreakDays()).coerceAtLeast(0)
@@ -319,7 +314,6 @@ class ShieldPreferences(private val context: Context) {
             .putInt(KEY_LOCK_DURATION_MINUTES, dur)
             .putBoolean(KEY_STRICT_MODE_ENABLED, strict)
             .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, preventUninst)
-            .putInt(KEY_COINS_BALANCE, coins)
             .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, firstInstallDay)
             .putLong(KEY_STREAK_START_TIME, streakStart)
             .putInt(KEY_LONGEST_STREAK, longest)
@@ -346,7 +340,6 @@ class ShieldPreferences(private val context: Context) {
         _lockDurationMinutes.value = dur
         _strictModeEnabled.value = strict
         _isPreventUninstallEnabled.value = preventUninst
-        _coinsBalance.value = coins
         _streakStartTimestamp.value = streakStart
         _longestStreakDays.value = maxOf(longest, getStreakDays())
         _slipsCount.value = slips
@@ -461,52 +454,23 @@ class ShieldPreferences(private val context: Context) {
         return UninstallGuard.remainingMillis(getUninstallUnlockDeadline(), nowMs)
     }
 
-    // Coin Reward System (+1 Coin for each Clean Day)
-    fun getCoinsBalance(): Int {
-        return prefs.getInt(KEY_COINS_BALANCE, 0).coerceAtLeast(0)
-    }
-
-    fun addCoins(amount: Int): Int {
-        if (amount <= 0) return getCoinsBalance()
-        val updated = getCoinsBalance() + amount
-        prefs.edit().putInt(KEY_COINS_BALANCE, updated).apply()
-        _coinsBalance.value = updated
-        return updated
-    }
-
-    fun spendCoins(cost: Int = 20): Boolean {
-        if (cost <= 0) return true
-        val current = getCoinsBalance()
-        if (current < cost) return false
-        val updated = current - cost
-        prefs.edit().putInt(KEY_COINS_BALANCE, updated).apply()
-        _coinsBalance.value = updated
-        return true
-    }
-
     /**
-     * Synchronizes daily clean streak coins (+1 coin per clean streak day reached)
-     * and returns the new clean day milestone if a new day (Day 1, Day 2, Day 3...) was just reached
-     * and hasn't been notified yet, or 0 otherwise.
+     * Synchronizes the clean-streak bookkeeping (Best Chain) and returns the
+     * new clean day milestone if a new day (Day 1, Day 2, Day 3...) was just
+     * reached and hasn't been notified yet, or 0 otherwise.
+     *
+     * (This was previously `syncCleanDaysCoinsAndCheckMilestone` and also
+     * awarded +1 coin per clean day; the coin system was removed at the
+     * owner's request. Streak-day counting and the milestone return value
+     * are unchanged.)
      */
-    fun syncCleanDaysCoinsAndCheckMilestone(): Int {
+    fun syncCleanDaysAndCheckMilestone(): Int {
         val currentStreakDays = getStreakDays()
         // Always ensure Best Chain is updated & remembered
         val recordedBest = prefs.getInt(KEY_LONGEST_STREAK, 0)
         if (currentStreakDays > recordedBest) {
             prefs.edit().putInt(KEY_LONGEST_STREAK, currentStreakDays).apply()
             _longestStreakDays.value = currentStreakDays
-        }
-
-        val lastRewardedDay = prefs.getInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
-        if (currentStreakDays > lastRewardedDay) {
-            val newlyEarnedCoins = (currentStreakDays - lastRewardedDay).coerceAtLeast(1)
-            val newBalance = getCoinsBalance() + newlyEarnedCoins
-            prefs.edit()
-                .putInt(KEY_COINS_BALANCE, newBalance)
-                .putInt(KEY_LAST_REWARDED_STREAK_DAY, currentStreakDays)
-                .apply()
-            _coinsBalance.value = newBalance
         }
 
         val lastNotifiedDay = prefs.getInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
@@ -592,6 +556,26 @@ class ShieldPreferences(private val context: Context) {
     // Temporary Emergency Call / SMS Whitelist Window During Block Page Countdown
     fun grantTemporaryCallOrSmsAccess(durationSeconds: Int = 120) {
         val until = System.currentTimeMillis() + (durationSeconds * 1000L)
+        prefs.edit().putLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, until).apply()
+    }
+
+    /**
+     * Opens the emergency Call/SMS window for the REST of the current block
+     * episode (until the active lock's own end time, at least 120 seconds).
+     * Used when the user taps Phone Call / Text on the block screen: the
+     * dialer / SMS packages are exempt from overlay-blocking for the whole
+     * episode (see [isPackageAllowedDuringLockdown]), and this makes
+     * LockdownActivity's pull-back guard agree with that exemption for the
+     * whole episode too — a long call or a careful message session must
+     * never be cut short by the guard's old fixed 120-second window.
+     */
+    fun grantCallOrSmsAccessForCurrentLock() {
+        val now = System.currentTimeMillis()
+        val until = maxOf(
+            prefs.getLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L),
+            now + 120_000L,
+            getActiveLockEndTime()
+        )
         prefs.edit().putLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, until).apply()
     }
 
@@ -904,7 +888,6 @@ class ShieldPreferences(private val context: Context) {
         prefs.edit()
             .putInt(KEY_LONGEST_STREAK, newBest)
             .putLong(KEY_STREAK_START_TIME, now)
-            .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
             .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
             .putInt(KEY_SLIPS_COUNT, slips)
             .putString(KEY_LAST_SLIP_REASON, reason)
@@ -1100,8 +1083,6 @@ class ShieldPreferences(private val context: Context) {
             .putLong(KEY_STREAK_START_TIME, now)
             .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
             .putInt(KEY_LONGEST_STREAK, 0)
-            .putInt(KEY_COINS_BALANCE, 0)
-            .putInt(KEY_LAST_REWARDED_STREAK_DAY, 0)
             .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
             .putInt(KEY_SLIPS_COUNT, 0)
             .putString(KEY_LAST_SLIP_REASON, "")
@@ -1127,7 +1108,6 @@ class ShieldPreferences(private val context: Context) {
         _lockDurationMinutes.value = 5
         _strictModeEnabled.value = false
         _isPreventUninstallEnabled.value = false
-        _coinsBalance.value = 0
         _activeLockEndTime.value = 0L
         _streakStartTimestamp.value = now
         _longestStreakDays.value = 0
@@ -1165,8 +1145,6 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_LOCK_DURATION_MINUTES = "key_lock_duration_minutes"
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
         private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
-        private const val KEY_COINS_BALANCE = "key_coins_balance"
-        private const val KEY_LAST_REWARDED_STREAK_DAY = "key_last_rewarded_streak_day"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"

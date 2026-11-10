@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -141,9 +140,9 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 1,
         titleEn = "Day 1: Chain Initiate",
-        titleFa = "روز ۱: اولین حلقه زنجیره (+۱ سکه)",
-        subtitleEn = "First 24 hours clean — the unbreakable chain begins (+1 Coin).",
-        subtitleFa = "۲۴ ساعت اول پاکی — اولین حلقه زنجیره ساخته شد (+۱ سکه).",
+        titleFa = "روز ۱: اولین حلقه زنجیره",
+        subtitleEn = "First 24 hours clean — the unbreakable chain begins.",
+        subtitleFa = "۲۴ ساعت اول پاکی — اولین حلقه زنجیره ساخته شد.",
         shareMottoEn = "Day 1 forged. Don't break the chain!",
         shareMottoFa = "حلقه اول ساخته شد. زنجیره را نشکن!",
         badgeColor = Color(0xFF38BDF8),
@@ -152,7 +151,7 @@ val STREAK_MILESTONES = listOf(
     StreakMilestone(
         days = 3,
         titleEn = "Day 3: Dopamine Spark",
-        titleFa = "روز ۳: جرقه بازسازی ذهن (+۳ سکه)",
+        titleFa = "روز ۳: جرقه بازسازی ذهن",
         subtitleEn = "Initial urge wave conquered; mental fog starting to lift.",
         subtitleFa = "عبور از موج اول وسوسه و شروع شفافیت ذهن.",
         shareMottoEn = "3 Days Clean. Surfing every urge without breaking the chain.",
@@ -249,7 +248,6 @@ fun NoBeepStreakScreen(
     val seconds = (TimeUnit.MILLISECONDS.toSeconds(elapsedMillis) % 60).toInt()
 
     val bestChainDays = maxOf(days, longestStreakDays, prefs?.getLongestStreakDays() ?: 0)
-    val coinsBalance = prefs?.getCoinsBalance() ?: 0
 
     val nextMilestone = STREAK_MILESTONES.firstOrNull { it.days > days } ?: STREAK_MILESTONES.last()
     val prevMilestoneDays = STREAK_MILESTONES.lastOrNull { it.days <= days }?.days ?: 0
@@ -303,45 +301,19 @@ fun NoBeepStreakScreen(
                 )
                 Text(
                     text = tr(
-                        "Earn +1 Coin per clean day • Best Chain: ${bestChainDays}d",
-                        "هر روز پاک +۱ سکه جایزه • بهترین زنجیره: $bestChainDays روز"
+                        "Best Chain: ${bestChainDays}d",
+                        "بهترین زنجیره: $bestChainDays روز"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
             }
 
-            // Coins Badge + Current Rank Badge
+            // Current Rank Badge
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = AmberWarning.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MonetizationOn,
-                            contentDescription = "Coins",
-                            tint = AmberWarning,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "$coinsBalance",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Black,
-                            color = AmberWarning
-                        )
-                    }
-                }
-
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = EmeraldShield.copy(alpha = 0.15f),
@@ -549,7 +521,7 @@ fun NoBeepStreakScreen(
             }
         }
 
-        // 4-Column Stats Row (Best Chain, Coins, Urges Beat, Resets)
+        // 3-Column Stats Row (Best Chain, Urges Beat, Resets)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -560,13 +532,6 @@ fun NoBeepStreakScreen(
                 value = "${bestChainDays}d",
                 accentColor = AmberWarning,
                 icon = Icons.Default.EmojiEvents
-            )
-            StatMiniCard(
-                modifier = Modifier.weight(1f),
-                title = tr("COINS", "سکه‌ها"),
-                value = "$coinsBalance",
-                accentColor = AmberWarning,
-                icon = Icons.Default.MonetizationOn
             )
             StatMiniCard(
                 modifier = Modifier.weight(1f),
@@ -779,12 +744,12 @@ fun NoBeepStreakScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = tr("Milestone Coin Reward:", "پاداش سکه این مرحله:"),
+                                text = tr("Clean days reached:", "روزهای پاک این مرحله:"),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = ObsidianTextSecondary
                             )
                             Text(
-                                text = "+${badge.days.coerceAtLeast(1)} 🪙",
+                                text = "${badge.day.coerceAtLeast(1)}",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Black,
                                 color = AmberWarning

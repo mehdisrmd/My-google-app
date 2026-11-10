@@ -20,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Card
@@ -165,7 +164,6 @@ fun WeeklyActivityCard(
 ) {
     val currentStreakDays = preferences.getStreakDays()
     val bestChainDays = preferences.getLongestStreakDays()
-    val coinsBalance = preferences.getCoinsBalance()
 
     val calendarNodes = remember(incidents, appLimits, usageRefreshTrigger, currentStreakDays) {
         val dayFmtEn = SimpleDateFormat("EEE", Locale.US)
@@ -286,37 +284,11 @@ fun WeeklyActivityCard(
                     }
                 }
 
-                // Coins + Best Chain Pill
+                // Best Chain Pill
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = AmberWarning.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MonetizationOn,
-                                contentDescription = null,
-                                tint = AmberWarning,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "$coinsBalance",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Black,
-                                color = AmberWarning
-                            )
-                        }
-                    }
-
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = EmeraldShield.copy(alpha = 0.14f),
@@ -531,8 +503,8 @@ fun WeeklyActivityCard(
 
                             val statusText = when (selectedNode.status) {
                                 CalendarDayStatus.CLEAN_STREAK_DAY -> tr(
-                                    "✓ Clean Day (+1 Coin)",
-                                    "✓ روز پاک (+۱ سکه)"
+                                    "✓ Clean Day",
+                                    "✓ روز پاک"
                                 )
                                 CalendarDayStatus.TODAY_IN_PROGRESS -> tr(
                                     "Today • In Progress (Day $currentStreakDays)",
@@ -576,7 +548,7 @@ fun WeeklyActivityCard(
             ) {
                 LegendDotItem(
                     color = StreakCleanGreen,
-                    label = tr("Clean Day (+1🪙)", "روز پاک (+۱ سکه)")
+                    label = tr("Clean Day", "روز پاک")
                 )
                 LegendDotItem(
                     color = StreakRelapseRed,

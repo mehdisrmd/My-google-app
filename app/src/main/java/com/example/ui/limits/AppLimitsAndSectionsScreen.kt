@@ -2,6 +2,7 @@ package com.example.ui.limits
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -813,7 +815,7 @@ fun AppLimitsList(
                                 color = if (isLimitExceeded) CrimsonPrimary else ObsidianTextSecondary
                             )
                             Text(
-                                text = if (isLimitExceeded) tr("TIME LIMIT EXCEEDED — LOCKED", "پایان زمان — قفل شد") else "${(progress * 100).toInt()}%",
+                                text = if (isLimitExceeded) tr("TIME LIMIT EXCEEDED — BLOCKED UNTIL MIDNIGHT", "پایان زمان — تا نیمه‌شب مسدود است") else "${(progress * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (isLimitExceeded) CrimsonPrimary else EmeraldShield
@@ -1393,6 +1395,35 @@ fun AddAppLimitDialog(
                         activeTrackColor = CrimsonPrimary
                     )
                 )
+
+                // Quick presets for the daily budget (Feature 5)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    listOf(15, 30, 60, 120, 240).forEach { presetMinutes ->
+                        val isPresetSelected = (limitHours * 60).toInt() == presetMinutes
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isPresetSelected) CrimsonPrimary else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { limitHours = presetMinutes / 60f }
+                                .testTag("app_limit_preset_$presetMinutes")
+                        ) {
+                            Text(
+                                text = if (presetMinutes < 60) "${presetMinutes}m" else "${presetMinutes / 60}h",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isPresetSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isPresetSelected) Color.White else ObsidianTextPrimary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {

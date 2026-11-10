@@ -88,6 +88,7 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.ui.theme.SeasonalMotifCanvas
 import com.example.ui.theme.SeasonalPalettes
 import com.example.ui.theme.SeasonalTheme
 import com.example.util.BackupManager
@@ -459,6 +460,22 @@ fun InfoAndUpdateScreen(
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Motif preview: SEE the season's element
+                            // (green leaves / sun / yellow autumn leaves /
+                            // snow) before choosing the theme.
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(paletteSet.bg)
+                            ) {
+                                SeasonalMotifCanvas(
+                                    theme = theme,
+                                    palette = paletteSet,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
                             // Two-tone season swatch: primary + shield accent
                             Row {
                                 Box(
@@ -623,8 +640,8 @@ fun InfoAndUpdateScreen(
                         )
                         Text(
                             text = tr(
-                                "Export or import your Clean Streak, Best Chain, Coins, Limits & Rules",
-                                "پشتیبان‌گیری و بازیابی روزهای پاک، بهترین زنجیره، سکه‌ها و قوانین"
+                                "Export or import your Clean Streak, Best Chain, Limits & Rules",
+                                "پشتیبان‌گیری و بازیابی روزهای پاک، بهترین زنجیره، محدودیت‌ها و قوانین"
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = ObsidianTextSecondary

@@ -48,7 +48,6 @@ import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Icon
@@ -304,7 +303,6 @@ fun MainContent(
     val isProtectionEnabled by preferences.isProtectionEnabled.collectAsStateWithLifecycle()
     val lockDurationMinutes by preferences.lockDurationMinutes.collectAsStateWithLifecycle()
     val strictModeEnabled by preferences.strictModeEnabled.collectAsStateWithLifecycle()
-    val coinsBalance by preferences.coinsBalance.collectAsStateWithLifecycle()
 
     val isBiometricLockEnabled by preferences.isBiometricLockEnabled.collectAsStateWithLifecycle()
     val isBlackoutPrivacyShieldEnabled by preferences.isBlackoutPrivacyShieldEnabled.collectAsStateWithLifecycle()
@@ -412,7 +410,6 @@ fun MainContent(
                 XBlockerCompactTopBar(
                     isDarkTheme = isDarkTheme,
                     isPersianLanguage = isPersianLanguage,
-                    coinsBalance = coinsBalance,
                     onToggleTheme = { preferences.setDarkTheme(!isDarkTheme) },
                     onToggleLanguage = { preferences.setPersianLanguage(!isPersianLanguage) }
                 )
@@ -851,7 +848,6 @@ fun MainContent(
 private fun XBlockerCompactTopBar(
     isDarkTheme: Boolean,
     isPersianLanguage: Boolean,
-    coinsBalance: Int,
     onToggleTheme: () -> Unit,
     onToggleLanguage: () -> Unit
 ) {
@@ -906,35 +902,6 @@ private fun XBlockerCompactTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Coins Badge (+1 Coin / Clean Day)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = AmberWarning.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
-                    modifier = Modifier.testTag("top_bar_coins_badge")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MonetizationOn,
-                            contentDescription = "Coins",
-                            tint = AmberWarning,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = "$coinsBalance",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 10.sp,
-                            color = AmberWarning
-                        )
-                    }
-                }
-
                 // Tiny Button 1: Persian RTL / English LTR Switch
                 Surface(
                     onClick = onToggleLanguage,

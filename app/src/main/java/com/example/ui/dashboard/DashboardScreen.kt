@@ -53,7 +53,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MonetizationOn
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
@@ -189,7 +188,6 @@ fun DashboardScreen(
     }
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
-    val coinsBalance by effectivePrefs.coinsBalance.collectAsStateWithLifecycle()
     val bestChainDays by effectivePrefs.longestStreakDays.collectAsStateWithLifecycle()
     val quizScorePercent by effectivePrefs.quizScorePercent.collectAsStateWithLifecycle()
     val quizSeverityEn by effectivePrefs.quizSeverityEn.collectAsStateWithLifecycle()
@@ -271,7 +269,7 @@ fun DashboardScreen(
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. Compact Material Design 3 Hero Card (Master Shield + Coins + Best Chain)
+        // 1. Compact Material Design 3 Hero Card (Master Shield + Best Chain)
         // Liquid Glass: translucent surface so the ambient glows shine through.
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
@@ -453,7 +451,7 @@ fun DashboardScreen(
                         }
                     }
 
-                    // Compact 4-Pill Telemetry Strip (Clean Streak, Best Chain, Coins, Active Rules)
+                    // Compact 3-Pill Telemetry Strip (Clean Streak, Best Chain, Active Rules)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -468,12 +466,6 @@ fun DashboardScreen(
                             label = tr("BEST", "بهترین"),
                             value = "${maxOf(streakDays, bestChainDays)}d",
                             color = CyanTelemetry,
-                            modifier = Modifier.weight(1f)
-                        )
-                        CompactMetricPill(
-                            label = tr("COINS", "سکه‌ها"),
-                            value = "$coinsBalance 🪙",
-                            color = AmberWarning,
                             modifier = Modifier.weight(1f)
                         )
                         CompactMetricPill(
@@ -781,8 +773,8 @@ fun DashboardScreen(
                 "محافظ ضدحذف برنامه و تنظیمات زمان قفل"
             ),
             subtitle = tr(
-                "Requires 20 Coins or Long Motivational Sentence to turn off",
-                "نیازمند ۲۰ سکه یا نوشتن جمله انگیزشی طولانی برای خاموش کردن"
+                "Requires the Long Motivational Sentence to turn off",
+                "نیازمند نوشتن جمله انگیزشی طولانی برای خاموش کردن"
             ),
             badgeText = if (isPreventUninstallEnabled) {
                 tr("Protected • ${lockDurationMinutes}m", "محافظت‌شده • ${lockDurationMinutes}m")
@@ -843,8 +835,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Blocks uninstalling X Blocker. Turning off requires 20 Coins or typing a long motivational sentence.",
-                                        "مانع از حذف ایکس بلاکر می‌شود. خاموش کردن نیازمند ۲۰ سکه یا نوشتن جمله انگیزشی طولانی است."
+                                        "Blocks uninstalling X Blocker. Turning off requires typing a long motivational sentence.",
+                                        "مانع از حذف ایکس بلاکر می‌شود. خاموش کردن نیازمند نوشتن جمله انگیزشی طولانی است."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1156,7 +1148,7 @@ fun DashboardScreen(
 
     val activeAntiTamperAction = pendingAntiTamperAction
     if (activeAntiTamperAction != null) {
-        MotivationOrCoinsUnlockGateDialog(
+        MotivationUnlockGateDialog(
             actionTitle = when (activeAntiTamperAction) {
                 PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> tr(
                     "Pause Master Shield Protection?",
@@ -1170,17 +1162,6 @@ fun DashboardScreen(
                     "Turn Off Prevent Uninstall?",
                     "خاموش کردن محافظ جلوگیری از حذف؟"
                 )
-            },
-            coinsBalance = coinsBalance,
-            onUnlockWithCoins = {
-                if (effectivePrefs.spendCoins(20)) {
-                    when (activeAntiTamperAction) {
-                        PendingAntiTamperAction.DISABLE_MASTER_SHIELD -> onToggleProtection(false)
-                        PendingAntiTamperAction.DISABLE_STRICT_MODE -> onToggleStrictMode(false)
-                        PendingAntiTamperAction.DISABLE_PREVENT_UNINSTALL -> effectivePrefs.setPreventUninstallEnabled(false)
-                    }
-                    pendingAntiTamperAction = null
-                }
             },
             onConfirmBySentence = {
                 when (activeAntiTamperAction) {
@@ -1563,15 +1544,14 @@ fun MiddleSectionBlockerCard(
 
 /**
  * Unlock Gate Dialog (Items 7 & 8, Confirmed by user):
- * Allows turning off Prevent Uninstall, Strict Mode, or Master Shield by EITHER:
- * 1. Spending 20 Coins (earned +1 coin per clean day), OR
- * 2. Typing a long motivational commitment sentence.
+ * Allows turning off Prevent Uninstall, Strict Mode, or Master Shield by
+ * typing a long motivational commitment sentence.
+ * (A former alternative — spending 20 coins — was removed together with
+ * the coin system at the owner's request; the sentence path is unchanged.)
  */
 @Composable
-private fun MotivationOrCoinsUnlockGateDialog(
+private fun MotivationUnlockGateDialog(
     actionTitle: String,
-    coinsBalance: Int,
-    onUnlockWithCoins: () -> Unit,
     onConfirmBySentence: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1582,7 +1562,6 @@ private fun MotivationOrCoinsUnlockGateDialog(
     val normalizedInput = typedPhrase.trim()
     val isMatched = normalizedInput.equals(longMotivationalSentence, ignoreCase = true) ||
         normalizedInput.equals(legacyShortPhrase, ignoreCase = true)
-    val hasEnoughCoins = coinsBalance >= 20
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1611,77 +1590,14 @@ private fun MotivationOrCoinsUnlockGateDialog(
             ) {
                 Text(
                     text = tr(
-                        "To turn off protection, you must either spend 20 Clean Coins OR type the long motivational sentence below:",
-                        "برای خاموش کردن این محافظ، باید ۲۰ سکه روزهای پاک خرج کنید یا جمله انگیزشی طولانی زیر را کامل بنویسید:"
+                        "To turn off protection, type the long motivational sentence below:",
+                        "برای خاموش کردن این محافظ، جمله انگیزشی طولانی زیر را کامل بنویسید:"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
 
-                // Option 1: Spend 20 Coins Card
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = AmberWarning.copy(alpha = 0.14f),
-                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.6f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MonetizationOn,
-                                contentDescription = null,
-                                tint = AmberWarning,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = tr(
-                                        "Your Balance: $coinsBalance / 20 Coins",
-                                        "موجودی شما: $coinsBalance از ۲۰ سکه"
-                                    ),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AmberWarning
-                                )
-                                Text(
-                                    text = tr("+1 Coin earned each Clean Day", "+۱ سکه به ازای هر روز پاک"),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
-                                    color = ObsidianTextSecondary
-                                )
-                            }
-                        }
-
-                        FilledTonalButton(
-                            onClick = onUnlockWithCoins,
-                            enabled = hasEnoughCoins,
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = AmberWarning,
-                                contentColor = Color.Black
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.testTag("unlock_with_20_coins_button")
-                        ) {
-                            Text(
-                                text = tr("Use 20 🪙", "خرج ۲۰ سکه"),
-                                fontWeight = FontWeight.Black,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
-
-                // Option 2: Type Long Motivational Sentence
+                // Type Long Motivational Sentence
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = ObsidianCard,

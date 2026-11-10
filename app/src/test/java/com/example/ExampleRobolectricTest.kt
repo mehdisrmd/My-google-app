@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
+import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.preferences.UninstallGuard
@@ -441,5 +442,56 @@ class ExampleRobolectricTest {
             CalendarDayStatus.PRE_INSTALL_GRAY,
             StreakDayClassifier.classify(today + 1, today, install, relapses)
         )
+    }
+
+    @Test
+    fun `grace recheck is consumed once so an expired block cannot resurrect`() {
+        val t0 = 1_000_000L
+        // First match: block WITH the "10 seconds free" button.
+        val first = KeywordGraceLogic.onKeywordMatch(KeywordGraceEpisode(), "badword", t0)
+        assertTrue(first is KeywordGraceLogic.MatchDecision.Block)
+        assertTrue((first as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+        // User taps the button: the free window opens exactly once.
+        val grace = KeywordGraceLogic.onGraceButtonTapped(first.episode, t0)
+        assertEquals(t0 + KeywordGraceLogic.GRACE_MILLIS, grace.graceUntilMs)
+        // Matches inside the window are suppressed.
+        val during = KeywordGraceLogic.onKeywordMatch(grace, "badword", t0 + 5_000L)
+        assertTrue(during is KeywordGraceLogic.MatchDecision.Suppress)
+        // The ticker's post-grace re-check consumes the pending re-check:
+        // it can never fire twice for the same grace window, which is what
+        // stops an expired re-block from resurrecting itself forever.
+        val consumed = KeywordGraceLogic.onGraceRecheckConsumed(grace)
+        assertEquals(0L, consumed.graceUntilMs)
+        assertTrue(consumed.graceUsed)
+        // A genuine later match still blocks, but WITHOUT the button.
+        val reblock = KeywordGraceLogic.onKeywordMatch(consumed, "badword", t0 + 60_000L)
+        assertTrue(reblock is KeywordGraceLogic.MatchDecision.Block)
+        assertFalse((reblock as KeywordGraceLogic.MatchDecision.Block).graceAvailable)
+        // Once the word is gone the episode closes completely.
+        val cleared = KeywordGraceLogic.onKeywordAbsent(consumed, t0 + 60_000L)
+        assertEquals("", cleared.word)
+        assertFalse(cleared.graceUsed)
+    }
+
+    @Test
+    fun `app limit budget and midnight reset math`() {
+        // Exceeded only when the limit is enabled, positive, and reached.
+        assertFalse(AppLimitBudget.isExceeded(29, 30, true))
+        assertTrue(AppLimitBudget.isExceeded(30, 30, true))
+        assertTrue(AppLimitBudget.isExceeded(45, 30, true))
+        assertFalse(AppLimitBudget.isExceeded(45, 30, false))
+        assertFalse(AppLimitBudget.isExceeded(45, 0, true))
+        // Remaining minutes floor at zero.
+        assertEquals(10, AppLimitBudget.remainingMinutes(20, 30))
+        assertEquals(0, AppLimitBudget.remainingMinutes(30, 30))
+        assertEquals(0, AppLimitBudget.remainingMinutes(50, 30))
+        // Midnight math (offset 0 = UTC): exactly midnight waits a full day.
+        assertEquals(86_400_000L, AppLimitBudget.millisUntilNextMidnight(0L, 0L))
+        assertEquals(1_000L, AppLimitBudget.millisUntilNextMidnight(86_399_000L, 0L))
+        // 01:00 local with a +1h offset: 23 hours remain.
+        assertEquals(82_800_000L, AppLimitBudget.millisUntilNextMidnight(0L, 3_600_000L))
+        assertEquals(1440, AppLimitBudget.minutesUntilNextMidnight(0L, 0L))
+        assertEquals(1, AppLimitBudget.minutesUntilNextMidnight(86_370_000L, 0L))
+        assertEquals(1380, AppLimitBudget.minutesUntilNextMidnight(0L, 3_600_000L))
     }
 }
