@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference
 class SafeRegexTest {
 
     /** Exponential-backtracking input for `(a+)+$`: many 'a's, then a character that breaks the match. */
-    private val catastrophicText = "a".repeat(40) + "b"
+    private val catastrophicText = "a".repeat(5000) + "b"
     private val catastrophicPattern = "(a+)+$"
 
     private fun compiled(pattern: String, ignoreCase: Boolean = true): Regex {
