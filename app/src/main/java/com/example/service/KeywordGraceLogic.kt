@@ -30,6 +30,7 @@ object KeywordGraceLogic {
     const val GRACE_MILLIS: Long = 10_000L
 
     sealed interface MatchDecision {
+
         val episode: KeywordGraceEpisode
 
         /** Show the blocker. [graceAvailable] = show the 10s-free button. */
@@ -47,6 +48,14 @@ object KeywordGraceLogic {
     /**
      * A scan found [word] on screen at [nowMs]. Returns the decision plus the
      * (possibly updated) episode to persist.
+     *
+     * When the free window has ended and the word is still there, this blocks
+     * WITHOUT the button AND consumes the window ([KeywordGraceEpisode
+     * .graceUntilMs] becomes 0). Without that, the accessibility ticker's
+     * post-grace re-check still saw an elapsed, unconsumed window and could
+     * mint a second re-block for the same grace window. The episode still
+     * remembers that grace was used, so every later block of this episode
+     * stays button-free.
      */
     fun onKeywordMatch(
         episode: KeywordGraceEpisode,
@@ -54,12 +63,16 @@ object KeywordGraceLogic {
         nowMs: Long
     ): MatchDecision {
         val current = if (episode.word == word) episode else KeywordGraceEpisode(word = word)
+
         return if (nowMs < current.graceUntilMs) {
             MatchDecision.Suppress(current)
         } else {
             val available = !current.graceUsed && !current.graceOffered
             MatchDecision.Block(
-                episode = current.copy(graceOffered = true),
+                episode = current.copy(
+                    graceOffered = true,
+                    graceUntilMs = if (current.graceUsed) 0L else current.graceUntilMs
+                ),
                 graceAvailable = available
             )
         }
@@ -82,6 +95,7 @@ object KeywordGraceLogic {
             episode
         }
     }
+
 
     /**
      * The user tapped "10 seconds free" on the block screen. Opens the free
@@ -115,6 +129,7 @@ object KeywordGraceLogic {
      * was used, so a genuine later match blocks WITHOUT the button, and
      * [onKeywordAbsent] closes the episode once the word is gone.
      */
+
     fun onGraceRecheckConsumed(
         episode: KeywordGraceEpisode
     ): KeywordGraceEpisode {

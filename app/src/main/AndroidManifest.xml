@@ -30,6 +30,7 @@
     </queries>
 
     <application
+
         android:name=".ShieldApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -62,6 +63,7 @@
             </intent-filter>
         </activity>
 
+
         <activity
             android:name=".ui.lockdown.LockdownActivity"
             android:exported="false"
@@ -83,11 +85,21 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!--
+            The 9:00 AM streak alarm lives only in AlarmManager, which forgets it on
+            reboot, app update, and (for the 9:00 wall-clock time) time-zone or clock
+            changes. All of these are protected system broadcasts, so an unexported
+            receiver still gets them and other apps cannot spoof them.
+        -->
         <receiver
             android:name=".notification.DailyStreakAlarmReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
             </intent-filter>
         </receiver>
 

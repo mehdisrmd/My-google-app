@@ -4,6 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.example.ShieldApplication
 import com.example.data.model.AppLimitBudget
@@ -15,6 +18,7 @@ import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.ui.lockdown.LockdownActivity
 import com.example.util.AppPackageResolver
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,10 +30,15 @@ import java.util.TimeZone
 class ShieldAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var repository: ShieldRepository
     private lateinit var preferences: ShieldPreferences
+
+    private val powerManager: PowerManager? by lazy {
+        getSystemService(PowerManager::class.java)
+    }
 
     @Volatile
     private var cachedKeywords: List<BlockedKeyword> = emptyList()
@@ -43,33 +52,70 @@ class ShieldAccessibilityService : AccessibilityService() {
     @Volatile
     private var cachedFocusSlots: List<FocusScheduleSlot> = emptyList()
 
+    // These three are written from both the main thread (accessibility
+    // events) and the IO ticker coroutine, so they must be volatile.
+    @Volatile
     private var lastScanTimestamp = 0L
+
+    @Volatile
     private var lastForegroundPackage: String = ""
+
+    @Volatile
     private var lastUsageTickTimestamp = 0L
+
+
+    // Guards "is a lock running? -> start one" so the ticker thread and the
+    // event thread can never both start a lock (which used to restart the
+    // timer and record the incident twice).
+    private val lockdownGate = Any()
+
+    @Volatile
+    private var lastOverlayLaunchMs = 0L
+
+    /**
+     * Runs [block] in the service scope and logs any failure instead of letting
+     * it escape. An uncaught exception inside a plain `launch` goes to the
+     * default handler and can crash the process or silently end the enforcement
+     * loop; both are unacceptable for a blocker.
+     */
+    private fun launchSafely(name: String, block: suspend () -> Unit) {
+        serviceScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "$name failed", e)
+            }
+        }
+    }
+
+    private fun isScreenInteractive(): Boolean = powerManager?.isInteractive != false
 
     override fun onCreate() {
         super.onCreate()
         val app = application as ShieldApplication
         repository = app.repository
+
         preferences = app.preferences
 
         // Keep active rules cached in memory for zero-latency scanning
-        serviceScope.launch {
+        launchSafely("keywords") {
             repository.allKeywords.collect { list ->
                 cachedKeywords = list.filter { it.isEnabled }
             }
         }
-        serviceScope.launch {
+        launchSafely("sectionRules") {
             repository.allSectionRules.collect { list ->
                 cachedSectionRules = list.filter { it.isEnabled }
             }
         }
-        serviceScope.launch {
+        launchSafely("appLimits") {
             repository.allAppUsageLimits.collect { list ->
                 cachedAppLimits = list.filter { it.isEnabled }
             }
         }
-        serviceScope.launch {
+        launchSafely("focusSlots") {
             repository.allFocusSlots.collect { list ->
                 cachedFocusSlots = list.filter { it.isEnabled }
             }
@@ -79,155 +125,184 @@ class ShieldAccessibilityService : AccessibilityService() {
         // 1. Active Lockdown Strict Screen Pinning (allows only X Blocker + temporary Call/SMS window)
         // 2. Real-time Per-App Daily Usage Limits
         // 3. Scheduled Smart Focus Auto-Activation
-        serviceScope.launch {
+        launchSafely("ticker") {
             while (true) {
                 delay(1000L)
-                val now = System.currentTimeMillis()
+                // One bad tick (a usage-stats query, a preference read, ...)
 
-                // 1. Check Smart Focus Schedules
-                if (preferences.getIsSmartFocusEnabled() && !preferences.isCurrentlyLocked()) {
-                    val activeMatch = com.example.ui.focus.SmartFocusEngine.checkAndFindActiveSlotToTrigger(
-                        slots = cachedFocusSlots,
-                        preferences = preferences
-                    )
-                    if (activeMatch != null) {
-                        val (slot, durationMins) = activeMatch
-                        preferences.markFocusSlotTriggeredToday(slot.id, now)
-                        triggerLockdown(
-                            triggerWord = "Smart Focus: ${slot.title}",
-                            sourceApp = "Scheduled Focus",
-                            customDurationMinutes = durationMins
+                // must never end enforcement for the rest of the session.
+                try {
+                    val now = System.currentTimeMillis()
+
+                    // 1. Check Smart Focus Schedules
+                    if (preferences.getIsSmartFocusEnabled() && !preferences.isCurrentlyLocked()) {
+                        val activeMatch = com.example.ui.focus.SmartFocusEngine.checkAndFindActiveSlotToTrigger(
+                            slots = cachedFocusSlots,
+                            preferences = preferences
                         )
-                    }
-                }
-
-                val rootNode = try {
-                    rootInActiveWindow
-                } catch (_: Exception) {
-                    null
-                }
-                val rootPkg = rootNode?.packageName?.toString().orEmpty()
-                val sysPkg = preferences.queryRecentForegroundPackageFromSystem().orEmpty()
-                val activePkg = when {
-                    rootPkg.isNotBlank() && !isIgnoredSystemUiPackage(rootPkg) -> rootPkg
-                    sysPkg.isNotBlank() && !isIgnoredSystemUiPackage(sysPkg) -> sysPkg
-                    else -> lastForegroundPackage
-                }
-
-                if (activePkg.isNotBlank()) {
-                    lastForegroundPackage = activePkg
-                }
-
-                // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
-                //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
-                if (preferences.isCurrentlyLocked()) {
-                    if (activePkg.isNotBlank() &&
-                        !preferences.isPackageAllowedDuringLockdown(activePkg)
-                    ) {
-                        launchLockdownOverlay(
-                            triggerWord = preferences.getActiveLockTrigger(),
-                            sourceApp = preferences.getActiveLockApp(),
-                            endTimeEpoch = preferences.getActiveLockEndTime()
-                        )
-                    }
-                    continue
-                }
-
-                // 2b. Uninstall Guard (ticker path): even between accessibility
-                //     events, cover Settings app-manager / package-uninstaller
-                //     screens that target X Blocker while the guard is armed.
-                if (rootNode != null && activePkg.isNotBlank() && isUninstallGuardArmed() &&
-                    TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, activePkg)
-                ) {
-                    triggerLockdown(
-                        triggerWord = "Prevent Uninstall Guard",
-                        sourceApp = "System Settings"
-                    )
-                    continue
-                }
-
-                if (!preferences.getIsProtectionEnabled()) continue
-
-                // 2c. Keyword Grace re-check: a 10-second free window just ended.
-                //     If the trigger word is still on screen, re-block WITHOUT
-                //     the grace button; if it is gone, close the episode so the
-                //     next appearance starts a fresh episode.
-                //     TWO loop guards (v0.4.9 regression — the endless 5:00
-                //     countdown): (1) never scan our OWN window — the block
-                //     screen itself prints the trigger word as the block
-                //     reason, so scanning it "finds" the word forever and
-                //     re-blocks after every expiry; (2) the re-check is
-                //     consumed the first time it runs, so it can fire at
-                //     most once per grace window, never once per expiry.
-                val graceEpisode = preferences.getKeywordGraceEpisode()
-                if (graceEpisode.word.isNotBlank() && graceEpisode.graceUsed &&
-                    graceEpisode.graceUntilMs > 0L && graceEpisode.graceUntilMs <= now &&
-                    rootNode != null && rootPkg.isNotBlank() && rootPkg != packageName
-                ) {
-                    val consumedEpisode = KeywordGraceLogic.onGraceRecheckConsumed(graceEpisode)
-                    preferences.saveKeywordGraceEpisode(consumedEpisode)
-                    val episodeKeyword = cachedKeywords.firstOrNull { it.text == graceEpisode.word }
-                    val stillPresent = episodeKeyword != null &&
-                        TextContentScanner.findMatchingKeyword(
-                            TextContentScanner.extractScreenText(rootNode),
-                            listOf(episodeKeyword)
-                        ) != null
-                    if (stillPresent) {
-                        triggerLockdown(
-                            triggerWord = graceEpisode.word,
-                            sourceApp = resolveReadableAppName(
-                                activePkg.ifBlank { lastForegroundPackage }
-                            ),
-                            graceAvailable = false
-                        )
-                    } else {
-                        preferences.saveKeywordGraceEpisode(
-                            KeywordGraceLogic.onKeywordAbsent(consumedEpisode, now)
-                        )
-                    }
-                }
-
-                // 3. Track Per-App Usage & Enforce Daily Limit
-                if (activePkg.isNotBlank() &&
-                    activePkg != packageName &&
-                    !isSystemLauncherOrKeyboard(activePkg)
-                ) {
-                    val elapsedSec = if (lastUsageTickTimestamp > 0L) {
-                        ((now - lastUsageTickTimestamp) / 1000L).toInt().coerceIn(1, 5)
-                    } else {
-                        1
-                    }
-                    lastUsageTickTimestamp = now
-                    preferences.addAppUsageSeconds(activePkg, elapsedSec)
-
-                    val matchedLimit = cachedAppLimits.firstOrNull { limit ->
-                        limit.isEnabled && AppPackageResolver.matchesAppLimit(
-                            limit = limit,
-                            candidatePackage = activePkg,
-                            context = this@ShieldAccessibilityService
-                        )
-                    }
-                    if (matchedLimit != null) {
-                        val usedMins = preferences.getTodayAppUsageMinutes(
-                            packageName = matchedLimit.packageName,
-                            appName = matchedLimit.appName
-                        )
-                        if (AppLimitBudget.isExceeded(usedMins, matchedLimit.dailyLimitMinutes, matchedLimit.isEnabled)) {
-                            // Per-app budget spent: the app stays blocked
-                            // until the daily window resets at midnight —
-                            // not for one short lock duration.
+                        if (activeMatch != null) {
+                            val (slot, durationMins) = activeMatch
+                            preferences.markFocusSlotTriggeredToday(slot.id, now)
                             triggerLockdown(
-                                triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
-                                sourceApp = matchedLimit.appName,
-                                customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
-                                    nowMs = now,
-                                    zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                                )
+                                triggerWord = "Smart Focus: ${slot.title}",
+                                sourceApp = "Scheduled Focus",
+                                customDurationMinutes = durationMins
                             )
                         }
                     }
-                } else {
-                    lastUsageTickTimestamp = now
+
+                    val rootNode = try {
+                        rootInActiveWindow
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val rootPkg = rootNode?.packageName?.toString().orEmpty()
+                    val sysPkg = preferences.queryRecentForegroundPackageFromSystem().orEmpty()
+                    val activePkg = when {
+                        rootPkg.isNotBlank() && !isIgnoredSystemUiPackage(rootPkg) -> rootPkg
+                        sysPkg.isNotBlank() && !isIgnoredSystemUiPackage(sysPkg) -> sysPkg
+                        else -> lastForegroundPackage
+
+                    }
+
+                    if (activePkg.isNotBlank()) {
+                        lastForegroundPackage = activePkg
+                    }
+
+                    // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
+                    //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
+                    if (preferences.isCurrentlyLocked()) {
+                        if (activePkg.isNotBlank() &&
+                            !preferences.isPackageAllowedDuringLockdown(activePkg)
+                        ) {
+                            launchLockdownOverlay(
+                                triggerWord = preferences.getActiveLockTrigger(),
+                                sourceApp = preferences.getActiveLockApp(),
+                                endTimeEpoch = preferences.getActiveLockEndTime()
+                            )
+                        }
+                        continue
+                    }
+
+                    // 2b. Uninstall Guard (ticker path): even between accessibility
+                    //     events, cover Settings app-manager / package-uninstaller
+                    //     screens that target X Blocker while the guard is armed.
+                    if (rootNode != null && activePkg.isNotBlank() && isUninstallGuardArmed() &&
+                        TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(
+                            rootNode,
+                            activePkg,
+                            packageName
+                        )
+                    ) {
+                        triggerLockdown(
+
+                            triggerWord = "Prevent Uninstall Guard",
+                            sourceApp = "System Settings"
+                        )
+                        continue
+                    }
+
+                    if (!preferences.getIsProtectionEnabled()) continue
+
+                    // 2c. Keyword Grace re-check: a 10-second free window just ended.
+                    //     If the trigger word is still on screen, re-block WITHOUT
+                    //     the grace button; if it is gone, close the episode so the
+                    //     next appearance starts a fresh episode.
+                    //     TWO loop guards (v0.4.9 regression — the endless 5:00
+                    //     countdown): (1) never scan our OWN window — the block
+                    //     screen itself prints the trigger word as the block
+                    //     reason, so scanning it "finds" the word forever and
+                    //     re-blocks after every expiry; (2) the re-check is
+                    //     consumed the first time it runs, so it can fire at
+                    //     most once per grace window, never once per expiry.
+                    //     THIRD guard: the re-check only runs against a real app
+                    //     window. If the notification shade or keyboard happens to
+                    //     be the active root on the tick the window ends, the
+                    //     word would look "gone", the episode would be cleared,
+                    //     and the one-time button would come back by mistake.
+                    val graceEpisode = preferences.getKeywordGraceEpisode()
+                    if (graceEpisode.word.isNotBlank() && graceEpisode.graceUsed &&
+                        graceEpisode.graceUntilMs > 0L && graceEpisode.graceUntilMs <= now &&
+                        rootNode != null && rootPkg.isNotBlank() && rootPkg != packageName &&
+                        !isIgnoredSystemUiPackage(rootPkg)
+                    ) {
+                        val consumedEpisode = KeywordGraceLogic.onGraceRecheckConsumed(graceEpisode)
+                        preferences.saveKeywordGraceEpisode(consumedEpisode)
+
+                        val episodeKeyword = cachedKeywords.firstOrNull { it.text == graceEpisode.word }
+                        val stillPresent = episodeKeyword != null &&
+                            TextContentScanner.findMatchingKeyword(
+                                TextContentScanner.extractScreenText(rootNode),
+                                listOf(episodeKeyword)
+                            ) != null
+                        if (stillPresent) {
+                            triggerLockdown(
+                                triggerWord = graceEpisode.word,
+                                sourceApp = resolveReadableAppName(
+                                    activePkg.ifBlank { lastForegroundPackage }
+                                ),
+                                graceAvailable = false
+                            )
+                        } else {
+                            preferences.saveKeywordGraceEpisode(
+                                KeywordGraceLogic.onKeywordAbsent(consumedEpisode, now)
+                            )
+                        }
+                    }
+
+                    // 3. Track Per-App Usage & Enforce Daily Limit
+                    //    Usage only accrues while the screen is on: with the
+                    //    screen off or the phone locked there is no foreground
+                    //    app in use, and counting the last one could trigger a
+                    //    daily-limit block the user never earned.
+                    if (activePkg.isNotBlank() &&
+                        activePkg != packageName &&
+                        !isSystemLauncherOrKeyboard(activePkg) &&
+                        isScreenInteractive()
+                    ) {
+                        val elapsedSec = if (lastUsageTickTimestamp > 0L) {
+
+                            ((now - lastUsageTickTimestamp) / 1000L).toInt().coerceIn(1, 5)
+                        } else {
+                            1
+                        }
+                        lastUsageTickTimestamp = now
+                        preferences.addAppUsageSeconds(activePkg, elapsedSec)
+
+                        val matchedLimit = cachedAppLimits.firstOrNull { limit ->
+                            limit.isEnabled && AppPackageResolver.matchesAppLimit(
+                                limit = limit,
+                                candidatePackage = activePkg,
+                                context = this@ShieldAccessibilityService
+                            )
+                        }
+                        if (matchedLimit != null) {
+                            val usedMins = preferences.getTodayAppUsageMinutes(
+                                packageName = matchedLimit.packageName,
+                                appName = matchedLimit.appName
+                            )
+                            if (AppLimitBudget.isExceeded(usedMins, matchedLimit.dailyLimitMinutes, matchedLimit.isEnabled)) {
+                                // Per-app budget spent: the app stays blocked
+                                // until the daily window resets at midnight —
+                                // not for one short lock duration.
+                                triggerLockdown(
+                                    triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
+                                    sourceApp = matchedLimit.appName,
+                                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
+                                        nowMs = now,
+                                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
+                                    )
+                                )
+                            }
+
+                        }
+                    } else {
+                        lastUsageTickTimestamp = now
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "Enforcement tick failed", e)
                 }
             }
         }
@@ -252,6 +327,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         if (preferences.isCurrentlyLocked()) {
             if (!isIgnoredSystemUiPackage(pkgName) &&
                 event.eventType != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
+
                 !preferences.isPackageAllowedDuringLockdown(pkgName)
             ) {
                 launchLockdownOverlay(
@@ -284,9 +360,10 @@ class ShieldAccessibilityService : AccessibilityService() {
         // 2. Prevent Uninstall Guard (Item 7 + Uninstall Delay feature):
         //    armed while the standalone toggle is ON or master protection is
         //    ON — but never after the 5-hour uninstall wait has elapsed,
+
         //    which is the owner's deliberate escape hatch.
         if (isUninstallGuardArmed()) {
-            if (TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, pkgName)) {
+            if (TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, pkgName, packageName)) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 triggerLockdown(
@@ -316,6 +393,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
         if (matchedLimit != null) {
             val usedMins = preferences.getTodayAppUsageMinutes(
+
                 packageName = matchedLimit.packageName,
                 appName = matchedLimit.appName
             )
@@ -348,6 +426,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                 serviceScope.launch {
                     repository.recordIncident(
                         matchedWord = "Section Blocked: ${matchedSectionRule.sectionName}",
+
                         sourceApp = appLabel,
                         durationMinutes = 0
                     )
@@ -380,6 +459,7 @@ class ShieldAccessibilityService : AccessibilityService() {
             val episode = preferences.getKeywordGraceEpisode()
             when (val decision = KeywordGraceLogic.onKeywordMatch(episode, matchedWord, now)) {
                 is KeywordGraceLogic.MatchDecision.Suppress -> {
+
                     preferences.saveKeywordGraceEpisode(decision.episode)
                 }
                 is KeywordGraceLogic.MatchDecision.Block -> {
@@ -411,19 +491,33 @@ class ShieldAccessibilityService : AccessibilityService() {
         graceAvailable: Boolean = false
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
-        val endTime = preferences.startLockdown(
-            durationMinutes = durationMinutes,
-            triggerWord = triggerWord,
-            sourceApp = sourceApp,
-            graceAvailable = graceAvailable
-        )
+        // Check-then-start must be one atomic step: the 1-second ticker (IO
+
+        // thread) and accessibility events (main thread) can both decide to
+        // block at the same moment. A running lock is never restarted, and its
+        // incident is not recorded a second time.
+        val endTime = synchronized(lockdownGate) {
+            if (preferences.isCurrentlyLocked()) return
+            preferences.startLockdown(
+                durationMinutes = durationMinutes,
+                triggerWord = triggerWord,
+                sourceApp = sourceApp,
+                graceAvailable = graceAvailable
+            )
+        }
 
         serviceScope.launch {
-            repository.recordIncident(
-                matchedWord = triggerWord,
-                sourceApp = sourceApp,
-                durationMinutes = durationMinutes
-            )
+            try {
+                repository.recordIncident(
+                    matchedWord = triggerWord,
+                    sourceApp = sourceApp,
+                    durationMinutes = durationMinutes
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "recordIncident failed", e)
+            }
         }
 
         performGlobalAction(GLOBAL_ACTION_BACK)
@@ -431,21 +525,40 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         launchLockdownOverlay(
             triggerWord = triggerWord,
+
             sourceApp = sourceApp,
-            endTimeEpoch = endTime
+            endTimeEpoch = endTime,
+            force = true
         )
     }
 
     private fun launchLockdownOverlay(
         triggerWord: String,
         sourceApp: String,
-        endTimeEpoch: Long
+        endTimeEpoch: Long,
+        force: Boolean = false
     ) {
+        // Enforcement paths call this on every accessibility event and every
+        // tick while the user sits in a non-allowed app. Without a limit that
+        // floods the main thread with startActivity calls. A fresh block
+        // (force = true) is never throttled.
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (!force && nowElapsed - lastOverlayLaunchMs < OVERLAY_RELAUNCH_MIN_INTERVAL_MS) return
+        lastOverlayLaunchMs = nowElapsed
+
         mainHandler.post {
+            // This runnable was queued some time ago. The lock may have ended
+            // since then: the timer reached zero, or the user tapped the
+            // one-time "10 seconds free" button, which clears the lock. Ask
+            // the stored lock state now, not the end time captured when the
+            // runnable was queued, so an expired block can never reappear.
+            if (!preferences.isCurrentlyLocked()) return@post
+
             val lockIntent = Intent(this, LockdownActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
+
                         Intent.FLAG_ACTIVITY_SINGLE_TOP or
                         Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 )
@@ -455,7 +568,8 @@ class ShieldAccessibilityService : AccessibilityService() {
             }
             try {
                 startActivity(lockIntent)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start LockdownActivity", e)
             }
         }
     }
@@ -477,6 +591,7 @@ class ShieldAccessibilityService : AccessibilityService() {
             lower.contains("keyboard") ||
             lower == "android"
     }
+
 
     private fun isSystemLauncherOrKeyboard(pkgName: String): Boolean {
         val lower = pkgName.lowercase()
@@ -505,6 +620,14 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Drop any queued block-screen relaunches along with the coroutines.
+        mainHandler.removeCallbacksAndMessages(null)
         serviceScope.cancel()
+    }
+
+
+    private companion object {
+        const val TAG = "ShieldA11y"
+        const val OVERLAY_RELAUNCH_MIN_INTERVAL_MS = 400L
     }
 }

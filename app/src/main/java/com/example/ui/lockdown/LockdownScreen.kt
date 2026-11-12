@@ -71,11 +71,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ShieldApplication
@@ -93,7 +95,6 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import kotlinx.coroutines.delay
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 @Composable
@@ -116,7 +117,7 @@ fun LockdownScreen(
 
     var remainingMillis by remember(endTimeEpoch) {
         mutableLongStateOf(
-            (endTimeEpoch - System.currentTimeMillis()).coerceAtLeast(0L)
+            LockdownTimeLogic.remainingMs(endTimeEpoch, System.currentTimeMillis())
         )
     }
 
@@ -125,17 +126,20 @@ fun LockdownScreen(
 
     val totalDurationMillis = remember(totalDurationMinutes) {
         TimeUnit.MINUTES.toMillis(totalDurationMinutes.coerceAtLeast(1).toLong())
+
     }
 
+    // The last wait is shortened to the time actually left, so the loop wakes
+    // up exactly when the timer reaches zero instead of up to half a second
+    // later.
     LaunchedEffect(endTimeEpoch) {
         while (true) {
-            val now = System.currentTimeMillis()
-            val left = (endTimeEpoch - now).coerceAtLeast(0L)
+            val left = LockdownTimeLogic.remainingMs(endTimeEpoch, System.currentTimeMillis())
             remainingMillis = left
             if (left <= 0L) {
                 break
             }
-            delay(500L)
+            delay(LockdownTimeLogic.nextDelayMs(left))
         }
     }
 
@@ -163,6 +167,18 @@ fun LockdownScreen(
         label = "pulse_scale"
     )
 
+    // The mid-gradient tint comes from the theme tokens, so it follows the
+    // selected season and the light/dark mode. A fixed dark-crimson literal
+    // here looked wrong on every light palette.
+    val gradientMid = CrimsonPrimary.copy(alpha = 0.07f).compositeOver(ObsidianBg)
+
+    val triggerText = if (triggerWord.isEmpty()) {
+        tr("Protected Content", "محتوای محافظت‌شده")
+    } else {
+        triggerWord
+    }
+    val sourceText = if (sourceApp.isEmpty()) tr("System", "سیستم") else sourceApp
+
     Surface(
         modifier = modifier
             .fillMaxSize()
@@ -176,7 +192,7 @@ fun LockdownScreen(
                     Brush.verticalGradient(
                         colors = listOf(
                             ObsidianBg,
-                            Color(0xFF160B12),
+                            gradientMid,
                             ObsidianBg
                         )
                     )
@@ -211,7 +227,7 @@ fun LockdownScreen(
                 ) {
                     Icon(
                         imageVector = if (isFinished) Icons.Default.CheckCircle else Icons.Default.Shield,
-                        contentDescription = "Shield Status",
+                        contentDescription = tr("Shield status", "وضعیت محافظ"),
                         tint = if (isFinished) EmeraldShield else CrimsonPrimary,
                         modifier = Modifier.size(40.dp)
                     )
@@ -288,9 +304,9 @@ fun LockdownScreen(
                                 color = EmeraldShield
                             )
                         } else {
-                            val minutes = TimeUnit.MILLISECONDS.toMinutes(remainingMillis)
-                            val seconds = TimeUnit.MILLISECONDS.toSeconds(remainingMillis) % 60
-                            val timeStr = String.format(Locale.ROOT, "%02d:%02d", minutes, seconds)
+                            // Rounded UP to the next whole second, so "00:00"
+                            // only ever means the block is over.
+                            val timeStr = LockdownTimeLogic.formatCountdown(remainingMillis)
 
                             Text(
                                 text = timeStr,
@@ -390,7 +406,7 @@ fun LockdownScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Call,
-                                    contentDescription = "Phone Call",
+                                    contentDescription = tr("Phone call", "تماس تلفنی"),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -458,7 +474,7 @@ fun LockdownScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Sms,
-                                    contentDescription = "Text Message",
+                                    contentDescription = tr("Text message", "پیامک"),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -554,41 +570,57 @@ fun LockdownScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
+                        // Label and value share the row by weight and the value
+                        // may wrap, so a long trigger such as "Daily Limit (30m):
+                        // <app name>" no longer squeezes its own label. Start/End
+                        // alignment mirrors correctly in the Persian (RTL) layout.
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top
                         ) {
                             Text(
                                 text = tr("Trigger reason:", "دلیل فعال‌سازی:"),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = ObsidianTextSecondary
+                                color = ObsidianTextSecondary,
+                                modifier = Modifier.weight(0.42f)
                             )
                             Text(
-                                text = triggerWord.ifEmpty { "Protected Content" },
+                                text = triggerText,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
-                                color = CrimsonPrimary
+                                color = CrimsonPrimary,
+                                textAlign = TextAlign.End,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(0.58f)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.Top
                         ) {
                             Text(
                                 text = tr("Source / Duration:", "منبع / مدت قفل:"),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = ObsidianTextSecondary
+                                color = ObsidianTextSecondary,
+                                modifier = Modifier.weight(0.42f)
                             )
                             Text(
-                                text = "${sourceApp.ifEmpty { "System" }} • $totalDurationMinutes min",
+                                text = "$sourceText • $totalDurationMinutes ${tr("min", "دقیقه")}",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = ObsidianTextPrimary
+                                color = ObsidianTextPrimary,
+                                textAlign = TextAlign.End,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(0.58f)
                             )
                         }
                     }
