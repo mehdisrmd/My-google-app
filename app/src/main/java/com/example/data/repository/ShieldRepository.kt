@@ -57,8 +57,13 @@ class ShieldRepository(
     }
 
     suspend fun seedDefaultKeywordsIfNeeded() {
-        if (dao.getKeywordCount() == 0) {
-            dao.insertKeywords(DefaultKeywords.getPreloadedKeywords())
+        val existingPairs = dao.getAllKeywordsSync()
+            .map { it.text to it.category }
+            .toSet()
+        val missing = DefaultKeywords.getPreloadedKeywords()
+            .filter { (it.text to it.category) !in existingPairs }
+        if (missing.isNotEmpty()) {
+            dao.insertKeywords(missing)
         }
     }
 
