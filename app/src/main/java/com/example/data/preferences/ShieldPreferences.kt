@@ -18,6 +18,7 @@ import com.example.service.KeywordGraceEpisode
 import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
 import com.example.ui.theme.SeasonalTheme
+import com.example.util.DayMath
 import com.example.widget.StreakWidgetProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,7 @@ class ShieldPreferences(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("shield_block_prefs", Context.MODE_PRIVATE)
 
+
     init {
         val now = System.currentTimeMillis()
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
@@ -38,7 +40,17 @@ class ShieldPreferences(private val context: Context) {
                 "I am reclaiming my focus, energy, and self-respect. A 5-minute urge is never worth trading my clean streak."
             val preservedDark = prefs.getBoolean(KEY_IS_DARK_THEME, true)
             val preservedPersian = prefs.getBoolean(KEY_IS_PERSIAN_LANGUAGE, false)
-            prefs.edit()
+            // The seasonal theme and the quiz result are the user's own
+            // choices/results, not protection state. The manual reset
+            // (resetAllPreferencesToFreshScratch) already keeps them; this
+            // first-run wipe used to silently drop them.
+            val preservedSeasonal = prefs.getString(KEY_SEASONAL_THEME, null)
+            val hadQuiz = prefs.contains(KEY_HAS_COMPLETED_QUIZ)
+            val preservedQuizDone = prefs.getBoolean(KEY_HAS_COMPLETED_QUIZ, false)
+            val preservedQuizScore = prefs.getInt(KEY_QUIZ_SCORE_PERCENT, -1)
+            val preservedQuizSevEn = prefs.getString(KEY_QUIZ_SEVERITY_EN, null)
+            val preservedQuizSevFa = prefs.getString(KEY_QUIZ_SEVERITY_FA, null)
+            val wipe = prefs.edit()
                 .clear()
                 .putBoolean(KEY_FRESH_SCRATCH_V4_INIT, true)
                 .putBoolean(KEY_V04_DEFAULTS_MIGRATED, true)
@@ -51,6 +63,7 @@ class ShieldPreferences(private val context: Context) {
                 .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
                 .putLong(KEY_STREAK_START_TIME, now)
                 .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
+
                 .putInt(KEY_LONGEST_STREAK, 0)
                 .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
                 .putInt(KEY_SLIPS_COUNT, 0)
@@ -66,7 +79,16 @@ class ShieldPreferences(private val context: Context) {
                 .putBoolean(KEY_IS_PERSIAN_LANGUAGE, preservedPersian)
                 .putString(KEY_GITHUB_REPO_SLUG, DEFAULT_GITHUB_REPO)
                 .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
-                .apply()
+            if (preservedSeasonal != null) {
+                wipe.putString(KEY_SEASONAL_THEME, preservedSeasonal)
+            }
+            if (hadQuiz) {
+                wipe.putBoolean(KEY_HAS_COMPLETED_QUIZ, preservedQuizDone)
+                    .putInt(KEY_QUIZ_SCORE_PERCENT, preservedQuizScore)
+                if (preservedQuizSevEn != null) wipe.putString(KEY_QUIZ_SEVERITY_EN, preservedQuizSevEn)
+                if (preservedQuizSevFa != null) wipe.putString(KEY_QUIZ_SEVERITY_FA, preservedQuizSevFa)
+            }
+            wipe.apply()
         } else {
             val editor = prefs.edit()
             var needsApply = false
@@ -74,6 +96,7 @@ class ShieldPreferences(private val context: Context) {
                 editor.putBoolean(KEY_V04_DEFAULTS_MIGRATED, true)
                 editor.putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
                 if (!prefs.contains(KEY_FIRST_INSTALL_EPOCH_DAY)) {
+
                     editor.putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
                 }
                 needsApply = true
@@ -106,6 +129,7 @@ class ShieldPreferences(private val context: Context) {
     val lockDurationMinutes: StateFlow<Int> = _lockDurationMinutes.asStateFlow()
 
     private val _strictModeEnabled = MutableStateFlow(getStrictModeEnabled())
+
     val strictModeEnabled: StateFlow<Boolean> = _strictModeEnabled.asStateFlow()
 
     private val _isPreventUninstallEnabled = MutableStateFlow(getIsPreventUninstallEnabled())
@@ -139,6 +163,7 @@ class ShieldPreferences(private val context: Context) {
     private val _isBiometricLockEnabled = MutableStateFlow(getIsBiometricLockEnabled())
     val isBiometricLockEnabled: StateFlow<Boolean> = _isBiometricLockEnabled.asStateFlow()
 
+
     private val _securityPinCode = MutableStateFlow(getSecurityPinCode())
     val securityPinCode: StateFlow<String> = _securityPinCode.asStateFlow()
 
@@ -170,6 +195,7 @@ class ShieldPreferences(private val context: Context) {
 
     // Seasonal Theme palette selection (stored as the enum name)
     private val _seasonalThemeName = MutableStateFlow(getSeasonalTheme().name)
+
     val seasonalThemeName: StateFlow<String> = _seasonalThemeName.asStateFlow()
 
     // Section Blocker Mode: false = Show Full Block Page (Default for v0.4), true = Exit Only
@@ -201,6 +227,7 @@ class ShieldPreferences(private val context: Context) {
     fun getIsPersianLanguage(): Boolean {
         return prefs.getBoolean(KEY_IS_PERSIAN_LANGUAGE, false)
     }
+
 
     fun setPersianLanguage(persian: Boolean) {
         prefs.edit().putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian).apply()
@@ -234,6 +261,7 @@ class ShieldPreferences(private val context: Context) {
 
     private fun normalizeGithubSlug(input: String): String {
         val trimmed = input.trim()
+
             .removePrefix("https://www.github.com/")
             .removePrefix("http://www.github.com/")
             .removePrefix("https://github.com/")
@@ -266,6 +294,7 @@ class ShieldPreferences(private val context: Context) {
             put("securityPinCode", getSecurityPinCode())
             put("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
             put("isSmartFocusEnabled", getIsSmartFocusEnabled())
+
             put("isDarkTheme", getIsDarkTheme())
             put("isPersianLanguage", getIsPersianLanguage())
             put("seasonalTheme", getSeasonalTheme().name)
@@ -278,7 +307,17 @@ class ShieldPreferences(private val context: Context) {
         }
     }
 
+    /**
+     * True when settings may be imported or reset right now. Both rewrite the
+     * protection flags, the PIN and the active lock, so they are refused while
+     * a lock is running: otherwise a backup file (or a reset) would be a way
+     * to switch protection off in the middle of a block. UI code should check
+     * this first and show a message instead of calling the method.
+     */
+    fun canResetOrImport(): Boolean = !isCurrentlyLocked()
+
     fun importPreferencesFromJson(json: org.json.JSONObject) {
+        if (!canResetOrImport()) return
         val now = System.currentTimeMillis()
         val prot = json.optBoolean("isProtectionEnabled", getIsProtectionEnabled())
         val dur = json.optInt("lockDurationMinutes", getLockDurationMinutes()).coerceIn(1, 1440)
@@ -288,6 +327,7 @@ class ShieldPreferences(private val context: Context) {
         // system was removed at the owner's request, so it is ignored here.
         val firstInstallDay = json.optLong("firstInstallEpochDay", getFirstInstallEpochDay())
         val streakStart = json.optLong("streakStartTimestamp", getStreakStartTimestamp()).takeIf { it > 0L } ?: now
+
         val longest = json.optInt("longestStreakDays", getLongestStreakDays()).coerceAtLeast(0)
         val slips = json.optInt("slipsCount", getSlipsCount()).coerceAtLeast(0)
         val slipReason = json.optString("lastSlipReason", getLastSlipReason())
@@ -320,6 +360,7 @@ class ShieldPreferences(private val context: Context) {
             .putInt(KEY_SLIPS_COUNT, slips)
             .putString(KEY_LAST_SLIP_REASON, slipReason)
             .putInt(KEY_URGES_DEFEATED_COUNT, urges)
+
             .putString(KEY_PERSONAL_PLEDGE, pledge)
             .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, bio)
             .putString(KEY_SECURITY_PIN_CODE, pin)
@@ -352,6 +393,7 @@ class ShieldPreferences(private val context: Context) {
         _isSmartFocusEnabled.value = focus
         _isDarkTheme.value = dark
         _isPersianLanguage.value = persian
+
         _seasonalThemeName.value = seasonalTheme.name
         _githubRepoSlug.value = repo
         _isSectionExitOnlyMode.value = exitOnly
@@ -378,10 +420,13 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun setProtectionEnabled(enabled: Boolean) {
+        // Protection can never be switched off in the middle of a running lock.
+        if (!enabled && isCurrentlyLocked()) return
         val editor = prefs.edit().putBoolean(KEY_PROTECTION_ENABLED, enabled)
         if (enabled) {
             // Re-arming the shield consumes any pending/elapsed uninstall
             // unlock: switching protection off again needs a fresh 5h wait.
+
             editor.putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, 0L)
             _uninstallUnlockDeadline.value = 0L
         }
@@ -414,6 +459,9 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun setPreventUninstallEnabled(enabled: Boolean) {
+
+        // Same rule as setProtectionEnabled: not while a lock is running.
+        if (!enabled && isCurrentlyLocked()) return
         prefs.edit().putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, enabled).apply()
         _isPreventUninstallEnabled.value = enabled
     }
@@ -444,6 +492,7 @@ class ShieldPreferences(private val context: Context) {
     fun isUninstallUnlocked(nowMs: Long = System.currentTimeMillis()): Boolean {
         return UninstallGuard.isUnlocked(getUninstallUnlockDeadline(), nowMs)
     }
+
 
     /** Master protection may be switched OFF only after the wait elapsed. */
     fun canDisableProtection(nowMs: Long = System.currentTimeMillis()): Boolean {
@@ -476,6 +525,7 @@ class ShieldPreferences(private val context: Context) {
         val lastNotifiedDay = prefs.getInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
         if (currentStreakDays >= 1 && currentStreakDays > lastNotifiedDay) {
             prefs.edit().putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, currentStreakDays).apply()
+
             return currentStreakDays
         }
         return 0
@@ -508,6 +558,7 @@ class ShieldPreferences(private val context: Context) {
     fun getRelapseEpochDaysInRange(fromEpochDay: Long, toEpochDay: Long): Set<Long> {
         if (toEpochDay < fromEpochDay) return emptySet()
         val result = mutableSetOf<Long>()
+
         var day = fromEpochDay
         while (day <= toEpochDay) {
             if (prefs.getBoolean("relapse_day_$day", false)) {
@@ -540,6 +591,7 @@ class ShieldPreferences(private val context: Context) {
         severityEn: String,
         severityFa: String
     ) {
+
         val safeScore = scorePercent.coerceIn(0, 100)
         prefs.edit()
             .putBoolean(KEY_HAS_COMPLETED_QUIZ, true)
@@ -569,8 +621,10 @@ class ShieldPreferences(private val context: Context) {
      * whole episode too — a long call or a careful message session must
      * never be cut short by the guard's old fixed 120-second window.
      */
+    @Synchronized
     fun grantCallOrSmsAccessForCurrentLock() {
         val now = System.currentTimeMillis()
+
         val until = maxOf(
             prefs.getLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L),
             now + 120_000L,
@@ -603,6 +657,7 @@ class ShieldPreferences(private val context: Context) {
             tm?.defaultDialerPackage?.lowercase()
         }.getOrNull()
 
+
         val isDialerOrSmsPkg = knownDialerOrSmsMarkers.any { pkgLower.contains(it) } ||
             (defaultSmsPkg != null && pkgLower == defaultSmsPkg) ||
             (defaultDialerPkg != null && pkgLower == defaultDialerPkg)
@@ -612,7 +667,16 @@ class ShieldPreferences(private val context: Context) {
         // in-call packages) are never overlay-blocked while a block is active.
         // (Previously they were only allowed inside a short 120s window after
         // tapping the block screen's Call/SMS buttons.)
-        return isDialerOrSmsPkg
+        if (isDialerOrSmsPkg) return true
+
+        // The screens those apps open on the way: the contacts picker, the
+        // photo / file picker for a message attachment, permission prompts
+        // and the emergency-information screen. Without them, tapping "choose
+        // contact" or "attach photo" would hand the screen back to the block
+        // page in the middle of writing a message. They are only allowed while
+        // the user's Call/SMS window (opened by the block screen's buttons) is
+        // active, so they cannot be used as a way around the block.
+        return pkgLower in COMM_HELPER_PACKAGES && hasActiveEmergencyCommWindow()
     }
 
     /**
@@ -620,10 +684,14 @@ class ShieldPreferences(private val context: Context) {
      * window is open. LockdownActivity uses this — not the package check
      * above — to decide whether leaving the block screen is a deliberate
      * trip to the dialer/messages or an attempt to escape the lock.
+     *
+     * The window is open strictly BEFORE its end time, the same boundary
+     * [isCurrentlyLocked] uses for the lock itself.
      */
     fun hasActiveEmergencyCommWindow(nowMs: Long = System.currentTimeMillis()): Boolean {
         val whitelistUntil = prefs.getLong(KEY_EMERGENCY_COMM_WHITELIST_UNTIL, 0L)
-        return nowMs <= whitelistUntil
+
+        return nowMs < whitelistUntil
     }
 
     // Biometric Lodge Methods
@@ -654,6 +722,7 @@ class ShieldPreferences(private val context: Context) {
     fun getIsBlackoutPrivacyShieldEnabled(): Boolean {
         return prefs.getBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
     }
+
 
     fun setBlackoutPrivacyShieldEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, enabled).apply()
@@ -687,6 +756,7 @@ class ShieldPreferences(private val context: Context) {
         return prefs.getBoolean(KEY_SMART_FOCUS_ENABLED, false)
     }
 
+
     fun setSmartFocusEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SMART_FOCUS_ENABLED, enabled).apply()
         _isSmartFocusEnabled.value = enabled
@@ -696,7 +766,9 @@ class ShieldPreferences(private val context: Context) {
         slotId: Long,
         nowMs: Long = System.currentTimeMillis()
     ): Boolean {
-        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(nowMs)
+        // Local calendar day, so a slot's "already triggered today" flag flips
+        // at the user's midnight, not at UTC midnight.
+        val todayEpochDay = DayMath.localEpochDay(nowMs)
         val lastTriggeredDay = prefs.getLong("focus_slot_triggered_day_$slotId", -1L)
         return lastTriggeredDay == todayEpochDay
     }
@@ -705,7 +777,7 @@ class ShieldPreferences(private val context: Context) {
         slotId: Long,
         nowMs: Long = System.currentTimeMillis()
     ) {
-        val todayEpochDay = TimeUnit.MILLISECONDS.toDays(nowMs)
+        val todayEpochDay = DayMath.localEpochDay(nowMs)
         prefs.edit().putLong("focus_slot_triggered_day_$slotId", todayEpochDay).apply()
     }
 
@@ -717,6 +789,7 @@ class ShieldPreferences(private val context: Context) {
         return prefs.getInt(KEY_ACTIVE_LOCK_DURATION, 5)
     }
 
+
     fun getActiveLockTrigger(): String {
         return prefs.getString(KEY_ACTIVE_LOCK_TRIGGER, "Explicit Content") ?: "Explicit Content"
     }
@@ -725,25 +798,41 @@ class ShieldPreferences(private val context: Context) {
         return prefs.getString(KEY_ACTIVE_LOCK_APP, "Browser") ?: "Browser"
     }
 
+    /**
+     * Starts a lock and returns its end time.
+     *
+     * A lock that is still running is NEVER restarted, shortened or extended:
+     * the existing end time is returned unchanged and nothing is written. A
+     * timed block must end exactly when its own timer reaches zero, and a
+     * second trigger (the 1-second ticker, an accessibility event, a focus
+     * slot) used to overwrite the end time and restart the countdown.
+     */
+    @Synchronized
     fun startLockdown(
         durationMinutes: Int,
         triggerWord: String,
         sourceApp: String,
         graceAvailable: Boolean = false
     ): Long {
-        val endTime = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(durationMinutes.toLong())
+        val now = System.currentTimeMillis()
+        val existingEnd = getActiveLockEndTime()
+        if (existingEnd > now) return existingEnd
+
+        val endTime = now + TimeUnit.MINUTES.toMillis(durationMinutes.toLong())
         prefs.edit()
             .putLong(KEY_ACTIVE_LOCK_END_TIME, endTime)
             .putInt(KEY_ACTIVE_LOCK_DURATION, durationMinutes)
+
             .putString(KEY_ACTIVE_LOCK_TRIGGER, triggerWord)
             .putString(KEY_ACTIVE_LOCK_APP, sourceApp)
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, graceAvailable)
-            .putLong(KEY_LAST_INCIDENT_TIME, System.currentTimeMillis())
+            .putLong(KEY_LAST_INCIDENT_TIME, now)
             .apply()
         _activeLockEndTime.value = endTime
         return endTime
     }
 
+    @Synchronized
     fun clearLockdown() {
         prefs.edit()
             .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
@@ -766,6 +855,7 @@ class ShieldPreferences(private val context: Context) {
     fun getKeywordGraceEpisode(): KeywordGraceEpisode {
         return KeywordGraceEpisode(
             word = prefs.getString(KEY_GRACE_EPISODE_WORD, "") ?: "",
+
             graceOffered = prefs.getBoolean(KEY_GRACE_EPISODE_OFFERED, false),
             graceUsed = prefs.getBoolean(KEY_GRACE_EPISODE_USED, false),
             graceUntilMs = prefs.getLong(KEY_KEYWORD_GRACE_UNTIL, 0L)
@@ -787,10 +877,18 @@ class ShieldPreferences(private val context: Context) {
      * end the current lockdown so the block screen dismisses immediately.
      * After the window, the accessibility service re-checks the screen: if
      * the trigger word is still there it re-blocks WITHOUT the grace button.
+     *
+     * Only valid while a lock that actually offers the grace is running. A
+     * stale or repeated tap (the lock already ended, or it was a lock without
+     * the button) changes nothing, so it can neither open a free window out
+     * of nowhere nor clear someone else's lock.
      */
+    @Synchronized
     fun beginKeywordGracePeriod(nowMs: Long = System.currentTimeMillis()) {
+        if (!isCurrentlyLocked() || !getActiveLockGraceAvailable()) return
         val episode = getKeywordGraceEpisode()
         val updated = KeywordGraceLogic.onGraceButtonTapped(episode, nowMs)
+
         saveKeywordGraceEpisode(updated)
         clearLockdown()
     }
@@ -823,6 +921,7 @@ class ShieldPreferences(private val context: Context) {
 
     fun getLongestStreakDays(): Int {
         val currentDays = getStreakDays()
+
         val recordedBest = prefs.getInt(KEY_LONGEST_STREAK, 0)
         val best = maxOf(currentDays, recordedBest)
         if (best > recordedBest) {
@@ -843,6 +942,7 @@ class ShieldPreferences(private val context: Context) {
         return prefs.getInt(KEY_URGES_DEFEATED_COUNT, 0)
     }
 
+    @Synchronized
     fun incrementUrgesDefeated(): Int {
         val updated = getUrgesDefeatedCount() + 1
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
@@ -854,6 +954,7 @@ class ShieldPreferences(private val context: Context) {
             .apply()
         _urgesDefeatedCount.value = updated
         _usageRefreshTrigger.value = System.currentTimeMillis()
+
         return updated
     }
 
@@ -877,6 +978,7 @@ class ShieldPreferences(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun resetStreak(reason: String = "") {
         val currentDays = getStreakDays()
         val best = prefs.getInt(KEY_LONGEST_STREAK, 0)
@@ -884,6 +986,7 @@ class ShieldPreferences(private val context: Context) {
         val slips = prefs.getInt(KEY_SLIPS_COUNT, 0) + 1
         val now = System.currentTimeMillis()
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
+
 
         prefs.edit()
             .putInt(KEY_LONGEST_STREAK, newBest)
@@ -904,24 +1007,30 @@ class ShieldPreferences(private val context: Context) {
     }
 
     // Daily App Usage Tracking
+    //
+    // "Today" for usage counters is the LOCAL calendar day (DayMath), the same
+    // day AppLimitBudget uses to end a daily-limit block at local midnight.
+    // With UTC day keys the counter reset hours away from that midnight, which
+    // could re-lock an app for another ~24 hours right after a block ended.
     private fun getTodaySecondsKey(packageName: String): String {
-        val todayDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+        val todayDay = DayMath.localEpochDay()
         return "usage_sec_${todayDay}_$packageName"
     }
 
     private fun getTodayMinutesLegacyKey(packageName: String): String {
-        val todayDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+        val todayDay = DayMath.localEpochDay()
         return "usage_${todayDay}_$packageName"
+
     }
 
     private fun getTodaySystemBaselineKey(packageName: String): String {
-        val todayDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+        val todayDay = DayMath.localEpochDay()
         return "usage_sys_base_${todayDay}_$packageName"
     }
 
     fun getDayAppUsageMinutes(daysAgo: Int, packageNames: List<String>): Int {
         if (packageNames.isEmpty()) return 0
-        val targetEpochDay = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis()) - daysAgo
+        val targetEpochDay = DayMath.localEpochDay() - daysAgo
         var totalSeconds = 0
         for (pkg in packageNames.distinct()) {
             val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(pkg)
@@ -944,6 +1053,7 @@ class ShieldPreferences(private val context: Context) {
         var maxSystemSeconds = 0
         for (pkg in equivalents) {
             val trackedSeconds = prefs.getInt(getTodaySecondsKey(pkg), 0)
+
             val legacyMinutes = prefs.getInt(getTodayMinutesLegacyKey(pkg), 0)
             val localTotalSeconds = maxOf(trackedSeconds, legacyMinutes * 60)
             if (localTotalSeconds > maxLocalSeconds) {
@@ -961,6 +1071,7 @@ class ShieldPreferences(private val context: Context) {
         return getTodayAppUsageSeconds(packageName, appName) / 60
     }
 
+    @Synchronized
     fun addAppUsageSeconds(packageName: String, seconds: Int) {
         if (seconds <= 0) return
         val key = getTodaySecondsKey(packageName)
@@ -975,15 +1086,20 @@ class ShieldPreferences(private val context: Context) {
 
     fun addAppUsageMinutes(packageName: String, minutes: Int) {
         addAppUsageSeconds(packageName, minutes * 60)
+
     }
 
+    @Synchronized
     fun resetTodayAppUsage(packageName: String, appName: String = "") {
         val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
         val editor = prefs.edit()
+        // The baseline must be the CURRENT system figure, so this one read
+        // bypasses the short-lived usage cache.
+        val freshSystemUsage = systemUsageSnapshot(force = true)
         for (pkg in equivalents) {
             editor.remove(getTodaySecondsKey(pkg))
             editor.remove(getTodayMinutesLegacyKey(pkg))
-            val currentSysSec = getRawSystemUsageSecondsToday(pkg)
+            val currentSysSec = freshSystemUsage[pkg] ?: 0
             editor.putInt(getTodaySystemBaselineKey(pkg), currentSysSec)
         }
         editor.apply()
@@ -991,6 +1107,7 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun refreshLiveUsageStats() {
+        synchronized(usageCacheLock) { sysUsageCacheAtMs = 0L }
         _usageRefreshTrigger.value = System.currentTimeMillis()
     }
 
@@ -1001,22 +1118,55 @@ class ShieldPreferences(private val context: Context) {
     }
 
     private fun getRawSystemUsageSecondsToday(packageName: String): Int {
-        if (!hasUsageStatsPermission(context)) return 0
-        return try {
-            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return 0
-            val calendar = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            val startOfDay = calendar.timeInMillis
+        return systemUsageSnapshot()[packageName] ?: 0
+
+    }
+
+    // The enforcement ticker reads today's usage every second. Aggregating the
+    // whole day's usage stats for every read is expensive, so one snapshot of
+    // ALL packages is shared for a few seconds. The cache is also dropped when
+    // the local day changes, so yesterday's totals can never be served as
+    // today's for a moment after midnight.
+    private val usageCacheLock = Any()
+    private var sysUsageCacheAtMs = 0L
+    private var sysUsageCacheDay = Long.MIN_VALUE
+    private var sysUsageCache: Map<String, Int> = emptyMap()
+
+    private fun systemUsageSnapshot(force: Boolean = false): Map<String, Int> {
+        synchronized(usageCacheLock) {
             val now = System.currentTimeMillis()
-            val stats = usm.queryAndAggregateUsageStats(startOfDay, now)
-            val totalMillis = stats[packageName]?.totalTimeInForeground ?: 0L
-            (totalMillis / 1000L).toInt()
-        } catch (_: Exception) {
-            0
+            val day = DayMath.localEpochDay(now)
+            val fresh = sysUsageCacheAtMs != 0L &&
+                day == sysUsageCacheDay &&
+                now - sysUsageCacheAtMs in 0 until SYS_USAGE_CACHE_MS
+            if (!force && fresh) return sysUsageCache
+
+            sysUsageCache = if (!hasUsageStatsPermission(context)) {
+                emptyMap()
+            } else {
+                try {
+                    val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                    if (usm == null) {
+                        emptyMap()
+                    } else {
+                        val calendar = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        val startOfDay = calendar.timeInMillis
+                        usm.queryAndAggregateUsageStats(startOfDay, now)
+                            .mapValues { (it.value.totalTimeInForeground / 1000L).toInt() }
+                    }
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+            }
+            sysUsageCacheAtMs = now
+            sysUsageCacheDay = day
+            return sysUsageCache
         }
     }
 
@@ -1035,6 +1185,7 @@ class ShieldPreferences(private val context: Context) {
                     @Suppress("DEPRECATION")
                     (event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND)
                 ) {
+
                     if (event.timeStamp >= latestTimestamp && !event.packageName.isNullOrBlank()) {
                         latestTimestamp = event.timeStamp
                         latestForegroundPkg = event.packageName
@@ -1057,6 +1208,9 @@ class ShieldPreferences(private val context: Context) {
     }
 
     fun resetAllPreferencesToFreshScratch() {
+        // A reset also clears the active lock, the PIN and every protection
+        // flag, so it is refused while a lock is running (see canResetOrImport).
+        if (!canResetOrImport()) return
         val now = System.currentTimeMillis()
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
         val defaultPledge = "I am reclaiming my focus, energy, and self-respect. A 5-minute urge is never worth trading my clean streak."
@@ -1064,6 +1218,7 @@ class ShieldPreferences(private val context: Context) {
         val preservedPersian = getIsPersianLanguage()
         val preservedSeasonalTheme = getSeasonalTheme()
         val preservedRepo = getGithubRepoSlug()
+
         val preservedQuizDone = hasCompletedOnboardingQuiz()
         val preservedQuizScore = getAddictionQuizScore()
         val preservedQuizSevEn = getAddictionQuizSeverityEn()
@@ -1096,6 +1251,7 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_IS_DARK_THEME, preservedDark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, preservedPersian)
             .putString(KEY_SEASONAL_THEME, preservedSeasonalTheme.name)
+
             .putString(KEY_GITHUB_REPO_SLUG, preservedRepo)
             .putBoolean(KEY_SECTION_EXIT_ONLY_MODE, false)
             .putBoolean(KEY_HAS_COMPLETED_QUIZ, preservedQuizDone)
@@ -1127,6 +1283,7 @@ class ShieldPreferences(private val context: Context) {
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
+
 
         StreakWidgetProvider.updateAllWidgets(context)
     }
@@ -1160,6 +1317,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_STREAK_START_TIME = "key_streak_start_time"
         private const val KEY_LONGEST_STREAK = "key_longest_streak"
         private const val KEY_SLIPS_COUNT = "key_slips_count"
+
         private const val KEY_LAST_SLIP_REASON = "key_last_slip_reason"
         private const val KEY_URGES_DEFEATED_COUNT = "key_urges_defeated_count"
         private const val KEY_PERSONAL_PLEDGE = "key_personal_pledge"
@@ -1185,6 +1343,26 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_V04_ALL_OFF_DEFAULT_MIGRATED = "key_v04_all_off_default_migrated"
         private const val KEY_V04_SECTIONS_OFF_MIGRATED = "key_v04_sections_off_migrated"
 
+        /** How long one system usage snapshot is reused before re-querying. */
+        private const val SYS_USAGE_CACHE_MS = 10_000L
+
+        /**
+         * Screens the dialer / messaging apps hand over to (contact picker,
+         * attachment picker, permission prompts, emergency information).
+         * Allowed during a lock only while the Call/SMS window is open.
+
+         */
+        private val COMM_HELPER_PACKAGES = setOf(
+            "com.android.contacts",
+            "com.google.android.contacts",
+            "com.samsung.android.app.contacts",
+            "com.android.documentsui",
+            "com.google.android.documentsui",
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller",
+            "com.android.emergency"
+        )
+
         fun isAccessibilityServiceEnabled(context: Context): Boolean {
             val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
                 ?: return false
@@ -1205,6 +1383,7 @@ class ShieldPreferences(private val context: Context) {
         fun hasOverlayPermission(context: Context): Boolean {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 Settings.canDrawOverlays(context)
+
             } else {
                 true
             }
@@ -1238,6 +1417,7 @@ class ShieldPreferences(private val context: Context) {
             }
         }
 
+
         fun requestUsageStatsPermission(context: Context): Boolean {
             return try {
                 val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
@@ -1269,6 +1449,7 @@ class ShieldPreferences(private val context: Context) {
             } catch (_: Exception) {
                 try {
                     val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
                     context.startActivity(fallback)

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -29,6 +30,7 @@ class LockdownActivity : ComponentActivity() {
     private var lockGraceAvailableState by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         configureLockscreenFlags()
@@ -56,12 +58,31 @@ class LockdownActivity : ComponentActivity() {
                         // Opens the 10-second free window and ends this lock;
                         // the accessibility service re-blocks without the
                         // button if the trigger word is still on screen.
-                        prefs.beginKeywordGracePeriod()
-                        finish()
+                        // A stale tap (this screen no longer shows the button,
+                        // or the lock already ended) is ignored by the
+                        // preferences too, so check what actually happened:
+                        // only leave the screen when the lock is really over.
+                        if (lockGraceAvailableState) {
+
+                            prefs.beginKeywordGracePeriod()
+                        }
+                        if (prefs.isCurrentlyLocked()) {
+                            refreshStateFromPrefsAndIntent(intent)
+                        } else {
+                            finish()
+                        }
                     },
                     onLockExpired = {
-                        prefs.clearLockdown()
-                        finish()
+                        // The screen's own copy of the end time reached zero.
+                        // The STORED lock is the source of truth: if it says a
+                        // lock is still running, this copy was stale, so
+                        // refresh it instead of clearing a live lock.
+                        if (prefs.isCurrentlyLocked()) {
+                            refreshStateFromPrefsAndIntent(intent)
+                        } else {
+                            prefs.clearLockdown()
+                            finish()
+                        }
                     }
                 )
             }
@@ -75,10 +96,16 @@ class LockdownActivity : ComponentActivity() {
     }
 
     private fun refreshStateFromPrefsAndIntent(incoming: Intent?) {
+
         val prefs = ShieldApplication.instance.preferences
-        val prefEnd = prefs.getActiveLockEndTime()
-        val intentEnd = incoming?.getLongExtra(EXTRA_END_TIME_EPOCH, 0L) ?: 0L
-        lockEndTimeState = maxOf(prefEnd, intentEnd)
+        // The end time comes ONLY from the stored lock. The launch intent also
+        // carries EXTRA_END_TIME_EPOCH, but that value can be stale (an
+        // activity recreated from its original intent, or a relaunch queued
+        // before the lock was replaced or cleared) and used to keep this
+        // screen alive past the real end. The service writes the lock to
+        // preferences before it launches this screen, so the stored value is
+        // always already there.
+        lockEndTimeState = prefs.getActiveLockEndTime()
         lockDurationState = prefs.getActiveLockDurationMinutes()
         lockTriggerState = incoming?.getStringExtra(EXTRA_TRIGGER_WORD)
             ?.takeIf { it.isNotBlank() }
@@ -102,6 +129,7 @@ class LockdownActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+
     override fun onResume() {
         super.onResume()
         val prefs = ShieldApplication.instance.preferences
@@ -122,19 +150,28 @@ class LockdownActivity : ComponentActivity() {
             try {
                 val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
                 am?.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // moveTaskToFront needs the REORDER_TASKS permission, which
+                // this app does not declare, so this pull-back is a no-op and
+                // the accessibility service does the real enforcement. Log it
+                // instead of hiding it, so the gap is visible in logcat.
+                Log.w(TAG, "moveTaskToFront failed", e)
             }
         }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+
         val prefs = ShieldApplication.instance.preferences
         if (prefs.isCurrentlyLocked() && !prefs.hasActiveEmergencyCommWindow()) {
             val relaunch = Intent(this, LockdownActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    // This relaunch is not a user action; without the flag it
+                    // can raise another onUserLeaveHint and chain relaunches.
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION
             }
             startActivity(relaunch)
         }
@@ -158,6 +195,7 @@ class LockdownActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         if (applySecure) {
+
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
                 WindowManager.LayoutParams.FLAG_SECURE
@@ -168,6 +206,8 @@ class LockdownActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val TAG = "LockdownActivity"
+
         const val EXTRA_STRICT_MODE = "extra_strict_mode"
         const val EXTRA_TRIGGER_WORD = "extra_trigger_word"
         const val EXTRA_SOURCE_APP = "extra_source_app"

@@ -13,19 +13,29 @@ data class ScanMatchResult(
 
 object TextContentScanner {
 
+    /**
+     * Upper bound on nodes visited per tree walk. The walk runs on the main
+     * thread for every accessibility event; a huge WebView or list could make
+     * a single event cost hundreds of milliseconds without a cap.
+     */
+    private const val MAX_NODES = 2500
+
     fun extractScreenText(root: AccessibilityNodeInfo?): List<String> {
         if (root == null) return emptyList()
         val results = mutableListOf<String>()
-        traverseNode(root, results, depth = 0)
+        traverseNode(root, results, depth = 0, budget = intArrayOf(MAX_NODES))
         return results
     }
 
     private fun traverseNode(
         node: AccessibilityNodeInfo?,
         results: MutableList<String>,
-        depth: Int
+
+        depth: Int,
+        budget: IntArray
     ) {
-        if (node == null || depth > 30) return
+        if (node == null || depth > 30 || budget[0] <= 0) return
+        budget[0]--
 
         node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
             results.add(it)
@@ -44,24 +54,32 @@ object TextContentScanner {
 
         val childCount = node.childCount
         for (i in 0 until childCount) {
+            if (budget[0] <= 0) return
             val child = try {
                 node.getChild(i)
             } catch (_: Exception) {
                 null
             }
             if (child != null) {
-                traverseNode(child, results, depth + 1)
+                traverseNode(child, results, depth + 1, budget)
             }
+
         }
     }
 
     /**
      * Detects if the user is attempting to uninstall or force-stop X Blocker in Android Settings
      * or Package Installer while Prevent Uninstall is enabled.
+     *
+     * [ownPackage] is the app's real runtime package name (pass the service's
+     * `packageName`). It is matched in addition to the legacy hard-coded
+     * package literal, so the guard keeps working if the applicationId differs
+     * from that literal.
      */
     fun isAttemptingToUninstallOrDisableXBlocker(
         root: AccessibilityNodeInfo?,
-        currentPackage: String
+        currentPackage: String,
+        ownPackage: String = ""
     ): Boolean {
         if (root == null) return false
         val pkgLower = currentPackage.lowercase()
@@ -74,9 +92,12 @@ object TextContentScanner {
 
         val texts = extractScreenText(root)
         val combinedLower = texts.joinToString(" | ").lowercase()
+        val ownLower = ownPackage.trim().lowercase()
         val mentionsOurApp = combinedLower.contains("x blocker") ||
             combinedLower.contains("com.aistudio.shieldblock") ||
-            combinedLower.contains("shieldaccessibilityservice")
+            combinedLower.contains("shieldaccessibilityservice") ||
+
+            (ownLower.isNotEmpty() && combinedLower.contains(ownLower))
 
         if (!mentionsOurApp) return false
 
@@ -109,6 +130,7 @@ object TextContentScanner {
     ): SectionBlockRule? {
         if (root == null || rules.isEmpty()) return null
 
+
         val applicableRules = rules.filter { rule ->
             rule.isEnabled && AppPackageResolver.matchesPackageOrVariant(
                 ruleTargetPackage = rule.targetPackage,
@@ -135,10 +157,12 @@ object TextContentScanner {
                     textTokens = textTokens,
                     viewIdTokens = viewIdTokens,
                     screenLower = combinedScreenLower,
-                    depth = 0
+                    depth = 0,
+                    budget = intArrayOf(MAX_NODES)
                 )
             ) {
                 return rule
+
             }
         }
         return null
@@ -171,6 +195,7 @@ object TextContentScanner {
                 ruleSectionOrAppName = rule.sectionName,
                 candidatePackage = currentPackage
             )
+
         }
         for (rule in applicableRules) {
             val tokens = rule.triggerPattern.split("|")
@@ -192,15 +217,18 @@ object TextContentScanner {
         textTokens: List<String>,
         viewIdTokens: List<String>,
         screenLower: String,
-        depth: Int
+        depth: Int,
+        budget: IntArray
     ): Boolean {
-        if (node == null || depth > 30) return false
+        if (node == null || depth > 30 || budget[0] <= 0) return false
+        budget[0]--
 
         val viewId = node.viewIdResourceName?.lowercase() ?: ""
         val text = node.text?.toString()?.trim()?.lowercase() ?: ""
         val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
         val hint = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             node.hintText?.toString()?.trim()?.lowercase() ?: ""
+
         } else {
             ""
         }
@@ -233,6 +261,7 @@ object TextContentScanner {
             val hasSearchLabelOrId = textTokens.any { token ->
                 text.contains(token) || desc.contains(token) || hint.contains(token)
             } || viewIdTokens.any { token -> viewId.contains(token) } ||
+
                 viewId.contains("search_src_text") ||
                 viewId.contains("search_field")
 
@@ -265,6 +294,7 @@ object TextContentScanner {
             if (viewId.isNotEmpty() && viewIdTokens.any { token -> viewId.contains(token) }) {
                 return true
             }
+
             if (textTokens.any { token ->
                     (text.isNotEmpty() && text == token) ||
                         (desc.isNotEmpty() && desc == token)
@@ -276,13 +306,14 @@ object TextContentScanner {
 
         val childCount = node.childCount
         for (i in 0 until childCount) {
+            if (budget[0] <= 0) return false
             val child = try {
                 node.getChild(i)
             } catch (_: Exception) {
                 null
             }
             if (child != null) {
-                if (findMatchingSectionNode(child, rule, textTokens, viewIdTokens, screenLower, depth + 1)) {
+                if (findMatchingSectionNode(child, rule, textTokens, viewIdTokens, screenLower, depth + 1, budget)) {
                     return true
                 }
             }
@@ -296,6 +327,7 @@ object TextContentScanner {
             .replace('ي', 'ی')
             .replace('ك', 'ک')
             .replace('ة', 'ه')
+
             .replace('\u200C', ' ')
             .lowercase()
 
@@ -329,12 +361,14 @@ object TextContentScanner {
             val targetNorm = normalizeText(targetRaw)
             if (targetNorm.isEmpty()) continue
 
+
             if (keyword.isRegex) {
-                try {
-                    if (Regex(targetRaw, RegexOption.IGNORE_CASE).containsMatchIn(lowerRaw)) {
-                        return ScanMatchResult(keyword.text, keyword.category)
-                    }
-                } catch (_: Exception) {
+                // User-typed pattern: compiled once (cached) and run under a
+                // time budget so a pathological regex cannot freeze the app.
+                // An invalid pattern, or one that runs out of time, is no match.
+                val regex = SafeRegex.compile(targetRaw, ignoreCase = true)
+                if (regex != null && SafeRegex.containsMatch(regex, lowerRaw) == true) {
+                    return ScanMatchResult(keyword.text, keyword.category)
                 }
             } else {
                 when (keyword.category) {
@@ -348,14 +382,18 @@ object TextContentScanner {
                     BlockedCategory.ADULT_EXPLICIT,
                     BlockedCategory.CUSTOM_KEYWORD -> {
                         val escaped = Regex.escape(targetNorm)
-                        val boundaryRegex = Regex("(^|[^a-zA-Z0-9\\u0600-\\u06FF])$escaped([^a-zA-Z0-9\\u0600-\\u06FF]|$)")
-                        if (boundaryRegex.containsMatchIn(normalized)) {
+                        val boundaryRegex = SafeRegex.compile(
+                            "(^|[^a-zA-Z0-9\\u0600-\\u06FF])$escaped([^a-zA-Z0-9\\u0600-\\u06FF]|$)",
+                            ignoreCase = false
+                        )
+                        if (boundaryRegex != null && boundaryRegex.containsMatchIn(normalized)) {
                             return ScanMatchResult(keyword.text, keyword.category)
                         }
                     }
                 }
             }
         }
+
         return null
     }
 
