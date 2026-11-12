@@ -749,7 +749,7 @@ fun NoBeepStreakScreen(
                                 color = ObsidianTextSecondary
                             )
                             Text(
-                                text = "${badge.day.coerceAtLeast(1)}",
+                                text = "${badge.days.coerceAtLeast(1)}",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Black,
                                 color = AmberWarning
