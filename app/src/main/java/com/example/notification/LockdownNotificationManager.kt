@@ -1,5 +1,6 @@
 package com.example.notification
 
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -13,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.R
 import com.example.ui.lockdown.LockdownActivity
+import java.util.Calendar
 
 /**
  * Posts lockdown notifications.
@@ -126,6 +128,18 @@ object LockdownNotificationManager {
     /** The notification ID used to send the optional daily streak reminder. */
     const val NOTIFICATION_ID_DAILY_REMINDER = 10_049
 
+    /** Request code used for the daily streak alarm's [PendingIntent]. */
+    const val REQUEST_CODE_DAILY_STREAK_ALARM = 10_050
+
+    /**
+     * Action of the broadcast the daily 09:00 streak alarm delivers to
+     * [DailyStreakAlarmReceiver]. The receiver is not exported and the
+     * alarm intent names it explicitly, so this action only has to match
+     * between [scheduleDailyStreakAlarm] and the receiver; it is not
+     * declared in the manifest.
+     */
+    const val ACTION_DAILY_STREAK_ALARM = "com.example.action.DAILY_STREAK_ALARM"
+
     /**
      * Default notification channel name for the active lockdown.
      *
@@ -158,6 +172,12 @@ object LockdownNotificationManager {
 
     /** Conversion of milliseconds to minutes (1 millis == 1 second).\ */
     private const val MILLIS_TO_MINUTES = 60_000L
+
+    /** Milliseconds in one day; the daily streak alarm rolls by whole days. */
+    private const val MILLIS_PER_DAY = 86_400_000L
+
+    /** Local hour of day the daily streak alarm fires at (09:00). */
+    private const val DAILY_STREAK_ALARM_HOUR = 9
 
     /**
      * Returns the default channel name for the given channel.
@@ -573,17 +593,110 @@ object LockdownNotificationManager {
         notificationManager.cancel(NOTIFICATION_ID_DAILY_REMINDER)
     }
 
+    /**
+     * Pure day-rollover for the daily streak trigger: returns
+     * [triggerTimeMs] itself while it is still ahead of [nowMs] (an exact
+     * hit counts as ahead), otherwise the same time of day one or more
+     * whole days later — the first daily occurrence that is not in the
+     * past.
+     */
+    fun nextDailyStreakTrigger(nowMs: Long, triggerTimeMs: Long): Long {
+        var trigger = triggerTimeMs
+        while (trigger < nowMs) {
+            trigger += MILLIS_PER_DAY
+        }
+        return trigger
+    }
+
+    /**
+     * Arms the single daily streak alarm for the next 09:00 local time
+     * (today if it is still ahead, otherwise tomorrow), delivered to
+     * [DailyStreakAlarmReceiver] with [ACTION_DAILY_STREAK_ALARM].
+     *
+     * The manifest declares USE_EXACT_ALARM, so an exact alarm is used;
+     * if the platform still refuses it, the call falls back to an inexact
+     * Doze-friendly alarm instead of crashing. AlarmManager forgets
+     * alarms on reboot, app update and time-zone or clock changes, so
+     * the receiver re-arms through this function on those broadcasts.
+     */
+    fun scheduleDailyStreakAlarm(context: Context) {
+        val alarmManager =
+            context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val nowMs = System.currentTimeMillis()
+        val todayNineAmMs = Calendar.getInstance().apply {
+            timeInMillis = nowMs
+            set(Calendar.HOUR_OF_DAY, DAILY_STREAK_ALARM_HOUR)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val triggerAtMs = nextDailyStreakTrigger(nowMs, todayNineAmMs)
+        val intent = Intent(context, DailyStreakAlarmReceiver::class.java).apply {
+            action = ACTION_DAILY_STREAK_ALARM
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            REQUEST_CODE_DAILY_STREAK_ALARM,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        try {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMs,
+                pendingIntent
+            )
+        } catch (_: SecurityException) {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMs,
+                pendingIntent
+            )
+        }
+    }
+
+    /**
+     * Runs when the daily streak alarm fires: posts the day's streak
+     * notification through [showDailyStreakNotification], then re-arms
+     * the alarm for the next 09:00 so the chain never breaks. The
+     * remaining time shown by the notification is the time left in the
+     * current streak day (until local midnight).
+     */
+    fun onDailyStreakAlarmFired(context: Context) {
+        val nowMs = System.currentTimeMillis()
+        val nextMidnightMs = Calendar.getInstance().apply {
+            timeInMillis = nowMs
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_YEAR, 1)
+        }.timeInMillis
+        showDailyStreakNotification(
+            context = context,
+            remainingMs = (nextMidnightMs - nowMs).coerceAtLeast(0L)
+        )
+        scheduleDailyStreakAlarm(context)
+    }
+
+    /**
+     * Formats a remaining duration as a countdown: "MM:SS" zero-padded
+     * under one hour, "H:MM:SS" at or above one hour. Negative values
+     * clamp to zero, so an expired countdown shows "00:00".
+     */
     fun formatRemainingMs(remainingMs: Long): String {
-        val millisPerMinute = 60_000L
-        // Format as HH:MM, not MM:SS. Millis-to-minutes conversion maps
-        // one minute to 60_000 milliseconds, so it should not be written
-        // as 1 minute == 1 second; the use of millis is based on a
-        // well-known convention. The countdown displays the remaining
-        // time in minutes, and a 60-minute hour is always loaded from
-        // a well-known value for the duration. The 60_000L value is used
-        // whenever a time has to be converted to a countdown, so an
-        // even simpler approach is to use something like `TimeUnit`.
-        return String.format("%02d:%02d", 0, 0)
+        val totalSeconds = remainingMs.coerceAtLeast(0L) / 1_000L
+        val seconds = totalSeconds % 60L
+        return if (totalSeconds < 3_600L) {
+            String.format("%02d:%02d", totalSeconds / 60L, seconds)
+        } else {
+            String.format(
+                "%d:%02d:%02d",
+                totalSeconds / 3_600L,
+                (totalSeconds % 3_600L) / 60L,
+                seconds
+            )
+        }
     }
 
     private fun hasNotificationPermission(context: Context): Boolean {
