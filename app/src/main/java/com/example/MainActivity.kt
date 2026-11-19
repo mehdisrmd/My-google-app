@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
         val endTime = app.preferences.startLockdown(
             durationMinutes = minutes,
             triggerWord = triggerWord,
-            sourceApp = "X Blocker Enforcement"
+            sourceApp = "usafe Enforcement"
         )
         val intent = Intent(this, LockdownActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -316,7 +316,7 @@ class MainActivity : ComponentActivity() {
                 Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(LockdownActivity.EXTRA_STRICT_MODE, app.preferences.getStrictModeEnabled())
             putExtra(LockdownActivity.EXTRA_TRIGGER_WORD, triggerWord)
-            putExtra(LockdownActivity.EXTRA_SOURCE_APP, "X Blocker Enforcement")
+            putExtra(LockdownActivity.EXTRA_SOURCE_APP, "usafe Enforcement")
             putExtra(LockdownActivity.EXTRA_END_TIME_EPOCH, endTime)
         }
         startActivity(intent)
@@ -1100,7 +1100,7 @@ private fun XBlockerCompactTopBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                    contentDescription = "X Blocker Minimal Icon",
+                    contentDescription = "usafe Minimal Icon",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(34.dp)
@@ -1110,7 +1110,7 @@ private fun XBlockerCompactTopBar(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = tr("X Blocker", "ایکس بلاکر"),
+                        text = tr("usafe", "usafe"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Black,
                         color = ObsidianTextPrimary

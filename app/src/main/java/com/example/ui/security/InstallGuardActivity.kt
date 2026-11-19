@@ -252,8 +252,8 @@ private fun InstallGuardPrompt(
             if (!pinIsSet) {
                 Text(
                     text = tr(
-                        "No PIN is set yet. Open X Blocker and set a PIN first — installs stay blocked until then.",
-                        "هنوز پینی تنظیم نشده است. اول در ایکس بلاکر پین تنظیم کنید — تا آن موقع نصب‌ها مسدود می‌مانند."
+                        "No PIN is set yet. Open usafe and set a PIN first — installs stay blocked until then.",
+                        "هنوز پینی تنظیم نشده است. اول در usafe پین تنظیم کنید — تا آن موقع نصب‌ها مسدود می‌مانند."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = CrimsonPrimary,

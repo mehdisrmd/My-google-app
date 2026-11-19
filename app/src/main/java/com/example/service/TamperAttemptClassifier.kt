@@ -85,7 +85,12 @@ object TamperAttemptClassifier {
         }
 
         val ownLower = ownPackage.trim().lowercase()
+        // #54 (batch 4): the app was renamed "X Blocker" -> "usafe" and
+        // Settings pages show the CURRENT label — match both names so
+        // the App-info guards keep recognizing our own page after the
+        // rename (the package/service matches below are other anchors).
         val mentionsOurApp = combinedLower.contains("x blocker") ||
+            combinedLower.contains("usafe") ||
             combinedLower.contains("com.aistudio.shieldblock") ||
             combinedLower.contains("shieldaccessibilityservice") ||
             (ownLower.isNotEmpty() && combinedLower.contains(ownLower))
@@ -175,12 +180,16 @@ object TamperAttemptClassifier {
      */
     private fun hasAccessibilityOffSignal(combinedLower: String): Boolean {        val stopDialog = combinedLower.contains("stop this service") ||
             combinedLower.contains("stop x blocker") ||
+            combinedLower.contains("stop usafe") ||
             combinedLower.contains("do you want to stop") ||
             combinedLower.contains("توقف")
         if (stopDialog) return true
 
+        // "Use <app name>" switch label: "Use X Blocker" before the
+        // #54 rename, "Use usafe" after it — match both.
         val serviceDetailPage = combinedLower.contains(SERVICE_DESCRIPTION_FRAGMENT) ||
-            combinedLower.contains("use x blocker")
+            combinedLower.contains("use x blocker") ||
+            combinedLower.contains("use usafe")
         return serviceDetailPage
     }
 

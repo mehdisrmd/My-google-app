@@ -210,8 +210,8 @@ object ScientificAddictionQuizRepository {
                 severityFa = "وابستگی شدید دوپامینی (نیازمند بازسازی فوری)",
                 analysisEn = "Clinical indicators show a strong compulsive dopamine loop triggered by visual cues, stress, and late-night browsing.",
                 analysisFa = "نتایج علمی نشان‌دهنده چرخه قوی وابستگی دوپامینی در برابر محرک‌های تصویری، استرس و وب‌گردی شبانه است.",
-                recommendationEn = "Recommended Protocol: Turn ON X Blocker Master Shield, Instagram Reels & Telegram Search Blockers, and Prevent Uninstall for a full 90-day neuro-reset.",
-                recommendationFa = "پروتکل پیشنهادی: سپر اصلی ایکس بلاکر، مسدودساز ریلز و جستجوی تلگرام و محافظ ضدحذف را برای دوره کامل ۹۰ روزه روشن کنید.",
+                recommendationEn = "Recommended Protocol: Turn ON usafe Master Shield, Instagram Reels & Telegram Search Blockers, and Prevent Uninstall for a full 90-day neuro-reset.",
+                recommendationFa = "پروتکل پیشنهادی: سپر اصلی usafe، مسدودساز ریلز و جستجوی تلگرام و محافظ ضدحذف را برای دوره کامل ۹۰ روزه روشن کنید.",
                 badgeColor = CrimsonPrimary
             )
             pct >= 40 -> QuizEvaluation(
@@ -238,9 +238,9 @@ object ScientificAddictionQuizRepository {
                 scorePercent = pct,
                 severityEn = "Healthy Self-Control",
                 severityFa = "کنترل سالم و تسلط بالا بر نفس",
-                analysisEn = "Low dependency score! You have strong baseline self-regulation and are using X Blocker proactively for peak focus.",
-                analysisFa = "امتیاز وابستگی شما پایین است! شما کنترل خوبی دارید و از ایکس بلاکر برای تمرکز حداکثری استفاده می‌کنید.",
-                recommendationEn = "Recommended Protocol: Use X Blocker's daily streak chain and app time limits to reach peak mental clarity.",
+                analysisEn = "Low dependency score! You have strong baseline self-regulation and are using usafe proactively for peak focus.",
+                analysisFa = "امتیاز وابستگی شما پایین است! شما کنترل خوبی دارید و از usafe برای تمرکز حداکثری استفاده می‌کنید.",
+                recommendationEn = "Recommended Protocol: Use usafe's daily streak chain and app time limits to reach peak mental clarity.",
                 recommendationFa = "پروتکل پیشنهادی: از زنجیره روزانه و محدودیت زمان برنامه‌ها برای رسیدن به اوج تمرکز استفاده کنید.",
                 badgeColor = EmeraldShield
             )
@@ -757,7 +757,7 @@ private fun FirstTimeOnboardingWelcomeSection(
         // Minimal White-Background App Icon Header
         Image(
             painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-            contentDescription = "X Blocker Minimal Icon",
+            contentDescription = "usafe Minimal Icon",
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(72.dp)
@@ -767,7 +767,7 @@ private fun FirstTimeOnboardingWelcomeSection(
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = tr("Welcome to X Blocker", "به ایکس بلاکر خوش آمدید"),
+                text = tr("Welcome to usafe", "به usafe خوش آمدید"),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Black,
                 color = ObsidianTextPrimary,

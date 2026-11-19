@@ -66,6 +66,49 @@ class TamperAttemptClassifierTest {
         )
     }
 
+    // ---- #54: after the rename, Settings shows the NEW label
+    // ("usafe"); the guards must recognize our pages by it too. ----
+
+    @Test
+    fun settingsUninstallConfirmationWithNewName_isUninstall() {
+        val texts = listOf(
+            "usafe",
+            "Do you want to uninstall this app?",
+            "Cancel", "OK"
+        )
+        assertEquals(
+            TamperAction.UNINSTALL,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun stopServiceDialogWithNewName_isAccessibilityOff() {
+        val texts = listOf(
+            "Stop usafe?",
+            "If you stop this service, it may stop working correctly.",
+            "Cancel", "Stop"
+        )
+        assertEquals(
+            TamperAction.DISABLE_ACCESSIBILITY,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun ownServiceDetailPageWithNewName_isAccessibilityOff() {
+        val texts = listOf(
+            "usafe",
+            "On",
+            "Use usafe",
+            "Accessibility shortcut"
+        )
+        assertEquals(
+            TamperAction.DISABLE_ACCESSIBILITY,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
     // ---- CLEAR_DATA (#6a) ----
 
     @Test

@@ -61,7 +61,7 @@ object LockdownNotificationManager {
 
             val milestoneChannel = NotificationChannel(
                 CHANNEL_ID_MILESTONE,
-                "X Blocker Clean Day Milestones",
+                "usafe Clean Day Milestones",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "One motivational notification at 9:00 AM for your clean streak"

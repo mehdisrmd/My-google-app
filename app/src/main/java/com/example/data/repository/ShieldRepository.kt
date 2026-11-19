@@ -108,7 +108,7 @@ class ShieldRepository(
     suspend fun exportFullBackupJson(): String {
         val root = JSONObject()
         root.put("backupFormatVersion", 1)
-        root.put("appName", "X Blocker")
+        root.put("appName", "usafe")
         root.put("exportedAtEpochMs", System.currentTimeMillis())
         root.put("preferences", preferences.exportPreferencesToJson())
 

@@ -377,7 +377,7 @@ fun DashboardScreen(
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                                contentDescription = "X Blocker Minimal Icon",
+                                contentDescription = "usafe Minimal Icon",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(50.dp)
@@ -394,7 +394,7 @@ fun DashboardScreen(
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = tr("X Blocker", "ایکس بلاکر"),
+                                        text = tr("usafe", "usafe"),
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.Black,
                                         color = ObsidianTextPrimary
@@ -856,8 +856,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Blocks uninstalling X Blocker. Turning off requires typing a long motivational sentence.",
-                                        "مانع از حذف ایکس بلاکر می‌شود. خاموش کردن نیازمند نوشتن جمله انگیزشی طولانی است."
+                                        "Blocks uninstalling usafe. Turning off requires typing a long motivational sentence.",
+                                        "مانع از حذف usafe می‌شود. خاموش کردن نیازمند نوشتن جمله انگیزشی طولانی است."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1006,8 +1006,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Blocks 'Clear data' on X Blocker's App info page, so the app cannot be wiped from Settings. Its own switch — works even while the master switch is off.",
-                                        "«پاک کردن داده‌ها» در صفحه اطلاعات ایکس بلاکر را مسدود می‌کند تا برنامه از تنظیمات پاک نشود. کلید جدا دارد — حتی وقتی محافظ اصلی خاموش است هم کار می‌کند."
+                                        "Blocks 'Clear data' on usafe's App info page, so the app cannot be wiped from Settings. Its own switch — works even while the master switch is off.",
+                                        "«پاک کردن داده‌ها» در صفحه اطلاعات usafe را مسدود می‌کند تا برنامه از تنظیمات پاک نشود. کلید جدا دارد — حتی وقتی محافظ اصلی خاموش است هم کار می‌کند."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1201,8 +1201,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Prevents force-stopping X Blocker from Settings, which would kill every guard at once. Hard system block with Device Owner; otherwise X Blocker's App info page is interrupted.",
-                                        "از توقف اجباری ایکس بلاکر از تنظیمات جلوگیری می‌کند؛ توقفی که همه محافظ‌ها را یکجا از کار می‌اندازد. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه اطلاعات ایکس بلاکر قطع می‌شود."
+                                        "Prevents force-stopping usafe from Settings, which would kill every guard at once. Hard system block with Device Owner; otherwise usafe's App info page is interrupted.",
+                                        "از توقف اجباری usafe از تنظیمات جلوگیری می‌کند؛ توقفی که همه محافظ‌ها را یکجا از کار می‌اندازد. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه اطلاعات usafe قطع می‌شود."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1293,8 +1293,8 @@ fun DashboardScreen(
                                     )
                                     Text(
                                         text = tr(
-                                            "The hard block, enforced by Android itself: X Blocker cannot be uninstalled (not even via ADB) and USB debugging stays off.",
-                                            "مسدودسازی قطعی با اجرای خود اندروید: ایکس بلاکر حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
+                                            "The hard block, enforced by Android itself: usafe cannot be uninstalled (not even via ADB) and USB debugging stays off.",
+                                            "مسدودسازی قطعی با اجرای خود اندروید: usafe حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
                                         ),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontSize = 11.sp,
@@ -1321,8 +1321,8 @@ fun DashboardScreen(
                         when (deviceOwnerStatus) {
                             DeviceOwnerPolicy.Status.DEVICE_OWNER -> Text(
                                 text = tr(
-                                    "Status: ACTIVE — X Blocker is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
-                                    "وضعیت: فعال — ایکس بلاکر مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
+                                    "Status: ACTIVE — usafe is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
+                                    "وضعیت: فعال — usafe مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
@@ -1331,8 +1331,8 @@ fun DashboardScreen(
 
                             DeviceOwnerPolicy.Status.PROFILE_OWNER_ONLY -> Text(
                                 text = tr(
-                                    "Status: X Blocker only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
-                                    "وضعیت: ایکس بلاکر فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
+                                    "Status: usafe only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
+                                    "وضعیت: usafe فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
@@ -1411,8 +1411,8 @@ fun DashboardScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = tr(
-                                        "Uninstall X Blocker (Wait: ${uninstallWaitLabel(uninstallWaitMinutes)})",
-                                        "حذف نصب ایکس بلاکر (انتظار: ${uninstallWaitLabel(uninstallWaitMinutes)})"
+                                        "Uninstall usafe (Wait: ${uninstallWaitLabel(uninstallWaitMinutes)})",
+                                        "حذف نصب usafe (انتظار: ${uninstallWaitLabel(uninstallWaitMinutes)})"
                                     ),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
@@ -1434,8 +1434,8 @@ fun DashboardScreen(
                             uninstallUnlockedNow -> {
                                 Text(
                                     text = tr(
-                                        "✓ Wait complete — the uninstall guard has stood down: you can now uninstall X Blocker from system Settings.",
-                                        "✓ انتظار تمام شد — محافظ حذف کنار رفت: حالا می‌توانید ایکس بلاکر را از تنظیمات سیستم حذف کنید."
+                                        "✓ Wait complete — the uninstall guard has stood down: you can now uninstall usafe from system Settings.",
+                                        "✓ انتظار تمام شد — محافظ حذف کنار رفت: حالا می‌توانید usafe را از تنظیمات سیستم حذف کنید."
                                     ),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
@@ -1938,7 +1938,7 @@ fun MiddleSectionBlockerCard(
                         )
                         Text(
                             text = tr(
-                                "DMs & Feed work normally; entering Reels opens the X Blocker Lock Page.",
+                                "DMs & Feed work normally; entering Reels opens the usafe Lock Page.",
                                 "چت و فید عادی کار می‌کند؛ با ورود به Reels صفحه قفل کامل باز می‌شود."
                             ),
                             style = MaterialTheme.typography.bodySmall,

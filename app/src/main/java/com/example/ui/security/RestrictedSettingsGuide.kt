@@ -40,16 +40,16 @@ import com.example.ui.theme.ObsidianTextSecondary
 object RestrictedSettingsGuideContent {
 
     val stepsEn: List<String> = listOf(
-        "Open Android Settings → Apps → X Blocker.",
+        "Open Android Settings → Apps → usafe.",
         "Tap the ⋮ menu in the top corner and choose “Allow restricted settings”. Android will ask for your phone PIN or fingerprint.",
-        "Go back, then open Settings → Accessibility → Installed apps → X Blocker.",
+        "Go back, then open Settings → Accessibility → Installed apps → usafe.",
         "Turn the service ON and confirm the system warning dialog."
     )
 
     val stepsFa: List<String> = listOf(
-        "تنظیمات اندروید ← برنامه‌ها ← X Blocker را باز کنید.",
+        "تنظیمات اندروید ← برنامه‌ها ← usafe را باز کنید.",
         "روی منوی ⋮ در گوشهٔ بالا بزنید و «Allow restricted settings» (اجازه به تنظیمات محدودشده) را انتخاب کنید. اندروید پین یا اثر انگشت گوشی را می‌خواهد.",
-        "برگردید و تنظیمات ← دسترسی‌پذیری ← برنامه‌های نصب‌شده ← X Blocker را باز کنید.",
+        "برگردید و تنظیمات ← دسترسی‌پذیری ← برنامه‌های نصب‌شده ← usafe را باز کنید.",
         "سرویس را روشن کنید و پیام هشدار سیستم را تأیید کنید."
     )
 
@@ -81,8 +81,8 @@ fun RestrictedSettingsGuideDialog(onDismiss: () -> Unit) {
             Column {
                 Text(
                     text = tr(
-                        "Because X Blocker was installed from outside Google Play, Android 13+ hides the accessibility switch until you allow “restricted settings” once. X Blocker cannot skip this step — no app can. It takes about 20 seconds:",
-                        "چون X Blocker خارج از گوگل‌پلی نصب شده، اندروید ۱۳ به بالا کلید دسترسی‌پذیری را قفل می‌کند تا یک‌بار «تنظیمات محدودشده» را اجازه دهید. X Blocker نمی‌تواند این مرحله را رد کند — هیچ برنامه‌ای نمی‌تواند. حدود ۲۰ ثانیه طول می‌کشد:"
+                        "Because usafe was installed from outside Google Play, Android 13+ hides the accessibility switch until you allow “restricted settings” once. usafe cannot skip this step — no app can. It takes about 20 seconds:",
+                        "چون usafe خارج از گوگل‌پلی نصب شده، اندروید ۱۳ به بالا کلید دسترسی‌پذیری را قفل می‌کند تا یک‌بار «تنظیمات محدودشده» را اجازه دهید. usafe نمی‌تواند این مرحله را رد کند — هیچ برنامه‌ای نمی‌تواند. حدود ۲۰ ثانیه طول می‌کشد:"
                     ),
                     color = ObsidianTextSecondary,
                     style = MaterialTheme.typography.bodySmall
