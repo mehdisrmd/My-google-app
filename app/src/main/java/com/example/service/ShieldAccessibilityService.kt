@@ -1421,7 +1421,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                 val admin = DeviceOwnerManager.adminComponent(this)
                 when (transport) {
                     DataCapEnforcer.Transport.MOBILE ->
-                        manager?.setGlobalSetting(admin, Settings.Global.MOBILE_DATA, "0")
+                        manager?.setGlobalSetting(admin, "mobile_data", "0") // Settings.Global.MOBILE_DATA is not a public SDK constant
                     DataCapEnforcer.Transport.WIFI ->
                         manager?.setGlobalSetting(admin, Settings.Global.WIFI_ON, "0")
                 }

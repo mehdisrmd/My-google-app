@@ -34,7 +34,7 @@ object TransportStateReader {
      * what the system itself consults. -1 / any other value = unknown.
      */
     fun isMobileDataOn(context: Context): Boolean? = try {
-        when (Settings.Global.getInt(context.contentResolver, Settings.Global.MOBILE_DATA, -1)) {
+        when (Settings.Global.getInt(context.contentResolver, "mobile_data", -1)) { // literal key: no public MOBILE_DATA constant in Settings.Global
             1 -> true
             0 -> false
             else -> null
