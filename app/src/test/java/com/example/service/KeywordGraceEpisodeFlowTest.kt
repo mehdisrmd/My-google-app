@@ -230,4 +230,101 @@ class KeywordGraceEpisodeFlowTest {
         assertTrue(e6.graceAvailable)
 
     }
+
+    // ---- the ticker re-check pending state (the #1 fix) ----
+    //
+    // The bug being fixed: the ticker consumed its one-shot re-check
+    // BEFORE scanning, and on a "word not found" verdict also cleared the
+    // episode — but its scan reads only the extracted window tree, which
+    // can miss a word the event path originally matched from an event's
+    // own text payload. One missed scan spent the re-check forever, and
+    // on a static page (no new events) the block never came back.
+    // The fixed contract, exercised below: an absent re-check verdict
+    // neither consumes nor clears; consumption happens on a found word
+    // (re-block) or after MAX_RECHECK_ABSENT_SCANS absent verdicts, and
+    // even then the episode is not cleared by the ticker.
+
+    @Test
+    fun recheckPending_onlyAfterAUsedWindowEnds() {
+        val offered = firstBlock().episode
+        // Button offered but never tapped: no window, no re-check owed.
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(offered, nowMs = 400_000L))
+
+        val tapped = KeywordGraceLogic.onGraceButtonTapped(offered, nowMs = 1_000L)
+        // Inside the window the re-check is not due yet.
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(tapped, nowMs = 10_999L))
+        // At the exact end instant it becomes due, and stays due.
+        assertTrue(KeywordGraceLogic.isGraceRecheckPending(tapped, nowMs = 11_000L))
+        assertTrue(KeywordGraceLogic.isGraceRecheckPending(tapped, nowMs = 60_000L))
+    }
+
+    @Test
+    fun recheckPending_clearsOnceConsumed_andNeedsWordAndUsedGrace() {
+        val tapped = KeywordGraceLogic.onGraceButtonTapped(firstBlock().episode, nowMs = 1_000L)
+        val consumed = KeywordGraceLogic.onGraceRecheckConsumed(tapped)
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(consumed, nowMs = 60_000L))
+
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(KeywordGraceEpisode(), nowMs = 60_000L))
+        val unusedWindow = KeywordGraceEpisode(
+            word = word, graceOffered = true, graceUsed = false, graceUntilMs = 5_000L
+        )
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(unusedWindow, nowMs = 60_000L))
+    }
+
+    @Test
+    fun absentRecheckScans_consumeOnlyAtTheCap() {
+        assertFalse(KeywordGraceLogic.shouldConsumeGraceRecheck(0))
+        assertFalse(
+            KeywordGraceLogic.shouldConsumeGraceRecheck(KeywordGraceLogic.MAX_RECHECK_ABSENT_SCANS - 1)
+        )
+        assertTrue(
+            KeywordGraceLogic.shouldConsumeGraceRecheck(KeywordGraceLogic.MAX_RECHECK_ABSENT_SCANS)
+        )
+        assertTrue(
+            KeywordGraceLogic.shouldConsumeGraceRecheck(KeywordGraceLogic.MAX_RECHECK_ABSENT_SCANS + 5)
+        )
+    }
+
+    @Test
+    fun missedRecheckScans_keepTheRecheckPending_andALaterMatchReblocksWithoutButton() {
+        // t=0 block with button; t=2s the user taps; window ends at t=12s.
+        val tapped = KeywordGraceLogic.onGraceButtonTapped(firstBlock().episode, nowMs = 2_000L)
+
+        // The ticker's extracted-text scans at/after expiry keep missing
+        // the still-present word. Below the absent cap nothing consumes
+        // the re-check, so seconds later it is STILL pending against the
+        // untouched episode.
+        assertTrue(KeywordGraceLogic.isGraceRecheckPending(tapped, nowMs = 12_000L))
+        assertTrue(KeywordGraceLogic.isGraceRecheckPending(tapped, nowMs = 15_000L))
+
+        // When a later real content scan (the event path) finds the word,
+        // the block comes back — WITHOUT the button.
+        val reblock = block(KeywordGraceLogic.onKeywordMatch(tapped, word, nowMs = 30_000L))
+        assertFalse(reblock.graceAvailable)
+        assertTrue(reblock.episode.graceUsed)
+    }
+
+    @Test
+    fun absentCap_consumesTheWindow_butTheEpisodeStillClosesOnRealAbsence() {
+        val tapped = KeywordGraceLogic.onGraceButtonTapped(firstBlock().episode, nowMs = 1_000L)
+
+        // The ticker gives up retrying at the cap and consumes the window…
+        assertTrue(
+            KeywordGraceLogic.shouldConsumeGraceRecheck(KeywordGraceLogic.MAX_RECHECK_ABSENT_SCANS)
+        )
+        val consumed = KeywordGraceLogic.onGraceRecheckConsumed(tapped)
+        assertFalse(KeywordGraceLogic.isGraceRecheckPending(consumed, nowMs = 20_000L))
+
+        // …but it does NOT clear the episode: a later match still
+        // re-blocks without the button…
+        val reblock = block(KeywordGraceLogic.onKeywordMatch(consumed, word, nowMs = 21_000L))
+        assertFalse(reblock.graceAvailable)
+
+        // …and a later genuine absence (event path) still closes the
+        // episode, so the next appearance starts fresh, button included.
+        val closed = KeywordGraceLogic.onKeywordAbsent(reblock.episode, nowMs = 22_000L)
+        assertEquals(KeywordGraceEpisode(), closed)
+        val fresh = block(KeywordGraceLogic.onKeywordMatch(closed, word, nowMs = 23_000L))
+        assertTrue(fresh.graceAvailable)
+    }
 }

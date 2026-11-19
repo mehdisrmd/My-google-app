@@ -1,7 +1,12 @@
 package com.example.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -9,6 +14,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.example.ShieldApplication
 import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
@@ -39,6 +45,41 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private val powerManager: PowerManager? by lazy {
         getSystemService(PowerManager::class.java)
+    }
+
+    private val keyguardManager: KeyguardManager? by lazy {
+        getSystemService(KeyguardManager::class.java)
+    }
+
+    private val audioManager: AudioManager? by lazy {
+        getSystemService(AudioManager::class.java)
+    }
+
+    /**
+     * #18: an overlay launch that arrived while the phone was locked is
+     * parked here (trigger word, source app, lock end time) and launched
+     * by [flushDeferredOverlay] the moment the user unlocks — via the
+     * ACTION_USER_PRESENT receiver, with the 1-second ticker as backstop.
+     */
+    @Volatile
+    private var deferredOverlay: Triple<String, String, Long>? = null
+
+    /**
+     * #1: consecutive ticker re-check scans that did NOT find the episode's
+     * word after its grace window ended. The re-check is only consumed
+     * after [KeywordGraceLogic.MAX_RECHECK_ABSENT_SCANS] of these (or at
+     * once when the word IS found and the re-block fires).
+     */
+    @Volatile
+    private var graceRecheckAbsentScans = 0
+
+    /** #18: fires the parked overlay launch as soon as the user unlocks. */
+    private val userPresentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                flushDeferredOverlay()
+            }
+        }
     }
 
     @Volatile
@@ -93,6 +134,58 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private fun isScreenInteractive(): Boolean = powerManager?.isInteractive != false
 
+    /** #18: true while the keyguard is locked (the user has not unlocked). */
+    private fun isKeyguardLockedNow(): Boolean {
+        return try {
+            keyguardManager?.isKeyguardLocked == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * #17: true while a call is ringing or in progress. AudioManager's
+     * mode needs no permission (TelephonyManager call-state callbacks
+     * would need READ_PHONE_STATE); the foreground-package check is the
+     * backstop for OEM call screens whose audio mode lags the window.
+     */
+    private fun isCallActiveNow(): Boolean {
+        val mode = try {
+            audioManager?.mode ?: AudioManager.MODE_NORMAL
+        } catch (_: Exception) {
+            AudioManager.MODE_NORMAL
+        }
+        return OverlayDisplayGate.isCallAudioMode(mode) ||
+            OverlayDisplayGate.isCallUiPackage(lastForegroundPackage)
+    }
+
+    /** #17/#18: may the block overlay be shown right now? */
+    private fun overlayGateDecision(): OverlayDisplayGate.Decision {
+        return OverlayDisplayGate.decide(
+            keyguardLocked = isKeyguardLockedNow(),
+            callActive = isCallActiveNow()
+        )
+    }
+
+    /**
+     * #18: show a previously deferred overlay launch once the phone is
+     * unlocked — but only if its lock is still running ("still applies").
+     * A lock that expired while the phone sat locked is dropped, never
+     * resurrected.
+     */
+    private fun flushDeferredOverlay() {
+        val parked = deferredOverlay ?: return
+        if (isKeyguardLockedNow()) return
+        deferredOverlay = null
+        if (!preferences.isCurrentlyLocked()) return
+        launchLockdownOverlay(
+            triggerWord = parked.first,
+            sourceApp = parked.second,
+            endTimeEpoch = parked.third,
+            force = true
+        )
+    }
+
     /**
      * #26(a) warning surface: a long Toast over the app the user is currently
      * in. A Toast (not a notification) keeps the owner's "notifications stay
@@ -120,6 +213,22 @@ class ShieldAccessibilityService : AccessibilityService() {
         repository = app.repository
 
         preferences = app.preferences
+
+        // #18: wake the deferred-overlay flush the moment the user unlocks.
+        // ACTION_USER_PRESENT is a protected system broadcast; NOT_EXPORTED
+        // is the correct flag for it on API 33+.
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                userPresentReceiver,
+                IntentFilter(Intent.ACTION_USER_PRESENT),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        } catch (e: Exception) {
+            // The ticker backstop in flushDeferredOverlay's callers still
+            // covers the unlock case if registration is unavailable.
+            Log.w(TAG, "Could not register USER_PRESENT receiver", e)
+        }
 
         // Keep active rules cached in memory for zero-latency scanning
         launchSafely("keywords") {
@@ -191,6 +300,12 @@ class ShieldAccessibilityService : AccessibilityService() {
                         lastForegroundPackage = activePkg
                     }
 
+                    // 2a. #18 backstop: if an overlay launch was deferred
+                    //     because the phone was locked, show it now that the
+                    //     user has unlocked (the USER_PRESENT receiver is the
+                    //     fast path; this covers a missed broadcast).
+                    flushDeferredOverlay()
+
                     // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
                     //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
                     if (preferences.isCurrentlyLocked()) {
@@ -228,29 +343,46 @@ class ShieldAccessibilityService : AccessibilityService() {
 
                     // 2c. Keyword Grace re-check: a 10-second free window just ended.
                     //     If the trigger word is still on screen, re-block WITHOUT
-                    //     the grace button; if it is gone, close the episode so the
-                    //     next appearance starts a fresh episode.
-                    //     TWO loop guards (v0.4.9 regression — the endless 5:00
+                    //     the grace button.
+                    //     Loop guards (v0.4.9 regression — the endless 5:00
                     //     countdown): (1) never scan our OWN window — the block
                     //     screen itself prints the trigger word as the block
                     //     reason, so scanning it "finds" the word forever and
-                    //     re-blocks after every expiry; (2) the re-check is
-                    //     consumed the first time it runs, so it can fire at
-                    //     most once per grace window, never once per expiry.
-                    //     THIRD guard: the re-check only runs against a real app
-                    //     window. If the notification shade or keyboard happens to
-                    //     be the active root on the tick the window ends, the
-                    //     word would look "gone", the episode would be cleared,
-                    //     and the one-time button would come back by mistake.
+                    //     re-blocks after every expiry; (2) the re-check only
+                    //     runs against a real app window — if the notification
+                    //     shade or keyboard happens to be the active root on the
+                    //     tick the window ends, the scan is skipped entirely
+                    //     (the re-check stays pending, see below).
+                    //     #1 FIX (this batch): the re-check is consumed ONLY
+                    //     when its scan FINDS the word (and the re-block
+                    //     fires). The old code consumed the re-check BEFORE
+                    //     scanning and, on a "not found" verdict, also
+                    //     cleared the episode — but this scan reads only the
+                    //     extracted window tree (a capped traversal), while
+                    //     the match that opened the episode may have come
+                    //     from an accessibility event's own text payload, so
+                    //     a single scan could call a still-present word
+                    //     "gone". The one-shot re-check was spent, the
+                    //     episode was closed, and on a static page (no new
+                    //     events) the block screen never came back. Now an
+                    //     absent verdict leaves the episode untouched and
+                    //     the re-check retries on the next ticks (bounded by
+                    //     MAX_RECHECK_ABSENT_SCANS, after which the window
+                    //     is consumed but the episode is STILL not cleared —
+                    //     closing an episode is the event path's job, via
+                    //     onKeywordAbsent on real content scans).
                     val graceEpisode = preferences.getKeywordGraceEpisode()
-                    if (graceEpisode.word.isNotBlank() && graceEpisode.graceUsed &&
-                        graceEpisode.graceUntilMs > 0L && graceEpisode.graceUntilMs <= now &&
+                    if (!KeywordGraceLogic.isGraceRecheckPending(graceEpisode, now) &&
+                        graceEpisode.graceUntilMs > now
+                    ) {
+                        // A fresh window is running (or none): forget any
+                        // absent-scan count an older window accumulated.
+                        graceRecheckAbsentScans = 0
+                    }
+                    if (KeywordGraceLogic.isGraceRecheckPending(graceEpisode, now) &&
                         rootNode != null && rootPkg.isNotBlank() && rootPkg != packageName &&
                         !isIgnoredSystemUiPackage(rootPkg)
                     ) {
-                        val consumedEpisode = KeywordGraceLogic.onGraceRecheckConsumed(graceEpisode)
-                        preferences.saveKeywordGraceEpisode(consumedEpisode)
-
                         val episodeKeyword = cachedKeywords.firstOrNull { it.text == graceEpisode.word }
                         val stillPresent = episodeKeyword != null &&
                             TextContentScanner.findMatchingKeyword(
@@ -258,6 +390,10 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 listOf(episodeKeyword)
                             ) != null
                         if (stillPresent) {
+                            graceRecheckAbsentScans = 0
+                            preferences.saveKeywordGraceEpisode(
+                                KeywordGraceLogic.onGraceRecheckConsumed(graceEpisode)
+                            )
                             triggerLockdown(
                                 triggerWord = graceEpisode.word,
                                 sourceApp = resolveReadableAppName(
@@ -266,9 +402,13 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 graceAvailable = false
                             )
                         } else {
-                            preferences.saveKeywordGraceEpisode(
-                                KeywordGraceLogic.onKeywordAbsent(consumedEpisode, now)
-                            )
+                            graceRecheckAbsentScans += 1
+                            if (KeywordGraceLogic.shouldConsumeGraceRecheck(graceRecheckAbsentScans)) {
+                                graceRecheckAbsentScans = 0
+                                preferences.saveKeywordGraceEpisode(
+                                    KeywordGraceLogic.onGraceRecheckConsumed(graceEpisode)
+                                )
+                            }
                         }
                     }
 
@@ -567,8 +707,15 @@ class ShieldAccessibilityService : AccessibilityService() {
             }
         }
 
-        performGlobalAction(GLOBAL_ACTION_BACK)
-        performGlobalAction(GLOBAL_ACTION_HOME)
+        // #17: while a call is ringing / in progress, do not yank the
+        // user around with BACK/HOME — on some OEMs that buries the call
+        // screen. The lock above is already recorded; the overlay gate
+        // stands the block screen down until the call ends, and the
+        // enforcement loop then surfaces it if the lock is still running.
+        if (!isCallActiveNow()) {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            performGlobalAction(GLOBAL_ACTION_HOME)
+        }
 
         launchLockdownOverlay(
             triggerWord = triggerWord,
@@ -585,6 +732,20 @@ class ShieldAccessibilityService : AccessibilityService() {
         endTimeEpoch: Long,
         force: Boolean = false
     ) {
+        // #17/#18 gate (see OverlayDisplayGate): never launch the block
+        // screen over an incoming/ongoing call, and never over the lock
+        // screen. A call needs no parking — the enforcement loop retries
+        // on its own once the call ends. A locked phone parks the launch
+        // in deferredOverlay; flushDeferredOverlay() fires it on unlock.
+        when (overlayGateDecision()) {
+            OverlayDisplayGate.Decision.YIELD_TO_CALL -> return
+            OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
+                deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
+                return
+            }
+            OverlayDisplayGate.Decision.SHOW -> Unit
+        }
+
         // Enforcement paths call this on every accessibility event and every
         // tick while the user sits in a non-allowed app. Without a limit that
         // floods the main thread with startActivity calls. A fresh block
@@ -600,6 +761,18 @@ class ShieldAccessibilityService : AccessibilityService() {
             // the stored lock state now, not the end time captured when the
             // runnable was queued, so an expired block can never reappear.
             if (!preferences.isCurrentlyLocked()) return@post
+
+            // The gate may also have flipped while this runnable sat in the
+            // queue (a call started ringing, the phone got locked): stand
+            // down the same way as a fresh launch would.
+            when (overlayGateDecision()) {
+                OverlayDisplayGate.Decision.YIELD_TO_CALL -> return@post
+                OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
+                    deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
+                    return@post
+                }
+                OverlayDisplayGate.Decision.SHOW -> Unit
+            }
 
             val lockIntent = Intent(this, LockdownActivity::class.java).apply {
                 addFlags(
@@ -667,6 +840,11 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(userPresentReceiver)
+        } catch (_: Exception) {
+            // Never registered (registration failed in onCreate) — fine.
+        }
         // Drop any queued block-screen relaunches along with the coroutines.
         mainHandler.removeCallbacksAndMessages(null)
         serviceScope.cancel()
