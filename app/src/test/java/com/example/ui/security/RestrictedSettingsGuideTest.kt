@@ -47,6 +47,6 @@ class RestrictedSettingsGuideTest {
         assertTrue(joined.contains("Allow restricted settings"))
         // And the destination the user must reach afterwards.
         assertTrue(joined.contains("Accessibility"))
-        assertTrue(joined.contains("X Blocker"))
+        assertTrue(joined.contains("usafe"))
     }
 }
