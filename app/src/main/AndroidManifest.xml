@@ -96,6 +96,33 @@
             android:excludeFromRecents="false"
             android:theme="@style/Theme.MyApplication" />
 
+        <!-- App-limit warning (#47 Scope A): the one-shot "warning N
+             of 2" page for the first two opens of an over-limit app.
+             NOT a lockdown: the service closes the app and shows this
+             page; the user dismisses it freely. -->
+        <activity
+            android:name=".ui.lockdown.AppLimitWarningActivity"
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="false"
+            android:theme="@style/Theme.MyApplication" />
+
+        <!-- Block warning (#47 Scope B): the warning presentation of
+             a real lockdown, used for the first block of a section
+             (keyword / adult / custom) each day. The lock state in
+             preferences decides which of this and LockdownActivity
+             the service launches. -->
+        <activity
+            android:name=".ui.lockdown.BlockWarningActivity"
+            android:exported="false"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="false"
+            android:theme="@style/Theme.MyApplication" />
+
         <!-- Install Guard (#27): the 10-second PIN-confirm prompt shown
              when a new app install is attempted while the guard is ON. -->
         <activity

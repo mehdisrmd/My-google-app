@@ -21,6 +21,7 @@ import com.example.service.KeywordGraceEpisode
 import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
 import com.example.ui.theme.SeasonalTheme
+import com.example.util.BlockEscalationPolicy
 import com.example.util.DayMath
 import com.example.util.PinSecurity
 import com.example.widget.StreakWidgetProvider
@@ -1329,7 +1330,8 @@ class ShieldPreferences(private val context: Context) {
         triggerWord: String,
         sourceApp: String,
         graceAvailable: Boolean = false,
-        lockPackage: String? = null
+        lockPackage: String? = null,
+        warningSection: String = ""
     ): Long {
         val now = System.currentTimeMillis()
         val existingEnd = getActiveLockEndTime()
@@ -1344,10 +1346,23 @@ class ShieldPreferences(private val context: Context) {
             .putString(KEY_ACTIVE_LOCK_APP, sourceApp)
             .putString(KEY_ACTIVE_LOCK_PACKAGE, lockPackage ?: "")
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, graceAvailable)
+            .putString(KEY_ACTIVE_LOCK_WARNING_SECTION, warningSection)
             .putLong(KEY_LAST_INCIDENT_TIME, now)
             .apply()
         _activeLockEndTime.value = endTime
         return endTime
+    }
+
+    /**
+     * #47 (batch 3) Scope B: the block section ("KEYWORD" / "ADULT" /
+     * "CUSTOM") whose WARNING presentation the current lock uses, or
+     * "" when the lock shows the standard block page. Written by
+     * [startLockdown]; read by the service's overlay launcher and by
+     * the warning page itself, so every relaunch of a first-of-day
+     * block keeps the warning presentation for the lock's whole life.
+     */
+    fun getActiveLockWarningSection(): String {
+        return prefs.getString(KEY_ACTIVE_LOCK_WARNING_SECTION, "") ?: ""
     }
 
     /**
@@ -1369,6 +1384,7 @@ class ShieldPreferences(private val context: Context) {
             .remove(KEY_ACTIVE_LOCK_TRIGGER)
             .remove(KEY_ACTIVE_LOCK_APP)
             .remove(KEY_ACTIVE_LOCK_PACKAGE)
+            .remove(KEY_ACTIVE_LOCK_WARNING_SECTION)
             .apply()
         _activeLockEndTime.value = 0L
         // #30 (batch 2): a lock just ended — the next entry into the app
@@ -1595,6 +1611,52 @@ class ShieldPreferences(private val context: Context) {
             editor.putBoolean(getTodayLimitWarningKey(pkg), true)
         }
         editor.apply()
+    }
+
+    // #47 (batch 3) Scope A: how many times an over-limit app has been
+    // OPENED today — the escalation counter (see BlockEscalationPolicy).
+    // Day-keyed exactly like the usage counters, so it resets at the
+    // same local midnight as the budget itself. Keyed by the limit's
+    // package name, which is the identity both enforcement paths match
+    // on.
+    private fun getTodayAppLimitOpensKey(packageName: String): String {
+        val todayDay = DayMath.localEpochDay()
+        return "limit_opens_${todayDay}_$packageName"
+    }
+
+    fun getTodayAppLimitOpens(packageName: String): Int {
+        return prefs.getInt(getTodayAppLimitOpensKey(packageName), 0)
+    }
+
+    /** Records one more over-limit open of [packageName] today; returns the new count. */
+    @Synchronized
+    fun recordAppLimitOpen(packageName: String): Int {
+        val key = getTodayAppLimitOpensKey(packageName)
+        val updated = prefs.getInt(key, 0) + 1
+        prefs.edit().putInt(key, updated).apply()
+        return updated
+    }
+
+    // #47 (batch 3) Scope B: block events counted per section per day.
+    // The first block of a section each day presents the warning page
+    // variant; the counters are day-keyed so every section warns once
+    // again tomorrow.
+    private fun getTodaySectionBlocksKey(section: BlockEscalationPolicy.Section): String {
+        val todayDay = DayMath.localEpochDay()
+        return "section_blocks_${todayDay}_${section.name}"
+    }
+
+    fun getTodaySectionBlockCount(section: BlockEscalationPolicy.Section): Int {
+        return prefs.getInt(getTodaySectionBlocksKey(section), 0)
+    }
+
+    /** Records one more block in [section] today; returns the new count. */
+    @Synchronized
+    fun recordSectionBlock(section: BlockEscalationPolicy.Section): Int {
+        val key = getTodaySectionBlocksKey(section)
+        val updated = prefs.getInt(key, 0) + 1
+        prefs.edit().putInt(key, updated).apply()
+        return updated
     }
 
     fun getDayAppUsageMinutes(daysAgo: Int, packageNames: List<String>): Int {
@@ -1920,6 +1982,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ACTIVE_LOCK_TRIGGER = "key_active_lock_trigger"
         private const val KEY_ACTIVE_LOCK_APP = "key_active_lock_app"
         private const val KEY_ACTIVE_LOCK_PACKAGE = "key_active_lock_package"
+        private const val KEY_ACTIVE_LOCK_WARNING_SECTION = "key_active_lock_warning_section"
         private const val KEY_LAST_INCIDENT_TIME = "key_last_incident_time"
         private const val KEY_STREAK_START_TIME = "key_streak_start_time"
         private const val KEY_LONGEST_STREAK = "key_longest_streak"

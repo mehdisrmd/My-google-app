@@ -36,10 +36,13 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.deviceowner.DeviceOwnerManager
+import com.example.ui.lockdown.AppLimitWarningActivity
+import com.example.ui.lockdown.BlockWarningActivity
 import com.example.ui.lockdown.DataCapWarningActivity
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
+import com.example.util.BlockEscalationPolicy
 import com.example.util.DataCapEnforcer
 import com.example.util.TransportStateReader
 import kotlinx.coroutines.CancellationException
@@ -183,6 +186,21 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     @Volatile
     private var lastDataCapWarningLaunchMs = 0L
+
+    /**
+     * #47 (batch 3) Scope A: the package whose over-limit warning is
+     * currently engaged — the warning page is up, or the app has not
+     * left the foreground since the warning fired. One continuous
+     * presence of an over-limit app counts as ONE open; the engagement
+     * ends when the foreground moves somewhere else entirely (the
+     * ticker and the event path both release it). In-memory only: a
+     * service restart may count one extra open, never fewer warnings.
+     */
+    @Volatile
+    private var appLimitWarningEngagedPkg: String? = null
+
+    @Volatile
+    private var lastAppLimitWarningLaunchMs = 0L
 
 
     // Guards "is a lock running? -> start one" so the ticker thread and the
@@ -387,6 +405,18 @@ class ShieldAccessibilityService : AccessibilityService() {
                         lastForegroundPackage = activePkg
                     }
 
+                    // #47 Scope A: an app-limit warning engagement ends
+                    // once the foreground is somewhere else entirely
+                    // (launcher or another app) — the warned app's next
+                    // presence is a new open. Our own package (the
+                    // warning page itself) and the warned app keep it.
+                    val engagedPkg = appLimitWarningEngagedPkg
+                    if (engagedPkg != null && activePkg.isNotBlank() &&
+                        activePkg != engagedPkg && activePkg != packageName
+                    ) {
+                        appLimitWarningEngagedPkg = null
+                    }
+
                     // 2a. #18 backstop: if an overlay launch was deferred
                     //     because the phone was locked, show it now that the
                     //     user has unlocked (the USER_PRESENT receiver is the
@@ -561,7 +591,14 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 ),
                                 graceAvailable = false,
                                 lockPackage = activePkg.ifBlank { lastForegroundPackage }
-                                    .takeIf { it.isNotBlank() }
+                                    .takeIf { it.isNotBlank() },
+                                // #47 Scope B: a grace re-block is a new
+                                // block event in the episode word's
+                                // section (the episode's first block was
+                                // counted on the event path).
+                                warningSection = episodeKeyword?.category?.let {
+                                    BlockEscalationPolicy.sectionForKeywordCategory(it)
+                                } ?: BlockEscalationPolicy.Section.KEYWORD
                             )
                         } else {
                             graceRecheckAbsentScans += 1
@@ -631,18 +668,11 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 showDailyLimitOneMinuteWarning(matchedLimit.appName)
                             }
                             if (AppLimitBudget.isExceeded(usedMins, matchedLimit.dailyLimitMinutes, matchedLimit.isEnabled)) {
-                                // Per-app budget spent: the app stays blocked
-                                // until the daily window resets at midnight —
-                                // not for one short lock duration.
-                                triggerLockdown(
-                                    triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
-                                    sourceApp = matchedLimit.appName,
-                                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
-                                        nowMs = now,
-                                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                                    ),
-                                    lockPackage = matchedLimit.packageName
-                                )
+                                // #47 (batch 3) Scope A: escalating
+                                // enforcement — opens 1–2 get the warning
+                                // page + close, open 3+ gets the
+                                // until-midnight timer block.
+                                enforceDailyLimitExceeded(matchedLimit, now)
                             }
 
                         }
@@ -712,6 +742,19 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
 
         if (pkgName == packageName) return
+
+        // #47 Scope A: a real window change to any other app ends the
+        // warned app's engagement (the ticker releases it too; this is
+        // the fast path). Only window-state events count — a
+        // notification event carries the NOTIFYING app's package, not
+        // the foreground, and must not mint a phantom "new open".
+        val engagedPkgEvent = appLimitWarningEngagedPkg
+        if (engagedPkgEvent != null &&
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            pkgName != engagedPkgEvent
+        ) {
+            appLimitWarningEngagedPkg = null
+        }
 
         val rootNode = try {
             rootInActiveWindow
@@ -820,17 +863,10 @@ class ShieldAccessibilityService : AccessibilityService() {
                 appName = matchedLimit.appName
             )
             if (AppLimitBudget.isExceeded(usedMins, matchedLimit.dailyLimitMinutes, matchedLimit.isEnabled)) {
-                // Per-app budget spent: blocked until the daily window
-                // resets at midnight (see AppLimitBudget).
-                triggerLockdown(
-                    triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
-                    sourceApp = matchedLimit.appName,
-                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
-                        nowMs = now,
-                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                    ),
-                    lockPackage = matchedLimit.packageName
-                )
+                // #47 (batch 3) Scope A: the same escalation as the
+                // ticker path — warning + close for opens 1–2, the
+                // until-midnight timer block from open 3.
+                enforceDailyLimitExceeded(matchedLimit, now)
                 return
             }
         }
@@ -909,14 +945,21 @@ class ShieldAccessibilityService : AccessibilityService() {
                     blockReason = "Adult site",
                     blockedUrl = blockedHost,
                     lockPackage = activeRootPkg,
-                    incidentAlreadyRecorded = true
+                    incidentAlreadyRecorded = true,
+                    // #47 Scope B: the blocklist adult path is the
+                    // ADULT section by construction.
+                    warningSection = BlockEscalationPolicy.Section.ADULT
                 )
                 return
             }
         }
 
-        val matchedWord = TextContentScanner.findMatchingKeyword(screenTexts, cachedKeywords)
-        if (matchedWord != null) {
+        // #47 Scope B: the match keeps its category — preset keyword
+        // blocks and the user's Custom Block entries escalate in
+        // separate sections.
+        val matchedMatch = TextContentScanner.findMatchingKeywordMatch(screenTexts, cachedKeywords)
+        if (matchedMatch != null) {
+            val matchedWord = matchedMatch.matchedKeyword
             // Keyword Grace: first match of an episode blocks WITH the
             // one-time 10-second free button; a match inside the free window
             // is suppressed; a match after the window (word still on screen)
@@ -933,7 +976,10 @@ class ShieldAccessibilityService : AccessibilityService() {
                         triggerWord = matchedWord,
                         sourceApp = resolveReadableAppName(activeRootPkg),
                         graceAvailable = decision.graceAvailable,
-                        lockPackage = activeRootPkg
+                        lockPackage = activeRootPkg,
+                        warningSection = BlockEscalationPolicy.sectionForKeywordCategory(
+                            matchedMatch.category
+                        )
                     )
                 }
             }
@@ -950,6 +996,92 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * #47 (batch 3) Scope A: an over-limit app is in the foreground
+     * (called by both the ticker and the event path). Escalation per
+     * app per day (see BlockEscalationPolicy): opens 1 and 2 show the
+     * warning page and close the app — NO lockdown is started; open 3
+     * and beyond start the until-midnight timer block exactly as #26
+     * built it.
+     *
+     * One continuous presence counts as one open: while the warning
+     * for this app is engaged (the page is up, or the app never left
+     * the foreground), repeat detections change nothing.
+     *
+     * NO 10-second grace in this section: KeywordGraceLogic is
+     * consulted only on the keyword paths (the event-path match and
+     * the ticker's post-grace re-check) — this path never read it and
+     * still doesn't. An over-limit foreground is intercepted on the
+     * first tick/event that sees it, and the timer block starts with
+     * graceAvailable = false, as before.
+     */
+    private fun enforceDailyLimitExceeded(matchedLimit: AppUsageLimit, now: Long) {
+        val pkg = matchedLimit.packageName
+        if (appLimitWarningEngagedPkg == pkg) return
+        val opensToday = preferences.getTodayAppLimitOpens(pkg)
+        when (BlockEscalationPolicy.appLimitAction(opensToday)) {
+            BlockEscalationPolicy.AppLimitAction.WARNING -> {
+                preferences.recordAppLimitOpen(pkg)
+                appLimitWarningEngagedPkg = pkg
+                // Close the app (the same BACK/HOME as a block, minus
+                // the call case), then put the warning page over the
+                // launcher. No lock is started and nothing is recorded
+                // in the block log — a warning is not a block.
+                if (!isCallActiveNow()) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                }
+                launchAppLimitWarning(
+                    appName = matchedLimit.appName,
+                    warningNumber = BlockEscalationPolicy.appLimitWarningNumber(opensToday)
+                )
+            }
+            BlockEscalationPolicy.AppLimitAction.BLOCK -> {
+                preferences.recordAppLimitOpen(pkg)
+                triggerLockdown(
+                    triggerWord = "Daily Limit (${matchedLimit.dailyLimitMinutes}m): ${matchedLimit.appName}",
+                    sourceApp = matchedLimit.appName,
+                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
+                        nowMs = now,
+                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
+                    ),
+                    lockPackage = matchedLimit.packageName
+                )
+            }
+        }
+    }
+
+    /** Launches the Scope A warning page (see [enforceDailyLimitExceeded]). */
+    private fun launchAppLimitWarning(appName: String, warningNumber: Int) {
+        // Same call / lock-screen gate as the other overlay pages:
+        // never cover a call or the keyguard. A gated launch is simply
+        // dropped — the open was counted and the app closed; the next
+        // open escalates.
+        if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed - lastAppLimitWarningLaunchMs < APP_LIMIT_WARNING_RELAUNCH_MIN_INTERVAL_MS) return
+        lastAppLimitWarningLaunchMs = nowElapsed
+        mainHandler.post {
+            if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return@post
+            try {
+                startActivity(
+                    Intent(this, AppLimitWarningActivity::class.java).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                        )
+                        putExtra(AppLimitWarningActivity.EXTRA_APP_NAME, appName)
+                        putExtra(AppLimitWarningActivity.EXTRA_WARNING_NUMBER, warningNumber)
+                    }
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start AppLimitWarningActivity", e)
+            }
+        }
+    }
+
     private fun triggerLockdown(
         triggerWord: String,
         sourceApp: String,
@@ -958,7 +1090,8 @@ class ShieldAccessibilityService : AccessibilityService() {
         blockReason: String? = null,
         blockedUrl: String? = null,
         lockPackage: String? = null,
-        incidentAlreadyRecorded: Boolean = false
+        incidentAlreadyRecorded: Boolean = false,
+        warningSection: BlockEscalationPolicy.Section? = null
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         // Check-then-start must be one atomic step: the 1-second ticker (IO
@@ -968,12 +1101,29 @@ class ShieldAccessibilityService : AccessibilityService() {
         // incident is not recorded a second time.
         val endTime = synchronized(lockdownGate) {
             if (preferences.isCurrentlyLocked()) return
+            // #47 (batch 3) Scope B: count this block in its section —
+            // only here, where a lock actually starts, so a trigger
+            // swallowed by a running lock is not a phantom block event.
+            // The FIRST block of the section today stores the section
+            // with the lock, which makes every launch of this lock
+            // present the warning page variant; later blocks store ""
+            // and get the standard block page.
+            val warningSectionName = warningSection?.let { section ->
+                val alreadyToday = preferences.getTodaySectionBlockCount(section)
+                preferences.recordSectionBlock(section)
+                if (BlockEscalationPolicy.showsWarningPresentation(alreadyToday)) {
+                    section.name
+                } else {
+                    ""
+                }
+            } ?: ""
             preferences.startLockdown(
                 durationMinutes = durationMinutes,
                 triggerWord = triggerWord,
                 sourceApp = sourceApp,
                 graceAvailable = graceAvailable,
-                lockPackage = lockPackage
+                lockPackage = lockPackage,
+                warningSection = warningSectionName
             )
         }
 
@@ -1594,6 +1744,29 @@ class ShieldAccessibilityService : AccessibilityService() {
                 OverlayDisplayGate.Decision.SHOW -> Unit
             }
 
+            // #47 (batch 3) Scope B: the stored lock says which page
+            // presents it — the warning variant for the first block of
+            // a section today, the standard block page otherwise. The
+            // stored value (not the caller's) decides, so enforcement
+            // relaunches throughout the lock's life agree with the
+            // launch that started it.
+            if (preferences.getActiveLockWarningSection().isNotBlank()) {
+                val warningIntent = Intent(this, BlockWarningActivity::class.java).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                    )
+                }
+                try {
+                    startActivity(warningIntent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not start BlockWarningActivity", e)
+                }
+                return@post
+            }
+
             val lockIntent = Intent(this, LockdownActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -1826,5 +1999,8 @@ class ShieldAccessibilityService : AccessibilityService() {
         // #46: node budget for one Settings-page switch hunt, mirroring
         // TextContentScanner's traversal cap.
         const val DATA_CAP_NODE_BUDGET = 2500
+        // #47: the app-limit warning page's own relaunch throttle,
+        // mirroring the data-cap warning's.
+        const val APP_LIMIT_WARNING_RELAUNCH_MIN_INTERVAL_MS = 3_000L
     }
 }
