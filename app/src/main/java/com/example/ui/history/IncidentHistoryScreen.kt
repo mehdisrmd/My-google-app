@@ -91,6 +91,7 @@ private fun localizedBlockReason(reason: String?, isPersian: Boolean): String? {
     return when (reason) {
         "Adult site" -> "سایت بزرگسال"
         "Daily app limit reached" -> "رسیدن به سقف روزانه برنامه"
+        "Daily data limit reached" -> "رسیدن به سقف روزانه اینترنت"
         "Blocked app section" -> "بخش مسدود برنامه"
         "Scheduled focus session" -> "جلسه تمرکز زمان‌بندی‌شده"
         "Tamper attempt" -> "تلاش برای دست‌کاری"

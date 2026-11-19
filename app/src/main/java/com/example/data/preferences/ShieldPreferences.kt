@@ -235,6 +235,15 @@ class ShieldPreferences(private val context: Context) {
     private val _userBlocklistDomains = MutableStateFlow(getUserBlocklistDomains())
     val userBlocklistDomains: StateFlow<Set<String>> = _userBlocklistDomains.asStateFlow()
 
+    // #43 (batch 2): daily data-usage caps in megabytes, per transport;
+    // 0 = no cap. Enforced by the accessibility service like the daily
+    // app limits (lockdown until midnight).
+    private val _dataLimitWifiMb = MutableStateFlow(getDataLimitWifiMb())
+    val dataLimitWifiMb: StateFlow<Int> = _dataLimitWifiMb.asStateFlow()
+
+    private val _dataLimitMobileMb = MutableStateFlow(getDataLimitMobileMb())
+    val dataLimitMobileMb: StateFlow<Int> = _dataLimitMobileMb.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -790,6 +799,38 @@ class ShieldPreferences(private val context: Context) {
     fun setUserBlocklistDomains(domains: Set<String>) {
         prefs.edit().putStringSet(KEY_USER_BLOCKLIST_DOMAINS, domains).apply()
         _userBlocklistDomains.value = domains
+    }
+
+    // #43 (batch 2): daily data caps (MB per day, 0 = off).
+    fun getDataLimitWifiMb(): Int = prefs.getInt(KEY_DATA_LIMIT_WIFI_MB, 0)
+
+    fun setDataLimitWifiMb(mb: Int) {
+        prefs.edit().putInt(KEY_DATA_LIMIT_WIFI_MB, mb).apply()
+        _dataLimitWifiMb.value = mb
+    }
+
+    fun getDataLimitMobileMb(): Int = prefs.getInt(KEY_DATA_LIMIT_MOBILE_MB, 0)
+
+    fun setDataLimitMobileMb(mb: Int) {
+        prefs.edit().putInt(KEY_DATA_LIMIT_MOBILE_MB, mb).apply()
+        _dataLimitMobileMb.value = mb
+    }
+
+    // #43 (batch 2): TrafficStats fallback baselines — the since-boot
+    // counters captured at the first read of each local day, so the
+    // fallback meter can report per-day usage. See DataUsageMeter.
+    fun getDataBaselineDay(): String = prefs.getString(KEY_DATA_BASELINE_DAY, "") ?: ""
+
+    fun getDataBaselineWifi(): Long = prefs.getLong(KEY_DATA_BASELINE_WIFI, 0L)
+
+    fun getDataBaselineMobile(): Long = prefs.getLong(KEY_DATA_BASELINE_MOBILE, 0L)
+
+    fun setDataBaselines(day: String, wifiBytes: Long, mobileBytes: Long) {
+        prefs.edit()
+            .putString(KEY_DATA_BASELINE_DAY, day)
+            .putLong(KEY_DATA_BASELINE_WIFI, wifiBytes)
+            .putLong(KEY_DATA_BASELINE_MOBILE, mobileBytes)
+            .apply()
     }
 
     /**
@@ -1733,6 +1774,8 @@ class ShieldPreferences(private val context: Context) {
         _isVpnConfigBlockEnabled.value = false
         _blocklistUpdatePending.value = false
         _userBlocklistDomains.value = emptySet()
+        _dataLimitWifiMb.value = 0
+        _dataLimitMobileMb.value = 0
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
@@ -1767,6 +1810,11 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
         private const val KEY_BLOCKLIST_UPDATE_PENDING = "key_blocklist_update_pending"
         private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
+        private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
+        private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
+        private const val KEY_DATA_BASELINE_DAY = "key_data_baseline_day"
+        private const val KEY_DATA_BASELINE_WIFI = "key_data_baseline_wifi"
+        private const val KEY_DATA_BASELINE_MOBILE = "key_data_baseline_mobile"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"

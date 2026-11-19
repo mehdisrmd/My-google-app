@@ -35,6 +35,7 @@ import com.example.deviceowner.DeviceOwnerManager
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
+import com.example.util.DataUsageBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +150,8 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     @Volatile
     private var lastUsageTickTimestamp = 0L
+    // #43 (batch 2): the data-cap check runs ~4x a minute, not per tick.
+    private var lastDataUsageCheckMs = 0L
 
 
     // Guards "is a lock running? -> start one" so the ticker thread and the
@@ -614,6 +617,50 @@ class ShieldAccessibilityService : AccessibilityService() {
                         }
                     } else {
                         lastUsageTickTimestamp = now
+                    }
+
+                    // 3b. Daily data-usage caps (#43, batch 2): separate
+                    // Wi-Fi and mobile budgets for the whole device,
+                    // enforced exactly like the daily app limits above —
+                    // a lockdown until midnight. The trigger word starts
+                    // with "Daily Limit" so the block screen shows its
+                    // daily "Time's Up" variant, and BlockLogPolicy maps
+                    // it to its own reason. The stats query is too heavy
+                    // for the 1-second tick, so it runs ~4x a minute.
+                    if (preferences.isProtectionEnabled() &&
+                        !preferences.isCurrentlyLocked() &&
+                        now - lastDataUsageCheckMs >= 15_000L
+                    ) {
+                        lastDataUsageCheckMs = now
+                        val wifiCapMb = preferences.getDataLimitWifiMb()
+                        val mobileCapMb = preferences.getDataLimitMobileMb()
+                        if (wifiCapMb > 0 || mobileCapMb > 0) {
+                            val usage = DataUsageMeter.todayUsageBytes(
+                                this@ShieldAccessibilityService,
+                                preferences
+                            )
+                            val exceededTransport = when {
+                                DataUsageBudget.isExceeded(
+                                    usage.wifiBytes,
+                                    DataUsageBudget.mbToBytes(wifiCapMb)
+                                ) -> "Wi-Fi"
+                                DataUsageBudget.isExceeded(
+                                    usage.mobileBytes,
+                                    DataUsageBudget.mbToBytes(mobileCapMb)
+                                ) -> "Mobile"
+                                else -> null
+                            }
+                            if (exceededTransport != null) {
+                                triggerLockdown(
+                                    triggerWord = "Daily Limit: Data ($exceededTransport)",
+                                    sourceApp = "Data Usage",
+                                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
+                                        nowMs = now,
+                                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
+                                    )
+                                )
+                            }
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e

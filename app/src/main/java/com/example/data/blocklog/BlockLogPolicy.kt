@@ -133,6 +133,7 @@ object BlockLogPolicy {
      */
     fun reasonFor(triggerWord: String): String = when {
         triggerWord.startsWith("Adult Site Blocked:") -> "Adult site"
+        triggerWord.startsWith("Daily Limit: Data") -> "Daily data limit reached"
         triggerWord.startsWith("Daily Limit") -> "Daily app limit reached"
         triggerWord.startsWith("Section Blocked:") -> "Blocked app section"
         triggerWord.startsWith("Smart Focus:") -> "Scheduled focus session"
