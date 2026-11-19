@@ -1,6 +1,8 @@
 package com.example.ui.keywords
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,13 +43,17 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +86,29 @@ fun KeywordManagerScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
+
+    // Multi-select state for the Custom Blacklist tab (#15). Selection is a
+    // set of keyword ids; all transitions go through KeywordSelection so the
+    // math stays unit-testable.
+    var isSelectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+
+    fun exitSelectionMode() {
+        isSelectionMode = false
+        selectedIds = emptySet()
+    }
+
+    // Selection only exists on the Custom Blacklist tab; leaving the tab
+    // always cancels it.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 1) exitSelectionMode()
+    }
+
+    // Drop ids whose rows disappeared (deleted elsewhere / list reloaded) so
+    // the toolbar count never points at ghosts.
+    LaunchedEffect(keywords) {
+        selectedIds = KeywordSelection.retainExisting(selectedIds, keywords.map { it.id })
+    }
 
     val filteredList = remember(keywords, selectedTab, searchQuery) {
         val tabFiltered = when (selectedTab) {
@@ -183,6 +215,73 @@ fun KeywordManagerScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Multi-select toolbar (#15): visible only while selecting custom
+            // rules. Delete applies to every selected id at once.
+            if (isSelectionMode) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("custom_selection_toolbar"),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonPrimary)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { exitSelectionMode() },
+                            modifier = Modifier.testTag("custom_selection_cancel_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel selection",
+                                tint = ObsidianTextSecondary
+                            )
+                        }
+                        Text(
+                            text = "${selectedIds.size} selected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(
+                            onClick = {
+                                selectedIds = KeywordSelection.selectAll(
+                                    selectedIds,
+                                    filteredList.map { it.id }
+                                )
+                            },
+                            modifier = Modifier.testTag("custom_selection_select_all_button")
+                        ) {
+                            Text(text = "Select all", color = CrimsonPrimary)
+                        }
+                        IconButton(
+                            onClick = {
+                                val idsToDelete = selectedIds
+                                exitSelectionMode()
+                                idsToDelete.forEach { id -> onDeleteKeyword(id) }
+                            },
+                            enabled = selectedIds.isNotEmpty(),
+                            modifier = Modifier.testTag("custom_selection_delete_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete selected",
+                                tint = if (selectedIds.isNotEmpty()) CrimsonPrimary
+                                else ObsidianTextSecondary
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             if (filteredList.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -213,13 +312,30 @@ fun KeywordManagerScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredList, key = { it.id }) { item ->
-                        KeywordItemCard(
-                            keyword = item,
-                            onToggle = { onToggleKeyword(item) },
-                            onDelete = if (selectedTab == 1) {
-                                { onDeleteKeyword(item.id) }
-                            } else null
-                        )
+                        if (selectedTab == 1) {
+                            CustomKeywordRow(
+                                keyword = item,
+                                isSelectionMode = isSelectionMode,
+                                isSelected = item.id in selectedIds,
+                                onToggle = { onToggleKeyword(item) },
+                                onDelete = { onDeleteKeyword(item.id) },
+                                onRowClick = {
+                                    if (isSelectionMode) {
+                                        selectedIds = KeywordSelection.toggle(selectedIds, item.id)
+                                    }
+                                },
+                                onRowLongClick = {
+                                    if (!isSelectionMode) isSelectionMode = true
+                                    selectedIds = KeywordSelection.toggle(selectedIds, item.id)
+                                }
+                            )
+                        } else {
+                            KeywordItemCard(
+                                keyword = item,
+                                onToggle = { onToggleKeyword(item) },
+                                onDelete = null
+                            )
+                        }
                     }
                 }
             }
@@ -252,20 +368,110 @@ fun KeywordManagerScreen(
     }
 }
 
+/**
+ * One row of the Custom Blacklist tab (#15): the regular keyword card wrapped
+ * in a swipe-to-dismiss shell. Swiping the row left or right deletes the rule
+ * (red delete background is revealed behind the card). While multi-select
+ * mode is active the swipe gesture is disabled so taps and long-presses
+ * drive selection instead.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomKeywordRow(
+    keyword: BlockedKeyword,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+    onRowClick: () -> Unit,
+    onRowLongClick: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value -> value != SwipeToDismissBoxValue.Settled }
+    )
+
+    // The dismiss only "settles" visually here; the actual removal happens
+    // through onDelete, which takes the row out of the list entirely.
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+            onDelete()
+        }
+    }
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = !isSelectionMode,
+        enableDismissFromEndToStart = !isSelectionMode,
+        modifier = Modifier.testTag("custom_keyword_row_${keyword.id}"),
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(CrimsonPrimary)
+                    .padding(horizontal = 20.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
+        }
+    ) {
+        KeywordItemCard(
+            keyword = keyword,
+            onToggle = onToggle,
+            onDelete = onDelete,
+            isSelectionMode = isSelectionMode,
+            isSelected = isSelected,
+            onRowClick = onRowClick,
+            onRowLongClick = onRowLongClick
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun KeywordItemCard(
     keyword: BlockedKeyword,
     onToggle: () -> Unit,
-    onDelete: (() -> Unit)?
+    onDelete: (() -> Unit)?,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onRowClick: (() -> Unit)? = null,
+    onRowLongClick: (() -> Unit)? = null
 ) {
     val isDomain = keyword.category == BlockedCategory.ADULT_DOMAIN ||
             keyword.category == BlockedCategory.CUSTOM_DOMAIN
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onRowClick != null || onRowLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = { onRowClick?.invoke() },
+                        onLongClick = { onRowLongClick?.invoke() }
+                    )
+                } else Modifier
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) CrimsonPrimary.copy(alpha = 0.18f) else ObsidianSurface
+        ),
         shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+        border = if (isSelected) {
+            androidx.compose.foundation.BorderStroke(2.dp, CrimsonPrimary)
+        } else {
+            androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+        }
     ) {
         Row(
             modifier = Modifier
@@ -278,6 +484,19 @@ fun KeywordItemCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onRowClick?.invoke() },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = CrimsonPrimary,
+                            uncheckedColor = ObsidianTextSecondary,
+                            checkmarkColor = Color.White
+                        ),
+                        modifier = Modifier.testTag("keyword_select_checkbox_${keyword.id}")
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .size(36.dp)
@@ -318,29 +537,33 @@ fun KeywordItemCard(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onDelete != null) {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = CrimsonPrimary.copy(alpha = 0.8f),
-                            modifier = Modifier.size(20.dp)
-                        )
+            // In selection mode the per-item actions step aside: the toolbar
+            // owns deletion and row taps toggle selection (#15).
+            if (!isSelectionMode) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = CrimsonPrimary.copy(alpha = 0.8f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
-                }
 
-                Switch(
-                    checked = keyword.isEnabled,
-                    onCheckedChange = { onToggle() },
-                    modifier = Modifier.testTag("toggle_${keyword.id}"),
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = CrimsonPrimary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = ObsidianBorder
+                    Switch(
+                        checked = keyword.isEnabled,
+                        onCheckedChange = { onToggle() },
+                        modifier = Modifier.testTag("toggle_${keyword.id}"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = CrimsonPrimary,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = ObsidianBorder
+                        )
                     )
-                )
+                }
             }
         }
     }
