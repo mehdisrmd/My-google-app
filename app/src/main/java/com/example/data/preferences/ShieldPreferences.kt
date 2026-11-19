@@ -14,6 +14,8 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityManager
+import com.example.data.blocklist.BlocklistSource
+import com.example.data.blocklist.BlocklistSources
 import com.example.service.InstallGuardLogic
 import com.example.service.KeywordGraceEpisode
 import com.example.service.KeywordGraceLogic
@@ -229,12 +231,13 @@ class ShieldPreferences(private val context: Context) {
     private val _adultBlocklistDomainCount = MutableStateFlow(getAdultBlocklistDomainCount())
     val adultBlocklistDomainCount: StateFlow<Int> = _adultBlocklistDomainCount.asStateFlow()
 
-    // #29 (batch 2): true when the user skipped the first-launch list
-    // download (or continued with the starter seed) — the list then
-    // counts as NOT updated and the app stays not-fully-activated until
-    // a real download succeeds.
-    private val _blocklistUpdatePending = MutableStateFlow(isBlocklistUpdatePending())
-    val blocklistUpdatePending: StateFlow<Boolean> = _blocklistUpdatePending.asStateFlow()
+    // #49 (batch 3): the blocklist repositories the updater downloads
+    // from. Persisted as one encoded string (see BlocklistSources'
+    // codec); an absent value means "never seeded" and resolves to the
+    // built-in defaults, so the user can remove or add repositories and
+    // have it stick. An empty list is a real state (all removed).
+    private val _blocklistSources = MutableStateFlow(getBlocklistSources())
+    val blocklistSources: StateFlow<List<BlocklistSource>> = _blocklistSources.asStateFlow()
 
     // #38 (batch 2): domains the user added to the adult list by hand.
     // Stored separately from the downloaded list and merged into the
@@ -799,18 +802,32 @@ class ShieldPreferences(private val context: Context) {
         _adultBlocklistDomainCount.value = domainCount
     }
 
-    // #29 (batch 2): the first-launch download was skipped (or replaced
-    // by the starter seed), so the list counts as not updated and the app
-    // must not fully activate until a real download succeeds. Any
-    // successful update (first-launch, manual, or the weekly worker)
-    // clears this flag inside the updater.
-    fun isBlocklistUpdatePending(): Boolean {
-        return prefs.getBoolean(KEY_BLOCKLIST_UPDATE_PENDING, false)
+    // #49 (batch 3): the persisted blocklist source list. Seeded from
+    // the built-in defaults on first read; removals, additions and
+    // restores are written through here and picked up by the updater on
+    // its next run.
+    fun getBlocklistSources(): List<BlocklistSource> {
+        return BlocklistSources.resolveSources(prefs.getString(KEY_BLOCKLIST_SOURCES, null))
     }
 
-    fun setBlocklistUpdatePending(pending: Boolean) {
-        prefs.edit().putBoolean(KEY_BLOCKLIST_UPDATE_PENDING, pending).apply()
-        _blocklistUpdatePending.value = pending
+    fun setBlocklistSources(sources: List<BlocklistSource>) {
+        prefs.edit()
+            .putString(KEY_BLOCKLIST_SOURCES, BlocklistSources.encodeSources(sources))
+            .apply()
+        _blocklistSources.value = sources
+    }
+
+    // #50 (batch 3): the user left the first-launch download screen
+    // without a list (Skip, or continuing with the starter seed). The
+    // wait screen is a first-launch affair only: once dismissed it
+    // never covers the app again — entry stays free, and the list is
+    // demanded only at activation (see BlocklistActivationGate).
+    fun isBlocklistGateDismissed(): Boolean {
+        return prefs.getBoolean(KEY_BLOCKLIST_GATE_DISMISSED, false)
+    }
+
+    fun setBlocklistGateDismissed(dismissed: Boolean) {
+        prefs.edit().putBoolean(KEY_BLOCKLIST_GATE_DISMISSED, dismissed).apply()
     }
 
     // #38 (batch 2): the user's own additions to the adult domain list.
@@ -1841,7 +1858,7 @@ class ShieldPreferences(private val context: Context) {
         _isClearDataGuardEnabled.value = true
         _isVpnConfigBlockEnabled.value = false
         _isForceStopGuardEnabled.value = false
-        _blocklistUpdatePending.value = false
+        _blocklistSources.value = BlocklistSources.SOURCES
         _userBlocklistDomains.value = emptySet()
         _dataLimitWifiMb.value = 0
         _dataLimitMobileMb.value = 0
@@ -1878,7 +1895,8 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ADULT_BLOCK_ENABLED = "key_adult_block_enabled"
         private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
         private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
-        private const val KEY_BLOCKLIST_UPDATE_PENDING = "key_blocklist_update_pending"
+        private const val KEY_BLOCKLIST_SOURCES = "key_blocklist_sources"
+        private const val KEY_BLOCKLIST_GATE_DISMISSED = "key_blocklist_gate_dismissed"
         private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
         private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
         private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"

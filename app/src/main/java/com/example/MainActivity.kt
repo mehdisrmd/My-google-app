@@ -62,11 +62,15 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -98,7 +102,8 @@ import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.info.AppInfo
 import com.example.ui.info.InfoAndUpdateScreen
-import com.example.ui.keywords.BlocklistActivationBlockedScreen
+import com.example.data.blocklist.BlocklistActivationGate
+import com.example.data.blocklist.BlocklistSources
 import com.example.ui.keywords.BlocklistWaitScreen
 import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
@@ -430,15 +435,25 @@ fun MainContent(
     // a wait screen covers the app and the first download runs. A failed
     // download is not a lockout — the wait screen offers Retry, or
     // continuing with the built-in starter list (see BlocklistWaitScreen).
+    // #50 (batch 3): once the user has left that screen without a list
+    // (Skip / starter seed), it never covers the app again — the
+    // dismissal is persisted, so later launches go straight in and the
+    // download page can never trap the user in a loop.
     var blocklistGatePassed by remember {
-        mutableStateOf(app.adultBlocklistStore.hasList())
+        mutableStateOf(
+            app.adultBlocklistStore.hasList() || preferences.isBlocklistGateDismissed()
+        )
     }
     var blocklistDownloadFailed by remember { mutableStateOf(false) }
 
-    // #29 (batch 2): the first-launch download was skipped (or replaced
-    // by the starter seed) — the list counts as not updated and the app
-    // stays not-fully-activated until a real download succeeds.
-    val blocklistUpdatePending by preferences.blocklistUpdatePending.collectAsStateWithLifecycle()
+    // #49 (batch 3): the persisted, user-managed blocklist repositories
+    // shown and edited in the Rules tab's Adult Block card.
+    val blocklistSources by preferences.blocklistSources.collectAsStateWithLifecycle()
+
+    // #50 (batch 3): turning protection ON while the list is still only
+    // the fallback seed shows this dialog instead of activating — the
+    // ONLY place the missing list update is demanded.
+    var showBlocklistGateDialog by remember { mutableStateOf(false) }
 
     fun startBlocklistDownload() {
         coroutineScope.launch {
@@ -689,7 +704,22 @@ fun MainContent(
                         isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
                         preferences = preferences,
                         usageRefreshTrigger = usageRefreshTrigger,
-                        onToggleProtection = { preferences.setProtectionEnabled(it) },
+                        onToggleProtection = { enable ->
+                            // #50 (batch 3): activation is the one place
+                            // the blocklist update is demanded — while no
+                            // real update has ever landed (list = fallback
+                            // seed only), refuse and route to the
+                            // update/add UI instead of switching on.
+                            // Turning OFF is never gated.
+                            if (enable && BlocklistActivationGate.isActivationBlocked(
+                                    preferences.getAdultBlocklistLastUpdatedMs()
+                                )
+                            ) {
+                                showBlocklistGateDialog = true
+                            } else {
+                                preferences.setProtectionEnabled(enable)
+                            }
+                        },
                         onChangeDuration = { preferences.setLockDurationMinutes(it) },
                         onToggleStrictMode = { preferences.setStrictModeEnabled(it) },
                         onToggleSectionRule = { rule ->
@@ -837,6 +867,23 @@ fun MainContent(
                             }
                         },
                         userBlocklistDomains = userBlocklistDomains.toList(),
+                        blocklistSources = blocklistSources,
+                        onRemoveBlocklistSource = { source ->
+                            preferences.setBlocklistSources(
+                                preferences.getBlocklistSources() - source
+                            )
+                        },
+                        onAddBlocklistSource = { source ->
+                            val current = preferences.getBlocklistSources()
+                            // One entry per list URL: adding the same
+                            // repository twice is a no-op, not a duplicate.
+                            if (current.none { it.urls.first() == source.urls.first() }) {
+                                preferences.setBlocklistSources(current + source)
+                            }
+                        },
+                        onRestoreDefaultBlocklistSources = {
+                            preferences.setBlocklistSources(BlocklistSources.SOURCES)
+                        },
                         onAddUserBlocklistDomain = { domain ->
                             val previous = preferences.getUserBlocklistDomains()
                             val updated = previous + domain
@@ -947,8 +994,10 @@ fun MainContent(
 
         // First-launch blocklist gate (#13): drawn last so it covers
         // everything — including the PIN gate — until the first domain
-        // list exists. The download keeps running behind the PIN gate on
-        // later launches; this only appears when there is no list at all.
+        // list exists. #50 (batch 3): it is a first-launch affair only —
+        // once the user leaves it without a list (Skip / starter seed)
+        // the persisted dismissal keeps it from ever covering the app
+        // again, so nobody can get stuck looping on the download page.
         if (!blocklistGatePassed) {
             BlocklistWaitScreen(
                 isFailed = blocklistDownloadFailed,
@@ -956,31 +1005,77 @@ fun MainContent(
                 onContinueWithSeed = {
                     coroutineScope.launch {
                         app.adultBlocklistUpdater.writeFallbackSeed()
-                        // #29: the starter seed is not a real update —
-                        // the app stays not-fully-activated.
-                        preferences.setBlocklistUpdatePending(true)
+                        // #50: the starter seed is not a real update, but
+                        // the user still walks into the app — and this
+                        // screen never covers it again (persisted
+                        // dismissal). The missing update is demanded
+                        // only at activation (see the gate dialog).
+                        preferences.setBlocklistGateDismissed(true)
                         blocklistGatePassed = true
                     }
                 },
                 onSkip = {
-                    // #29: skipping defers activation until a real
-                    // download succeeds (the updater clears the flag).
-                    preferences.setBlocklistUpdatePending(true)
+                    // #50: skipping lets the user into the app for good;
+                    // the list update is demanded at activation time,
+                    // not by trapping them on this page.
+                    preferences.setBlocklistGateDismissed(true)
                     blocklistGatePassed = true
                 }
             )
         }
 
-        // #29 (batch 2): after a skip, the main UI stays covered by the
-        // activation screen (PIN first — this sits under the wait screen
-        // but over the tabs) until a successful list update lands. Its
-        // button routes straight back into the update flow.
-        if (blocklistUpdatePending && !isPinSessionLocked && blocklistGatePassed) {
-            BlocklistActivationBlockedScreen(
-                onUpdateNow = {
-                    blocklistGatePassed = false
-                    startBlocklistDownload()
-                }
+        // #50 (batch 3): the activation gate dialog — shown when the
+        // master switch is flipped ON while the on-disk list is still
+        // only the fallback seed. Its button routes to the Rules tab,
+        // where the Adult Block card holds the update button and the
+        // repository add/remove UI.
+        if (showBlocklistGateDialog) {
+            AlertDialog(
+                onDismissRequest = { showBlocklistGateDialog = false },
+                title = {
+                    Text(
+                        text = tr("Blocklist update needed", "به‌روزرسانی فهرست لازم است"),
+                        color = ObsidianTextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = tr(
+                            "Update or add a blocklist repository before activating",
+                            "قبل از فعال‌سازی، یه مخزن فهرست رو به‌روز یا اضافه کن"
+                        ),
+                        color = ObsidianTextSecondary
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showBlocklistGateDialog = false
+                            currentTab = ScreenTab.KEYWORDS
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CrimsonPrimary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.testTag("blocklist_gate_update_button")
+                    ) {
+                        Text(
+                            text = tr("Update / add repository", "به‌روزرسانی / افزودن مخزن"),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBlocklistGateDialog = false }) {
+                        Text(
+                            text = tr("Not now", "فعلاً نه"),
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                },
+                containerColor = ObsidianSurface,
+                modifier = Modifier.testTag("blocklist_gate_dialog")
             )
         }
 

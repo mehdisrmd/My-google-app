@@ -11,8 +11,10 @@ import java.net.URL
 /**
  * Downloads, merges and stores the adult domain list (#13).
  *
- * Every source in [BlocklistSources] is tried (canonical URL first, jsDelivr
- * mirror as fallback). The update succeeds when AT LEAST ONE source
+ * Every source in the persisted, user-managed source list (#49 — see
+ * [ShieldPreferences.getBlocklistSources], seeded from [BlocklistSources]
+ * defaults) is tried (canonical URL first, jsDelivr mirror as fallback).
+ * The update succeeds when AT LEAST ONE source
  * downloads and parses — partial coverage beats no coverage — and the
  * merged, deduplicated set is swapped in atomically by the store. When every
  * source fails, the previously stored list (if any) is left untouched.
@@ -68,9 +70,12 @@ class AdultBlocklistUpdater(
     }
 
     private fun runUpdate(): UpdateResult {
+        // #49: iterate the persisted source list, not the hardcoded
+        // defaults — the user may have removed or added repositories.
+        val sources = preferences.getBlocklistSources()
         val parsedSets = mutableListOf<Set<String>>()
         var succeeded = 0
-        for (source in BlocklistSources.SOURCES) {
+        for (source in sources) {
             val text = downloadFirstAvailable(source.urls) ?: continue
             val domains = AdultBlocklistParser.parseDomains(text)
             if (domains.isNotEmpty()) {
@@ -84,7 +89,7 @@ class AdultBlocklistUpdater(
                 success = false,
                 domainCount = store.currentIndex()?.size ?: 0,
                 sourcesSucceeded = 0,
-                sourcesTotal = BlocklistSources.SOURCES.size
+                sourcesTotal = sources.size
             )
         }
 
@@ -96,14 +101,14 @@ class AdultBlocklistUpdater(
             lastUpdatedMs = System.currentTimeMillis(),
             domainCount = merged.size
         )
-        // #29 (batch 2): a real download succeeded — the first-launch
-        // skip state (if any) is over and the app may fully activate.
-        preferences.setBlocklistUpdatePending(false)
+        // #50 (batch 3): a real download landed — its timestamp is what
+        // opens the activation gate (see BlocklistActivationGate); there
+        // is no separate pending flag anymore.
         return UpdateResult(
             success = true,
             domainCount = merged.size,
             sourcesSucceeded = succeeded,
-            sourcesTotal = BlocklistSources.SOURCES.size
+            sourcesTotal = sources.size
         )
     }
 
