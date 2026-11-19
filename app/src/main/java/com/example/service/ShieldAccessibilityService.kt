@@ -359,12 +359,28 @@ class ShieldAccessibilityService : AccessibilityService() {
                     //     fast path; this covers a missed broadcast).
                     flushDeferredOverlay()
 
-                    // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
-                    //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
+                    // 2. Lockdown Enforcement: while a lock counts down,
+                    //    #39 (batch 2) splits behavior on Strict Lock Mode:
+                    //    STRICT ON — the whole phone stays pinned to the
+                    //    block screen (only X Blocker + the temporary
+                    //    Call/SMS window may come forward).
+                    //    STRICT OFF — only the offending app (recorded as
+                    //    the lock's package) is met by the block page
+                    //    again; every other app stays usable.
                     if (preferences.isCurrentlyLocked()) {
-                        if (activePkg.isNotBlank() &&
-                            !preferences.isPackageAllowedDuringLockdown(activePkg)
-                        ) {
+                        val strictMode = preferences.getStrictModeEnabled()
+                        val shouldEnforce = when {
+                            LockdownPinningPolicy.shouldPinWholePhone(strictMode) ->
+                                activePkg.isNotBlank() &&
+                                    !preferences.isPackageAllowedDuringLockdown(activePkg)
+                            LockdownPinningPolicy.shouldReblockForegroundApp(
+                                strictModeEnabled = strictMode,
+                                activeLockPackage = preferences.getActiveLockPackage(),
+                                foregroundPackage = activePkg
+                            ) -> true
+                            else -> false
+                        }
+                        if (shouldEnforce) {
                             launchLockdownOverlay(
                                 triggerWord = preferences.getActiveLockTrigger(),
                                 sourceApp = preferences.getActiveLockApp(),
@@ -397,7 +413,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                         triggerLockdown(
 
                             triggerWord = tamperTriggerWord(tamperAction),
-                            sourceApp = "System Settings"
+                            sourceApp = "System Settings",
+                            lockPackage = activePkg
                         )
                         continue
                     }
@@ -508,7 +525,9 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 sourceApp = resolveReadableAppName(
                                     activePkg.ifBlank { lastForegroundPackage }
                                 ),
-                                graceAvailable = false
+                                graceAvailable = false,
+                                lockPackage = activePkg.ifBlank { lastForegroundPackage }
+                                    .takeIf { it.isNotBlank() }
                             )
                         } else {
                             graceRecheckAbsentScans += 1
@@ -587,7 +606,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                                     customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
                                         nowMs = now,
                                         zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                                    )
+                                    ),
+                                    lockPackage = matchedLimit.packageName
                                 )
                             }
 
@@ -612,7 +632,11 @@ class ShieldAccessibilityService : AccessibilityService() {
             lastForegroundPackage = pkgName
         }
 
-        // 1. If device is currently in active lockdown, block leaving X Blocker (except whitelisted Call/SMS)
+        // 1. If device is currently in active lockdown, keep the user on the
+        //    block screen — but only as far as #39 (batch 2) prescribes:
+        //    Strict Lock Mode ON pins the whole phone (except whitelisted
+        //    Call/SMS); Strict OFF re-blocks only the offending app itself
+        //    when it returns to the foreground.
         //    Enforcement fires only on REAL app presence: a notification
         //    posted by some app (TYPE_NOTIFICATION_STATE_CHANGED carries the
         //    NOTIFYING app's package, not the foreground app) or a SystemUI /
@@ -621,7 +645,15 @@ class ShieldAccessibilityService : AccessibilityService() {
         //    screen (v0.4.9 bug: Call / Messages buttons "did nothing"
         //    because the overlay instantly returned on unrelated events).
         if (preferences.isCurrentlyLocked()) {
-            if (!isIgnoredSystemUiPackage(pkgName) &&
+            val strictMode = preferences.getStrictModeEnabled()
+            val shouldEnforce = LockdownPinningPolicy.shouldPinWholePhone(strictMode) ||
+                LockdownPinningPolicy.shouldReblockForegroundApp(
+                    strictModeEnabled = strictMode,
+                    activeLockPackage = preferences.getActiveLockPackage(),
+                    foregroundPackage = pkgName
+                )
+            if (shouldEnforce &&
+                !isIgnoredSystemUiPackage(pkgName) &&
                 event.eventType != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
 
                 !preferences.isPackageAllowedDuringLockdown(pkgName)
@@ -668,7 +700,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 triggerLockdown(
                     triggerWord = tamperTriggerWord(tamperAction),
-                    sourceApp = "System Settings"
+                    sourceApp = "System Settings",
+                    lockPackage = pkgName
                 )
                 return
             }
@@ -735,7 +768,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                     customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
                         nowMs = now,
                         zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                    )
+                    ),
+                    lockPackage = matchedLimit.packageName
                 )
                 return
             }
@@ -767,7 +801,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 triggerLockdown(
                     triggerWord = "${matchedSectionRule.sectionName} (${resolveReadableAppName(activeRootPkg)})",
                     sourceApp = resolveReadableAppName(activeRootPkg),
-                    blockReason = "Blocked app section"
+                    blockReason = "Blocked app section",
+                    lockPackage = activeRootPkg
                 )
             }
             return
@@ -801,7 +836,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                     triggerWord = "Adult Site Blocked: $blockedHost",
                     sourceApp = resolveReadableAppName(activeRootPkg),
                     blockReason = "Adult site",
-                    blockedUrl = blockedHost
+                    blockedUrl = blockedHost,
+                    lockPackage = activeRootPkg
                 )
                 return
             }
@@ -824,7 +860,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                     triggerLockdown(
                         triggerWord = matchedWord,
                         sourceApp = resolveReadableAppName(activeRootPkg),
-                        graceAvailable = decision.graceAvailable
+                        graceAvailable = decision.graceAvailable,
+                        lockPackage = activeRootPkg
                     )
                 }
             }
@@ -847,7 +884,8 @@ class ShieldAccessibilityService : AccessibilityService() {
         customDurationMinutes: Int? = null,
         graceAvailable: Boolean = false,
         blockReason: String? = null,
-        blockedUrl: String? = null
+        blockedUrl: String? = null,
+        lockPackage: String? = null
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         // Check-then-start must be one atomic step: the 1-second ticker (IO
@@ -861,7 +899,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 durationMinutes = durationMinutes,
                 triggerWord = triggerWord,
                 sourceApp = sourceApp,
-                graceAvailable = graceAvailable
+                graceAvailable = graceAvailable,
+                lockPackage = lockPackage
             )
         }
 

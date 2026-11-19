@@ -1186,7 +1186,8 @@ class ShieldPreferences(private val context: Context) {
         durationMinutes: Int,
         triggerWord: String,
         sourceApp: String,
-        graceAvailable: Boolean = false
+        graceAvailable: Boolean = false,
+        lockPackage: String? = null
     ): Long {
         val now = System.currentTimeMillis()
         val existingEnd = getActiveLockEndTime()
@@ -1199,11 +1200,22 @@ class ShieldPreferences(private val context: Context) {
 
             .putString(KEY_ACTIVE_LOCK_TRIGGER, triggerWord)
             .putString(KEY_ACTIVE_LOCK_APP, sourceApp)
+            .putString(KEY_ACTIVE_LOCK_PACKAGE, lockPackage ?: "")
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, graceAvailable)
             .putLong(KEY_LAST_INCIDENT_TIME, now)
             .apply()
         _activeLockEndTime.value = endTime
         return endTime
+    }
+
+    /**
+     * #39 (batch 2): the package whose offense started the current lock,
+     * when the trigger path knew it. With Strict Lock Mode OFF only this
+     * app is re-blocked during the lock; everything else stays usable.
+     * Null when no package was recorded (scheduled/voluntary locks).
+     */
+    fun getActiveLockPackage(): String? {
+        return prefs.getString(KEY_ACTIVE_LOCK_PACKAGE, null)?.takeIf { it.isNotBlank() }
     }
 
     @Synchronized
@@ -1214,6 +1226,7 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, false)
             .remove(KEY_ACTIVE_LOCK_TRIGGER)
             .remove(KEY_ACTIVE_LOCK_APP)
+            .remove(KEY_ACTIVE_LOCK_PACKAGE)
             .apply()
         _activeLockEndTime.value = 0L
         // #30 (batch 2): a lock just ended — the next entry into the app
@@ -1747,6 +1760,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ACTIVE_LOCK_DURATION = "key_active_lock_duration"
         private const val KEY_ACTIVE_LOCK_TRIGGER = "key_active_lock_trigger"
         private const val KEY_ACTIVE_LOCK_APP = "key_active_lock_app"
+        private const val KEY_ACTIVE_LOCK_PACKAGE = "key_active_lock_package"
         private const val KEY_LAST_INCIDENT_TIME = "key_last_incident_time"
         private const val KEY_STREAK_START_TIME = "key_streak_start_time"
         private const val KEY_LONGEST_STREAK = "key_longest_streak"
