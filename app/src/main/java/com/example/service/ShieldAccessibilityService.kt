@@ -400,7 +400,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                     //     App-info page and switching our accessibility
                     //     service off — same intervention for all three.
                     //     Batch 2: each action follows its own guard toggle
-                    //     (#35/#36/#42), independent of master protection.
+                    //     (#35/#36/#42/#45), independent of master protection.
                     val tamperAction = if (rootNode != null && activePkg.isNotBlank() &&
                         anyTamperGuardEnabled()
                     ) {
@@ -735,7 +735,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
         //    #6): covers uninstall, Clear Data on our App-info page, and
         //    switching our accessibility service off. Batch 2 decoupled
-        //    the guards (#35/#36/#42): each action is governed by its OWN
+        //    the guards (#35/#36/#42/#45): each action is governed by its OWN
         //    toggle, independent of the master switch — so this block
         //    runs even while master protection is OFF. The uninstall
         //    guard still disarms after the uninstall wait has elapsed,
@@ -1245,7 +1245,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Incident-log wording per tamper action (#6, VPN added by #42). */
+    /** Incident-log wording per tamper action (#6, VPN by #42, force stop by #45). */
     private fun tamperTriggerWord(action: TamperAttemptClassifier.TamperAction): String {
         return when (action) {
             TamperAttemptClassifier.TamperAction.UNINSTALL -> "Prevent Uninstall Guard"
@@ -1253,6 +1253,7 @@ class ShieldAccessibilityService : AccessibilityService() {
             TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
                 "Prevent Accessibility Disable Guard"
             TamperAttemptClassifier.TamperAction.VPN_CONFIG -> "Prevent VPN Setup Guard"
+            TamperAttemptClassifier.TamperAction.FORCE_STOP -> "Prevent Force Stop Guard"
         }
     }
 
@@ -1325,7 +1326,7 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Batch 2 guard independence (#35/#36/#42): the tamper classifier is
+     * Batch 2 guard independence (#35/#36/#42/#45): the tamper classifier is
      * worth running when ANY of the independent guards is on — each
      * action then applies only under its own guard (see
      * [isTamperGuardApplicable]).
@@ -1334,6 +1335,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         return isUninstallGuardArmed() ||
             preferences.getIsClearDataGuardEnabled() ||
             preferences.getIsVpnConfigBlockEnabled() ||
+            preferences.getIsForceStopGuardEnabled() ||
             preferences.getIsProtectionEnabled()
     }
 
@@ -1350,6 +1352,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 isUninstallGuardArmed() || preferences.getIsProtectionEnabled()
             TamperAttemptClassifier.TamperAction.VPN_CONFIG ->
                 preferences.getIsVpnConfigBlockEnabled()
+            TamperAttemptClassifier.TamperAction.FORCE_STOP ->
+                preferences.getIsForceStopGuardEnabled()
         }
     }
 

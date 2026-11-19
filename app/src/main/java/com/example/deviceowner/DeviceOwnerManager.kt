@@ -67,7 +67,8 @@ object DeviceOwnerManager {
         reconcile(
             context,
             toggleEnabled = prefs.getIsDeviceOwnerProtectionEnabled(),
-            vpnBlockEnabled = prefs.getIsVpnConfigBlockEnabled()
+            vpnBlockEnabled = prefs.getIsVpnConfigBlockEnabled(),
+            forceStopGuardEnabled = prefs.getIsForceStopGuardEnabled()
         )
     }
 
@@ -77,7 +78,12 @@ object DeviceOwnerManager {
      * to apply AND nothing of ours left to clear (Android drops an
      * ex-owner's restrictions itself), so the method returns quietly.
      */
-    fun reconcile(context: Context, toggleEnabled: Boolean, vpnBlockEnabled: Boolean = false) {
+    fun reconcile(
+        context: Context,
+        toggleEnabled: Boolean,
+        vpnBlockEnabled: Boolean = false,
+        forceStopGuardEnabled: Boolean = false
+    ) {
         val manager = dpm(context) ?: return
         if (!isDeviceOwner(context)) return
 
@@ -85,7 +91,8 @@ object DeviceOwnerManager {
         val desired = DeviceOwnerPolicy.desiredRestrictions(
             isDeviceOwner = true,
             toggleEnabled = toggleEnabled,
-            vpnBlockEnabled = vpnBlockEnabled
+            vpnBlockEnabled = vpnBlockEnabled,
+            forceStopGuardEnabled = forceStopGuardEnabled
         )
 
         // 1. Uninstall block for X Blocker's own package — covers both
@@ -122,6 +129,22 @@ object DeviceOwnerManager {
             }
         } catch (e: Exception) {
             Log.w(TAG, "config-vpn restriction reconcile failed", e)
+        }
+
+        // 4. Apps control off while the Force Stop guard (#45) is on.
+        //    DISALLOW_APPS_CONTROL is the only Device Owner lever that
+        //    covers Force Stop: it blocks modifying apps in Settings
+        //    (force stop / clear data / uninstall) — for ALL apps, not
+        //    just this one; see DeviceOwnerPolicy's note. Only this
+        //    restriction is added/cleared here, exactly like the others.
+        try {
+            if (DeviceOwnerPolicy.Restriction.DISALLOW_APPS_CONTROL in desired) {
+                manager.addUserRestriction(admin, UserManager.DISALLOW_APPS_CONTROL)
+            } else {
+                manager.clearUserRestriction(admin, UserManager.DISALLOW_APPS_CONTROL)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "apps-control restriction reconcile failed", e)
         }
     }
 }

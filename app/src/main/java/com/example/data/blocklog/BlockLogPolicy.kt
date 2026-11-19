@@ -133,6 +133,9 @@ object BlockLogPolicy {
      */
     fun reasonFor(triggerWord: String): String = when {
         triggerWord.startsWith("Adult Site Blocked:") -> "Adult site"
+        // #45 (batch 2): force-stop attempts get their own reason instead
+        // of the generic tamper label, so the log shows what was tried.
+        triggerWord == "Prevent Force Stop Guard" -> "Force stop attempt blocked"
         triggerWord.startsWith("Daily Limit: Data") -> "Daily data limit reached"
         triggerWord.startsWith("Daily Limit") -> "Daily app limit reached"
         triggerWord.startsWith("Section Blocked:") -> "Blocked app section"

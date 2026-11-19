@@ -9,9 +9,9 @@ package com.example.deviceowner
  * Android itself enforces the blocks — no accessibility watching, no race.
  *
  * This object holds only the decisions; every Android call lives in
- * [DeviceOwnerManager]. The managed restriction set is deliberately
- * exactly the two from the batch plan — nothing more is ever applied, and
- * turning the toggle OFF (or losing owner status) clears exactly these:
+ * [DeviceOwnerManager]. The managed restriction set started as exactly
+ * the two from the batch plan — nothing more is ever applied, and
+ * turning the toggles OFF (or losing owner status) clears exactly these:
  *
  *  - [Restriction.BLOCK_OWN_UNINSTALL] — `DevicePolicyManager.setUninstallBlocked`
  *    for X Blocker's own package: the app cannot be uninstalled at all,
@@ -19,6 +19,17 @@ package com.example.deviceowner
  *  - [Restriction.DISALLOW_DEBUGGING] — the `UserManager.DISALLOW_DEBUGGING_FEATURES`
  *    user restriction: USB debugging / ADB is switched off system-wide,
  *    so there is no computer channel left to abuse.
+ *
+ * Batch 2 added two more, each behind its OWN toggle:
+ *  - [Restriction.DISALLOW_CONFIG_VPN] (#42) — the
+ *    `UserManager.DISALLOW_CONFIG_VPN` restriction: no VPN can be set up.
+ *  - [Restriction.DISALLOW_APPS_CONTROL] (#45) — the
+ *    `UserManager.DISALLOW_APPS_CONTROL` restriction: the user cannot
+ *    modify apps in Settings at all. NOTE: this is the ONLY Device Owner
+ *    lever that covers Force Stop — Android has no per-app force-stop
+ *    restriction — and it is deliberately broad: while it is on, Force
+ *    Stop / Clear Data / Uninstall in Settings are blocked for ALL apps,
+ *    not just X Blocker. That breadth is why #45 is opt-in (default OFF).
  *
  * (A general `DISALLOW_UNINSTALL_APPS` restriction was considered and is
  * intentionally NOT applied: the plan scopes this feature to protecting
@@ -31,7 +42,8 @@ object DeviceOwnerPolicy {
     enum class Restriction {
         BLOCK_OWN_UNINSTALL,
         DISALLOW_DEBUGGING,
-        DISALLOW_CONFIG_VPN
+        DISALLOW_CONFIG_VPN,
+        DISALLOW_APPS_CONTROL
     }
 
     /** What the system currently says about this app's admin standing. */
@@ -75,11 +87,16 @@ object DeviceOwnerPolicy {
      * The VPN restriction (#42, batch 2) follows its OWN toggle,
      * independent of the Device Owner protection toggle: it applies
      * whenever the app is Device Owner and the VPN block is ON.
+     *
+     * The apps-control restriction (#45, batch 2) likewise follows its
+     * OWN toggle (the Force Stop guard): it applies whenever the app is
+     * Device Owner and that guard is ON.
      */
     fun desiredRestrictions(
         isDeviceOwner: Boolean,
         toggleEnabled: Boolean,
-        vpnBlockEnabled: Boolean = false
+        vpnBlockEnabled: Boolean = false,
+        forceStopGuardEnabled: Boolean = false
     ): Set<Restriction> {
         if (!isDeviceOwner) return emptySet()
         val desired = mutableSetOf<Restriction>()
@@ -89,6 +106,9 @@ object DeviceOwnerPolicy {
         }
         if (vpnBlockEnabled) {
             desired.add(Restriction.DISALLOW_CONFIG_VPN)
+        }
+        if (forceStopGuardEnabled) {
+            desired.add(Restriction.DISALLOW_APPS_CONTROL)
         }
         return desired
     }

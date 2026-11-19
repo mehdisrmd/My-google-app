@@ -9,7 +9,7 @@ package com.example.service
  * so the whole decision table is unit-testable without Android types.
  * [TextContentScanner.findTamperAttempt] is the node-tree entry point.
  *
- * Three actions are recognised, all targeting THIS app:
+ * Four actions are recognised, all targeting THIS app:
  *  - [TamperAction.UNINSTALL] — the legacy guard: uninstall confirmation
  *    in Settings / the package installer, or the app-info "disable" dialog.
  *  - [TamperAction.CLEAR_DATA] — X Blocker's App-info storage page (the
@@ -18,6 +18,12 @@ package com.example.service
  *  - [TamperAction.DISABLE_ACCESSIBILITY] — X Blocker's own accessibility
  *    service page (its detail page shows the service description, which
  *    the services LIST does not) or the "stop this service" dialog.
+ *  - [TamperAction.FORCE_STOP] — X Blocker's own App-info page (#45,
+ *    batch 2): the "Force stop" button lives there, and force-stopping
+ *    the app kills every guard at once, so the page itself is the
+ *    guarded surface — the same reasoning as CLEAR_DATA's storage page.
+ *    Best-effort layer; under Device Owner the DISALLOW_APPS_CONTROL
+ *    restriction is the hard block.
  *
  * Plus one that does NOT target this app (#42, batch 2):
  *  - [TamperAction.VPN_CONFIG] — a VPN setup surface (the Settings VPN
@@ -40,7 +46,8 @@ object TamperAttemptClassifier {
         UNINSTALL,
         CLEAR_DATA,
         DISABLE_ACCESSIBILITY,
-        VPN_CONFIG
+        VPN_CONFIG,
+        FORCE_STOP
     }
 
     /**
@@ -106,6 +113,13 @@ object TamperAttemptClassifier {
         if (hasClearDataSignal(combinedLower)) {
             return TamperAction.CLEAR_DATA
         }
+        // #45 (batch 2): checked BEFORE the accessibility branch — the
+        // Persian force-stop label «توقف اجباری» contains «توقف», which
+        // the accessibility branch's stop-dialog check would otherwise
+        // claim for itself on this very page.
+        if (hasForceStopSignal(combinedLower)) {
+            return TamperAction.FORCE_STOP
+        }
         if (hasAccessibilityOffSignal(combinedLower)) {
             return TamperAction.DISABLE_ACCESSIBILITY
         }
@@ -168,6 +182,21 @@ object TamperAttemptClassifier {
         val serviceDetailPage = combinedLower.contains(SERVICE_DESCRIPTION_FRAGMENT) ||
             combinedLower.contains("use x blocker")
         return serviceDetailPage
+    }
+
+    /**
+     * Force-stop signals (#45): the "Force stop" button label on this
+     * app's own App-info page. This branch is only reached after the
+     * [mentionsOurApp] gate above, so the label is a reliable "user is
+     * staring at OUR Force stop button" signal — the same reasoning as
+     * [hasClearDataSignal]'s storage page. Another app's App-info page
+     * never passes that gate, so its Force stop button stays usable.
+     * The Persian label is matched in full («توقف اجباری») so unrelated
+     * «توقف» wording elsewhere is not claimed by this branch.
+     */
+    private fun hasForceStopSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("force stop") ||
+            combinedLower.contains("توقف اجباری")
     }
 
     /**

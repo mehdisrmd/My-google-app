@@ -170,6 +170,9 @@ class BlockLogPolicyTest {
         assertEquals("Scheduled focus session", BlockLogPolicy.reasonFor("Smart Focus: Deep Work (09:00 – 11:00)"))
         assertEquals("Tamper attempt", BlockLogPolicy.reasonFor("Prevent Clear Data Guard"))
         assertEquals("Tamper attempt", BlockLogPolicy.reasonFor("Prevent Uninstall Guard"))
+        // #45 (batch 2): the force-stop guard's trigger word gets its own
+        // reason, ahead of the generic "Prevent … Guard" tamper branch.
+        assertEquals("Force stop attempt blocked", BlockLogPolicy.reasonFor("Prevent Force Stop Guard"))
         assertEquals("Manual panic lock", BlockLogPolicy.reasonFor("Emergency Panic Shield (15m Voluntary Lock)"))
         assertEquals("Blocked keyword", BlockLogPolicy.reasonFor("some custom word"))
     }

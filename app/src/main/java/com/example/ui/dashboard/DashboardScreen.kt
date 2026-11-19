@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -213,10 +214,12 @@ fun DashboardScreen(
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
     val isInstallGuardEnabled by effectivePrefs.isInstallGuardEnabled.collectAsStateWithLifecycle()
-    // Batch 2: the Clear Data guard (#36) and the VPN setup block (#42)
-    // have their own toggles, independent of the other guards.
+    // Batch 2: the Clear Data guard (#36), the VPN setup block (#42)
+    // and the Force Stop guard (#45) have their own toggles, independent
+    // of the other guards.
     val isClearDataGuardEnabled by effectivePrefs.isClearDataGuardEnabled.collectAsStateWithLifecycle()
     val isVpnConfigBlockEnabled by effectivePrefs.isVpnConfigBlockEnabled.collectAsStateWithLifecycle()
+    val isForceStopGuardEnabled by effectivePrefs.isForceStopGuardEnabled.collectAsStateWithLifecycle()
     val uninstallWaitMinutes by effectivePrefs.uninstallWaitMinutes.collectAsStateWithLifecycle()
     val isDeviceOwnerProtectionEnabled by effectivePrefs.isDeviceOwnerProtectionEnabled.collectAsStateWithLifecycle()
     // Device Owner standing (#11) is system state, not a preference: read
@@ -1070,6 +1073,86 @@ fun DashboardScreen(
                                 DeviceOwnerManager.reconcile(context)
                             },
                             modifier = Modifier.testTag("vpn_config_block_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
+                // Force Stop Guard Card (#45, batch 2): force-stopping
+                // X Blocker from Settings kills every guard at once, so
+                // its App-info page is guarded. With Device Owner this is
+                // a hard system restriction (DISALLOW_APPS_CONTROL);
+                // without it, the App-info page is interrupted by the
+                // block screen while this switch is on.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isForceStopGuardEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.StopCircle,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Protect from Force Stop", "محافظت در برابر توقف اجباری (Force Stop)"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Prevents force-stopping X Blocker from Settings, which would kill every guard at once. Hard system block with Device Owner; otherwise X Blocker's App info page is interrupted.",
+                                        "از توقف اجباری ایکس بلاکر از تنظیمات جلوگیری می‌کند؛ توقفی که همه محافظ‌ها را یکجا از کار می‌اندازد. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه اطلاعات ایکس بلاکر قطع می‌شود."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isForceStopGuardEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                effectivePrefs.setForceStopGuardEnabled(targetEnabled)
+                                // Apply (or clear) the Device Owner
+                                // restriction right away; a no-op when
+                                // the app is not Device Owner.
+                                DeviceOwnerManager.reconcile(context)
+                            },
+                            modifier = Modifier.testTag("force_stop_guard_switch"),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.Black,
                                 checkedTrackColor = EmeraldShield

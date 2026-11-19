@@ -98,6 +98,48 @@ class DeviceOwnerPolicyTest {
         )
     }
 
+    // ---- Apps-control restriction (#45, batch 2): Force Stop guard ----
+
+    @Test
+    fun restrictions_forceStopGuard_appliesEvenWhenProtectionToggleOff() {
+        val desired = DeviceOwnerPolicy.desiredRestrictions(
+            isDeviceOwner = true,
+            toggleEnabled = false,
+            forceStopGuardEnabled = true
+        )
+        assertEquals(setOf(Restriction.DISALLOW_APPS_CONTROL), desired)
+    }
+
+    @Test
+    fun restrictions_forceStopGuard_combinesWithProtectionPairAndVpn() {
+        val desired = DeviceOwnerPolicy.desiredRestrictions(
+            isDeviceOwner = true,
+            toggleEnabled = true,
+            vpnBlockEnabled = true,
+            forceStopGuardEnabled = true
+        )
+        assertEquals(
+            setOf(
+                Restriction.BLOCK_OWN_UNINSTALL,
+                Restriction.DISALLOW_DEBUGGING,
+                Restriction.DISALLOW_CONFIG_VPN,
+                Restriction.DISALLOW_APPS_CONTROL
+            ),
+            desired
+        )
+    }
+
+    @Test
+    fun restrictions_forceStopGuard_notOwner_appliesNothing() {
+        assertTrue(
+            DeviceOwnerPolicy.desiredRestrictions(
+                isDeviceOwner = false,
+                toggleEnabled = false,
+                forceStopGuardEnabled = true
+            ).isEmpty()
+        )
+    }
+
     // ---- Status precedence ----
 
     @Test

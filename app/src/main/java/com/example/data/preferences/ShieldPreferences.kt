@@ -208,6 +208,13 @@ class ShieldPreferences(private val context: Context) {
     private val _isVpnConfigBlockEnabled = MutableStateFlow(getIsVpnConfigBlockEnabled())
     val isVpnConfigBlockEnabled: StateFlow<Boolean> = _isVpnConfigBlockEnabled.asStateFlow()
 
+    // #45 (batch 2): protect against Force Stop on this app's App-info
+    // page (Device Owner restriction DISALLOW_APPS_CONTROL +
+    // accessibility intervention fallback). Opt-in extra guard, so it
+    // defaults OFF like the VPN block (#42).
+    private val _isForceStopGuardEnabled = MutableStateFlow(getIsForceStopGuardEnabled())
+    val isForceStopGuardEnabled: StateFlow<Boolean> = _isForceStopGuardEnabled.asStateFlow()
+
     private val _isDeviceOwnerProtectionEnabled = MutableStateFlow(getIsDeviceOwnerProtectionEnabled())
     val isDeviceOwnerProtectionEnabled: StateFlow<Boolean> = _isDeviceOwnerProtectionEnabled.asStateFlow()
 
@@ -697,6 +704,21 @@ class ShieldPreferences(private val context: Context) {
         if (!enabled && isCurrentlyLocked()) return
         prefs.edit().putBoolean(KEY_VPN_CONFIG_BLOCK_ENABLED, enabled).apply()
         _isVpnConfigBlockEnabled.value = enabled
+    }
+
+    // Force Stop Guard (#45) — its own toggle: while ON, this app's
+    // App-info page is intercepted so "Force stop" cannot be tapped
+    // (hard DPM restriction under Device Owner, accessibility
+    // intervention otherwise).
+    fun getIsForceStopGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_BLOCK_FORCE_STOP, false)
+    }
+
+    fun setForceStopGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_BLOCK_FORCE_STOP, enabled).apply()
+        _isForceStopGuardEnabled.value = enabled
     }
 
     /**
@@ -1772,6 +1794,7 @@ class ShieldPreferences(private val context: Context) {
         _uninstallWaitMinutes.value = getUninstallWaitMinutes()
         _isClearDataGuardEnabled.value = true
         _isVpnConfigBlockEnabled.value = false
+        _isForceStopGuardEnabled.value = false
         _blocklistUpdatePending.value = false
         _userBlocklistDomains.value = emptySet()
         _dataLimitWifiMb.value = 0
@@ -1801,6 +1824,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_INSTALL_GUARD_ENABLED = "key_install_guard_enabled"
         private const val KEY_CLEAR_DATA_GUARD_ENABLED = "key_clear_data_guard_enabled"
         private const val KEY_VPN_CONFIG_BLOCK_ENABLED = "key_vpn_config_block_enabled"
+        private const val KEY_BLOCK_FORCE_STOP = "key_block_force_stop_enabled"
         private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"

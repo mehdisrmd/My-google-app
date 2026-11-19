@@ -95,6 +95,7 @@ private fun localizedBlockReason(reason: String?, isPersian: Boolean): String? {
         "Blocked app section" -> "بخش مسدود برنامه"
         "Scheduled focus session" -> "جلسه تمرکز زمان‌بندی‌شده"
         "Tamper attempt" -> "تلاش برای دست‌کاری"
+        "Force stop attempt blocked" -> "تلاش برای توقف اجباری"
         "Manual panic lock" -> "قفل اضطراری دستی"
         "Blocked keyword" -> "کلمه کلیدی مسدود"
         else -> reason
