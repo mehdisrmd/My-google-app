@@ -812,6 +812,17 @@ fun MainContent(
                                 }
                             }
                         },
+                        incidents = incidents,
+                        incidentStreakDays = streakDays,
+                        incidentAppLimits = appLimits,
+                        incidentPreferences = preferences,
+                        incidentUsageRefreshTrigger = usageRefreshTrigger,
+                        onDeleteIncidents = { toDelete ->
+                            coroutineScope.launch { repository.deleteIncidents(toDelete) }
+                        },
+                        onClearIncidentHistory = {
+                            coroutineScope.launch { repository.clearHistory() }
+                        },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }

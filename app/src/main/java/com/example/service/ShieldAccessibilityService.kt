@@ -6,19 +6,24 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.example.ShieldApplication
 import com.example.data.blocklist.AdultBlocklistStore
 import com.example.data.blocklist.AdultDomainMatcher
+import com.example.data.blocklog.BlockLogPolicy
+import com.example.data.blocklog.ScreenshotStore
 import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockedKeyword
@@ -37,6 +42,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.TimeZone
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 class ShieldAccessibilityService : AccessibilityService() {
 
@@ -47,6 +55,25 @@ class ShieldAccessibilityService : AccessibilityService() {
     private lateinit var repository: ShieldRepository
     private lateinit var preferences: ShieldPreferences
     private lateinit var adultBlocklistStore: AdultBlocklistStore
+    private lateinit var screenshotStore: ScreenshotStore
+
+    /**
+     * #14: single background thread that runs takeScreenshot callbacks and
+     * the bitmap copy/compress work, so capture never touches the main
+     * thread or the service's IO scope ordering.
+     */
+    private val screenshotExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    /** #14: wall-clock time of the last capture ATTEMPT (see BlockLogPolicy). */
+    @Volatile
+    private var lastScreenshotAttemptMs = 0L
+
+    /** #14: true while a takeScreenshot call is awaiting its callback. */
+    @Volatile
+    private var screenshotInFlight = false
+
+    /** #14: per-process sequence making screenshot file names unique. */
+    private val screenshotSequence = AtomicLong(0L)
 
     private val powerManager: PowerManager? by lazy {
         getSystemService(PowerManager::class.java)
@@ -231,6 +258,7 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         preferences = app.preferences
         adultBlocklistStore = app.adultBlocklistStore
+        screenshotStore = app.screenshotStore
 
         // #18: wake the deferred-overlay flush the moment the user unlocks.
         // ACTION_USER_PRESENT is a protected system broadcast; NOT_EXPORTED
@@ -710,21 +738,25 @@ class ShieldAccessibilityService : AccessibilityService() {
             rules = cachedSectionRules
         )
         if (matchedSectionRule != null) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
             if (preferences.getIsSectionExitOnlyMode()) {
                 val appLabel = resolveReadableAppName(activeRootPkg)
-                serviceScope.launch {
-                    repository.recordIncident(
-                        matchedWord = "Section Blocked: ${matchedSectionRule.sectionName}",
-
-                        sourceApp = appLabel,
-                        durationMinutes = 0
-                    )
-                }
+                // #14: exit-only blocks get a block-log record (with a
+                // screenshot attempt) just like full lockdowns. The
+                // capture is initiated BEFORE the BACK below so the shot
+                // still shows the blocked section, not the screen behind it.
+                recordIncidentWithScreenshot(
+                    triggerWord = "Section Blocked: ${matchedSectionRule.sectionName}",
+                    sourceApp = appLabel,
+                    durationMinutes = 0,
+                    blockReason = "Blocked app section"
+                )
+                performGlobalAction(GLOBAL_ACTION_BACK)
             } else {
+                performGlobalAction(GLOBAL_ACTION_BACK)
                 triggerLockdown(
                     triggerWord = "${matchedSectionRule.sectionName} (${resolveReadableAppName(activeRootPkg)})",
-                    sourceApp = resolveReadableAppName(activeRootPkg)
+                    sourceApp = resolveReadableAppName(activeRootPkg),
+                    blockReason = "Blocked app section"
                 )
             }
             return
@@ -756,7 +788,9 @@ class ShieldAccessibilityService : AccessibilityService() {
                 redirectBrowserToGoogleHome(activeRootPkg)
                 triggerLockdown(
                     triggerWord = "Adult Site Blocked: $blockedHost",
-                    sourceApp = resolveReadableAppName(activeRootPkg)
+                    sourceApp = resolveReadableAppName(activeRootPkg),
+                    blockReason = "Adult site",
+                    blockedUrl = blockedHost
                 )
                 return
             }
@@ -800,7 +834,9 @@ class ShieldAccessibilityService : AccessibilityService() {
         triggerWord: String,
         sourceApp: String,
         customDurationMinutes: Int? = null,
-        graceAvailable: Boolean = false
+        graceAvailable: Boolean = false,
+        blockReason: String? = null,
+        blockedUrl: String? = null
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         // Check-then-start must be one atomic step: the 1-second ticker (IO
@@ -818,19 +854,17 @@ class ShieldAccessibilityService : AccessibilityService() {
             )
         }
 
-        serviceScope.launch {
-            try {
-                repository.recordIncident(
-                    matchedWord = triggerWord,
-                    sourceApp = sourceApp,
-                    durationMinutes = durationMinutes
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "recordIncident failed", e)
-            }
-        }
+        // #14: capture the blocked page for the block log and record the
+        // incident. The capture is INITIATED here — before the overlay
+        // launch below — so the display still shows the offending page;
+        // the incident row itself is written when the capture resolves.
+        recordIncidentWithScreenshot(
+            triggerWord = triggerWord,
+            sourceApp = sourceApp,
+            durationMinutes = durationMinutes,
+            blockReason = blockReason,
+            blockedUrl = blockedUrl
+        )
 
         // #17: while a call is ringing / in progress, do not yank the
         // user around with BACK/HOME — on some OEMs that buries the call
@@ -849,6 +883,137 @@ class ShieldAccessibilityService : AccessibilityService() {
             endTimeEpoch = endTime,
             force = true
         )
+    }
+
+    /**
+     * #14: records one block incident, attaching a screenshot of the
+     * blocked page when one can be captured.
+     *
+     * Capture contract:
+     * - Uses AccessibilityService.takeScreenshot, which exists only on
+     *   API 30+; on older devices the incident is recorded without an
+     *   image, exactly as before this feature.
+     * - The capture is fire-and-forget: this function returns immediately
+     *   and NEVER delays the lockdown that called it. The incident row is
+     *   inserted from the capture callback (or right away when no capture
+     *   is attempted), so a slow or failed capture costs nothing but the
+     *   image.
+     * - Failure modes all degrade to "incident without screenshot": the
+     *   system's own rate limit (ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT),
+     *   FLAG_SECURE windows (ERROR_TAKE_SCREENSHOT_SECURE_WINDOW), and any
+     *   exception. [BlockLogPolicy] additionally throttles attempts so
+     *   rapid repeat episodes of one burst don't burn the system budget.
+     * - Screenshots land in app-private storage via [ScreenshotStore];
+     *   they are never written to MediaStore, so they can never appear
+     *   in the phone gallery.
+     */
+    private fun recordIncidentWithScreenshot(
+        triggerWord: String,
+        sourceApp: String,
+        durationMinutes: Int,
+        blockReason: String? = null,
+        blockedUrl: String? = null
+    ) {
+        val effectiveReason = blockReason ?: BlockLogPolicy.reasonFor(triggerWord)
+        val now = System.currentTimeMillis()
+        val mayCapture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            BlockLogPolicy.shouldAttemptCapture(
+                nowMs = now,
+                lastCaptureAttemptMs = lastScreenshotAttemptMs,
+                captureInFlight = screenshotInFlight
+            )
+        if (!mayCapture) {
+            recordIncidentNow(triggerWord, sourceApp, durationMinutes, null, effectiveReason, blockedUrl)
+            return
+        }
+
+        lastScreenshotAttemptMs = now
+        screenshotInFlight = true
+        try {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                screenshotExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        // Runs on screenshotExecutor: buffer wrapping,
+                        // scaling and JPEG compression stay off the main
+                        // thread and off the service's event path.
+                        var savedName: String? = null
+                        try {
+                            val buffer = result.hardwareBuffer
+                            try {
+                                val bitmap = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                                if (bitmap != null) {
+                                    try {
+                                        val fileName = BlockLogPolicy.screenshotFileName(
+                                            timestampMs = now,
+                                            sequence = screenshotSequence.incrementAndGet()
+                                        )
+                                        if (screenshotStore.saveJpeg(bitmap, fileName)) {
+                                            savedName = fileName
+                                        }
+                                    } finally {
+                                        bitmap.recycle()
+                                    }
+                                }
+                            } finally {
+                                buffer.close()
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Block screenshot processing failed", e)
+                        }
+                        screenshotInFlight = false
+                        recordIncidentNow(
+                            triggerWord, sourceApp, durationMinutes,
+                            savedName, effectiveReason, blockedUrl
+                        )
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        // Interval limit, secure window, or a system
+                        // refusal: the block still gets its log record,
+                        // just without an image.
+                        screenshotInFlight = false
+                        Log.w(TAG, "Block screenshot unavailable (error $errorCode)")
+                        recordIncidentNow(
+                            triggerWord, sourceApp, durationMinutes,
+                            null, effectiveReason, blockedUrl
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            screenshotInFlight = false
+            Log.w(TAG, "takeScreenshot call failed", e)
+            recordIncidentNow(triggerWord, sourceApp, durationMinutes, null, effectiveReason, blockedUrl)
+        }
+    }
+
+    /** #14: the actual incident insert, always on the service IO scope. */
+    private fun recordIncidentNow(
+        triggerWord: String,
+        sourceApp: String,
+        durationMinutes: Int,
+        screenshotPath: String?,
+        blockReason: String?,
+        blockedUrl: String?
+    ) {
+        serviceScope.launch {
+            try {
+                repository.recordIncident(
+                    matchedWord = triggerWord,
+                    sourceApp = sourceApp,
+                    durationMinutes = durationMinutes,
+                    screenshotPath = screenshotPath,
+                    blockReason = blockReason,
+                    blockedUrl = blockedUrl
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "recordIncident failed", e)
+            }
+        }
     }
 
     private fun launchLockdownOverlay(
@@ -1076,6 +1241,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         // Drop any queued block-screen relaunches along with the coroutines.
         mainHandler.removeCallbacksAndMessages(null)
         serviceScope.cancel()
+        screenshotExecutor.shutdown()
     }
 
 

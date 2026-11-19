@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import com.example.data.blocklog.BlockLogPolicy
+import com.example.data.blocklog.ScreenshotStore
 import com.example.data.local.DefaultSectionRules
 import com.example.data.local.ShieldDao
 import com.example.data.model.AppUsageLimit
@@ -28,7 +30,8 @@ data class BackupRestoreSummary(
 
 class ShieldRepository(
     private val dao: ShieldDao,
-    val preferences: ShieldPreferences
+    val preferences: ShieldPreferences,
+    private val screenshotStore: ScreenshotStore? = null
 ) {
     val allKeywords: Flow<List<BlockedKeyword>> = dao.getAllKeywords()
     val allIncidents: Flow<List<BlockIncident>> = dao.getAllIncidents()
@@ -449,17 +452,52 @@ class ShieldRepository(
     suspend fun recordIncident(
         matchedWord: String,
         sourceApp: String,
-        durationMinutes: Int
+        durationMinutes: Int,
+        screenshotPath: String? = null,
+        blockReason: String? = null,
+        blockedUrl: String? = null
     ) {
         val incident = BlockIncident(
             matchedWord = matchedWord,
             sourceApp = sourceApp,
-            lockDurationMinutes = durationMinutes
+            lockDurationMinutes = durationMinutes,
+            screenshotPath = screenshotPath,
+            blockReason = blockReason,
+            blockedUrl = blockedUrl
         )
         dao.insertIncident(incident)
+        pruneBlockLog()
+    }
+
+    /**
+     * #14 retention: keeps at most [BlockLogPolicy.MAX_INCIDENTS] block
+     * records. Victims are the oldest rows; their screenshot files are
+     * deleted with them so private storage cannot grow without bound.
+     * Best-effort by design — a prune failure must never fail the block
+     * that triggered the insert.
+     */
+    private suspend fun pruneBlockLog() {
+        try {
+            val victims = BlockLogPolicy.pruneVictims(dao.getAllIncidentsSync())
+            if (victims.isEmpty()) return
+            dao.deleteIncidentsByIds(victims.map { it.id })
+            victims.forEach { screenshotStore?.delete(it.screenshotPath) }
+        } catch (_: Exception) {
+            // Retention is housekeeping; ignore and move on.
+        }
+    }
+
+    /** #14: deletes the given block records AND their screenshot files. */
+    suspend fun deleteIncidents(incidents: List<BlockIncident>) {
+        if (incidents.isEmpty()) return
+        dao.deleteIncidentsByIds(incidents.map { it.id })
+        incidents.forEach { screenshotStore?.delete(it.screenshotPath) }
     }
 
     suspend fun clearHistory() {
         dao.clearIncidents()
+        // #14: clearing the log also removes every screenshot file, so no
+        // orphaned images of blocked pages linger in private storage.
+        screenshotStore?.deleteAll()
     }
 }

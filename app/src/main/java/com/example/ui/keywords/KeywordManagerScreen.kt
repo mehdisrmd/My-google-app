@@ -2,6 +2,7 @@ package com.example.ui.keywords
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,10 +20,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -65,8 +69,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.AppUsageLimit
+import com.example.data.model.BlockIncident
 import com.example.data.model.BlockedCategory
 import com.example.data.model.BlockedKeyword
+import com.example.data.preferences.ShieldPreferences
+import com.example.ui.history.IncidentHistoryScreen
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.EmeraldShield
@@ -89,10 +97,22 @@ fun KeywordManagerScreen(
     blocklistLastUpdatedMs: Long,
     isBlocklistUpdating: Boolean,
     onUpdateBlocklistNow: () -> Unit,
+    incidents: List<BlockIncident> = emptyList(),
+    incidentStreakDays: Int = 0,
+    incidentAppLimits: List<AppUsageLimit> = emptyList(),
+    incidentPreferences: ShieldPreferences? = null,
+    incidentUsageRefreshTrigger: Long = 0L,
+    onDeleteIncidents: (List<BlockIncident>) -> Unit = {},
+    onClearIncidentHistory: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
+
+    // #14: the Block Log lives in the slot the Adult Preset used to own —
+    // its entry card sits directly under the adult-block card below, and
+    // tapping it swaps this screen's content for the log itself.
+    var showBlockLog by remember { mutableStateOf(false) }
 
     // Multi-select state for the Custom Blacklist (#15). Selection is a
     // set of keyword ids; all transitions go through KeywordSelection so the
@@ -127,6 +147,23 @@ fun KeywordManagerScreen(
         }
     }
 
+    // #14: while the Block Log is open it replaces this screen's content
+    // (same tab, no extra navigation destination).
+    if (showBlockLog) {
+        BlockLogView(
+            incidents = incidents,
+            streakDays = incidentStreakDays,
+            appLimits = incidentAppLimits,
+            preferences = incidentPreferences,
+            usageRefreshTrigger = incidentUsageRefreshTrigger,
+            onBack = { showBlockLog = false },
+            onDeleteIncidents = onDeleteIncidents,
+            onClearHistory = onClearIncidentHistory,
+            modifier = modifier
+        )
+        return
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -157,6 +194,15 @@ fun KeywordManagerScreen(
                 blocklistLastUpdatedMs = blocklistLastUpdatedMs,
                 isBlocklistUpdating = isBlocklistUpdating,
                 onUpdateBlocklistNow = onUpdateBlocklistNow
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Block Log entry (#14): every blocked page with its
+            // screenshot and reason, in the freed Adult Preset slot.
+            BlockLogCard(
+                incidentCount = incidents.size,
+                onOpen = { showBlockLog = true }
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -499,6 +545,141 @@ private fun AdultBlockCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * Block Log entry card (#14). Sits directly under the adult-block card —
+ * the slot the Adult Preset used to own — and opens the log of blocked
+ * pages (screenshot + reason + full details per record).
+ */
+@Composable
+private fun BlockLogCard(
+    incidentCount: Int,
+    onOpen: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("block_log_card")
+            .clickable { onOpen() },
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CrimsonPrimary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = CrimsonPrimary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tr("Block Log", "گزارش مسدودی‌ها"),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = tr(
+                        "Every blocked page, with its screenshot and the reason it was blocked.",
+                        "همهٔ صفحه‌های مسدودشده، همراه با اسکرین‌شات و دلیل مسدود شدن."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary
+                )
+            }
+            if (incidentCount > 0) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CrimsonPrimary.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = incidentCount.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = com.example.ui.theme.JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = CrimsonPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = ObsidianTextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * The Block Log itself (#14): a back row over the incident history, whose
+ * rows carry the block screenshots and open full per-record details.
+ */
+@Composable
+private fun BlockLogView(
+    incidents: List<BlockIncident>,
+    streakDays: Int,
+    appLimits: List<AppUsageLimit>,
+    preferences: ShieldPreferences?,
+    usageRefreshTrigger: Long,
+    onBack: () -> Unit,
+    onDeleteIncidents: (List<BlockIncident>) -> Unit,
+    onClearHistory: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 20.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.testTag("block_log_back_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
+            }
+            Text(
+                text = tr("Block Log", "گزارش مسدودی‌ها"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+        IncidentHistoryScreen(
+            incidents = incidents,
+            streakDays = streakDays,
+            appLimits = appLimits,
+            preferences = preferences,
+            usageRefreshTrigger = usageRefreshTrigger,
+            onClearHistory = onClearHistory,
+            onDeleteIncidents = onDeleteIncidents,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
