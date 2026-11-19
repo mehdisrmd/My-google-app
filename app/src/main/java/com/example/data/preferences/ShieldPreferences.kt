@@ -1028,6 +1028,30 @@ class ShieldPreferences(private val context: Context) {
         return "usage_sys_base_${todayDay}_$packageName"
     }
 
+    private fun getTodayLimitWarningKey(packageName: String): String {
+        val todayDay = DayMath.localEpochDay()
+        return "limit_warn_${todayDay}_$packageName"
+    }
+
+    /**
+     * Whether the one-minute-left warning (#26) already fired today for this
+     * limit. Day-keyed like the usage counters, so it re-arms by itself at
+     * the same local midnight that resets the budget.
+     */
+    fun wasDailyLimitWarningShownToday(packageName: String, appName: String = ""): Boolean {
+        val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
+        return equivalents.any { prefs.getBoolean(getTodayLimitWarningKey(it), false) }
+    }
+
+    fun markDailyLimitWarningShownToday(packageName: String, appName: String = "") {
+        val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
+        val editor = prefs.edit()
+        for (pkg in equivalents) {
+            editor.putBoolean(getTodayLimitWarningKey(pkg), true)
+        }
+        editor.apply()
+    }
+
     fun getDayAppUsageMinutes(daysAgo: Int, packageNames: List<String>): Int {
         if (packageNames.isEmpty()) return 0
         val targetEpochDay = DayMath.localEpochDay() - daysAgo
@@ -1099,6 +1123,9 @@ class ShieldPreferences(private val context: Context) {
         for (pkg in equivalents) {
             editor.remove(getTodaySecondsKey(pkg))
             editor.remove(getTodayMinutesLegacyKey(pkg))
+            // A manual reset restarts the budget, so the one-minute-left
+            // warning must be allowed to fire again for the fresh budget.
+            editor.remove(getTodayLimitWarningKey(pkg))
             val currentSysSec = freshSystemUsage[pkg] ?: 0
             editor.putInt(getTodaySystemBaselineKey(pkg), currentSysSec)
         }

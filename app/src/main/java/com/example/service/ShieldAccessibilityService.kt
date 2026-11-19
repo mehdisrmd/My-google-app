@@ -8,6 +8,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Toast
 import com.example.ShieldApplication
 import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
@@ -91,6 +92,27 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     private fun isScreenInteractive(): Boolean = powerManager?.isInteractive != false
+
+    /**
+     * #26(a) warning surface: a long Toast over the app the user is currently
+     * in. A Toast (not a notification) keeps the owner's "notifications stay
+     * minimal" rule intact, and it appears in the monitored app's context
+     * exactly one minute before the block lands.
+     */
+    private fun showDailyLimitOneMinuteWarning(appName: String) {
+        val message = if (preferences.getIsPersianLanguage()) {
+            "⚠ فقط ۱ دقیقه از زمان امروز $appName باقی مانده"
+        } else {
+            "⚠ Only 1 minute left for $appName today"
+        }
+        mainHandler.post {
+            try {
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not show daily-limit warning toast", e)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -281,6 +303,31 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 packageName = matchedLimit.packageName,
                                 appName = matchedLimit.appName
                             )
+                            // #26(a): one minute before the budget runs out,
+                            // warn the user once per day while they are still
+                            // inside the app. The decision math is pure (see
+                            // AppLimitBudget); the "already warned" flag is
+                            // day-keyed in preferences next to the counters.
+                            val usedSecs = preferences.getTodayAppUsageSeconds(
+                                packageName = matchedLimit.packageName,
+                                appName = matchedLimit.appName
+                            )
+                            if (AppLimitBudget.shouldShowOneMinuteWarning(
+                                    usedSecondsToday = usedSecs,
+                                    dailyLimitMinutes = matchedLimit.dailyLimitMinutes,
+                                    isEnabled = matchedLimit.isEnabled,
+                                    alreadyWarnedToday = preferences.wasDailyLimitWarningShownToday(
+                                        matchedLimit.packageName,
+                                        matchedLimit.appName
+                                    )
+                                )
+                            ) {
+                                preferences.markDailyLimitWarningShownToday(
+                                    matchedLimit.packageName,
+                                    matchedLimit.appName
+                                )
+                                showDailyLimitOneMinuteWarning(matchedLimit.appName)
+                            }
                             if (AppLimitBudget.isExceeded(usedMins, matchedLimit.dailyLimitMinutes, matchedLimit.isEnabled)) {
                                 // Per-app budget spent: the app stays blocked
                                 // until the daily window resets at midnight —

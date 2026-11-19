@@ -41,4 +41,21 @@ object LockdownTimeLogic {
         val totalSeconds = (remainingMs.coerceAtLeast(0L) + 999L) / 1000L
         return String.format(Locale.ROOT, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
     }
+
+    /**
+     * HH:MM:SS text once at least an hour remains, MM:SS below that — used by
+     * the daily-limit block page (#26), whose countdown runs until the local
+     * midnight reset and would otherwise read as hundreds of "minutes".
+     * Same round-up rule as [formatCountdown].
+     */
+    fun formatCountdownHhMmSs(remainingMs: Long): String {
+        val totalSeconds = (remainingMs.coerceAtLeast(0L) + 999L) / 1000L
+        val hours = totalSeconds / 3600L
+        if (hours <= 0L) {
+            return String.format(Locale.ROOT, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
+        }
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, seconds)
+    }
 }
