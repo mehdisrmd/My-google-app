@@ -106,4 +106,66 @@ class BlocklistSourcesTest {
         assertFalse(parsed.contains("en.wikipedia.org"))
         assertTrue(parsed.contains("blocked.example.com"))
     }
+
+    // ---- #49 (batch 3): the persisted, user-managed source list ----
+
+    @Test
+    fun `unseeded storage resolves to the built-in defaults`() {
+        assertEquals(null, BlocklistSources.decodeSources(null))
+        assertEquals(BlocklistSources.SOURCES, BlocklistSources.resolveSources(null))
+    }
+
+    @Test
+    fun `a stored empty list is a real state - every repository removed`() {
+        assertEquals("", BlocklistSources.encodeSources(emptyList()))
+        assertEquals(emptyList<BlocklistSource>(), BlocklistSources.decodeSources(""))
+        assertEquals(emptyList<BlocklistSource>(), BlocklistSources.resolveSources(""))
+    }
+
+    @Test
+    fun `the defaults survive an encode decode round trip`() {
+        val encoded = BlocklistSources.encodeSources(BlocklistSources.SOURCES)
+        assertEquals(BlocklistSources.SOURCES, BlocklistSources.decodeSources(encoded))
+    }
+
+    @Test
+    fun `removing one default persists - only the other remains`() {
+        val remaining = BlocklistSources.SOURCES - BlocklistSources.SOURCES[0]
+        val stored = BlocklistSources.encodeSources(remaining)
+        assertEquals(remaining, BlocklistSources.resolveSources(stored))
+        assertEquals(listOf("HaGeZi NSFW"), BlocklistSources.resolveSources(stored).map { it.name })
+    }
+
+    @Test
+    fun `a user added source round trips alongside the defaults`() {
+        val custom = BlocklistSources.sourceFromUserInput("My List", "https://lists.example.org/adult.txt")
+        assertTrue(custom != null)
+        val combined = BlocklistSources.SOURCES + custom!!
+        assertEquals(combined, BlocklistSources.decodeSources(BlocklistSources.encodeSources(combined)))
+    }
+
+    @Test
+    fun `malformed stored records are skipped, valid ones survive`() {
+        val custom = BlocklistSources.sourceFromUserInput("", "https://ok.example.net/list.txt")!!
+        // \u001E is the codec's record separator (see BlocklistSources).
+        val stored = "garbage-without-fields\u001E" + BlocklistSources.encodeSources(listOf(custom))
+        assertEquals(listOf(custom), BlocklistSources.decodeSources(stored))
+    }
+
+    @Test
+    fun `sourceFromUserInput falls back to the host when the name is blank`() {
+        val source = BlocklistSources.sourceFromUserInput("  ", "https://lists.example.org/adult.txt")
+        assertTrue(source != null)
+        assertEquals("lists.example.org", source!!.name)
+        assertEquals("https://lists.example.org/adult.txt", source.repositoryUrl)
+        assertEquals(listOf("https://lists.example.org/adult.txt"), source.urls)
+    }
+
+    @Test
+    fun `sourceFromUserInput rejects addresses that are not full http urls`() {
+        assertEquals(null, BlocklistSources.sourceFromUserInput("x", "example.com/list.txt"))
+        assertEquals(null, BlocklistSources.sourceFromUserInput("x", "ftp://example.com/list.txt"))
+        assertEquals(null, BlocklistSources.sourceFromUserInput("x", ""))
+        assertEquals(null, BlocklistSources.sourceFromUserInput("x", "not a url"))
+    }
 }

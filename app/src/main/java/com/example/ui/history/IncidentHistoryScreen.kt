@@ -92,6 +92,12 @@ private fun localizedBlockReason(reason: String?, isPersian: Boolean): String? {
         "Adult site" -> "سایت بزرگسال"
         "Daily app limit reached" -> "رسیدن به سقف روزانه برنامه"
         "Daily data limit reached" -> "رسیدن به سقف روزانه اینترنت"
+        // #46 (batch 3): data-cap warning releases — who turned the
+        // transport off, the app or the user by hand.
+        "Mobile data turned off by the app — daily cap reached" -> "داده همراه خاموش شد — سقف روزانه پر شد"
+        "Mobile data turned off manually — daily cap reached" -> "داده همراه دستی خاموش شد — سقف روزانه پر شد"
+        "Wi-Fi turned off by the app — daily cap reached" -> "وای‌فای قطع شد — سقف روزانه پر شد"
+        "Wi-Fi turned off manually — daily cap reached" -> "وای‌فای دستی قطع شد — سقف روزانه پر شد"
         "Blocked app section" -> "بخش مسدود برنامه"
         "Scheduled focus session" -> "جلسه تمرکز زمان‌بندی‌شده"
         "Tamper attempt" -> "تلاش برای دست‌کاری"

@@ -162,10 +162,24 @@ class BlockLogPolicyTest {
     fun `reason labels follow the trigger word conventions`() {
         assertEquals("Adult site", BlockLogPolicy.reasonFor("Adult Site Blocked: example.com"))
         assertEquals("Daily app limit reached", BlockLogPolicy.reasonFor("Daily Limit (30m): TikTok"))
-        // #43 (batch 2): the data-cap trigger gets its own reason and is
-        // not swallowed by the generic "Daily Limit" branch above it.
-        assertEquals("Daily data limit reached", BlockLogPolicy.reasonFor("Daily Limit: Data (Wi-Fi)"))
-        assertEquals("Daily data limit reached", BlockLogPolicy.reasonFor("Daily Limit: Data (Mobile)"))
+        // #46 (batch 3): a data-cap warning release gets its own reason
+        // per transport, recording who won the shutoff race.
+        assertEquals(
+            "Mobile data turned off by the app — daily cap reached",
+            BlockLogPolicy.reasonFor("Data Cap: Mobile Off By App")
+        )
+        assertEquals(
+            "Mobile data turned off manually — daily cap reached",
+            BlockLogPolicy.reasonFor("Data Cap: Mobile Off Manual")
+        )
+        assertEquals(
+            "Wi-Fi turned off by the app — daily cap reached",
+            BlockLogPolicy.reasonFor("Data Cap: Wi-Fi Off By App")
+        )
+        assertEquals(
+            "Wi-Fi turned off manually — daily cap reached",
+            BlockLogPolicy.reasonFor("Data Cap: Wi-Fi Off Manual")
+        )
         assertEquals("Blocked app section", BlockLogPolicy.reasonFor("Section Blocked: Instagram Reels"))
         assertEquals("Scheduled focus session", BlockLogPolicy.reasonFor("Smart Focus: Deep Work (09:00 – 11:00)"))
         assertEquals("Tamper attempt", BlockLogPolicy.reasonFor("Prevent Clear Data Guard"))

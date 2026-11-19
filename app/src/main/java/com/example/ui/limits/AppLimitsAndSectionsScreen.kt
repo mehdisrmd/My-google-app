@@ -534,8 +534,8 @@ fun AppLimitsAndSectionsScreen(
  * #43 (batch 2): daily data-usage caps — one budget for Wi-Fi, one for
  * mobile data. Usage is read live from [DataUsageMeter] whenever the
  * screen's 5-second tick advances [nowMs]; picking a cap writes the
- * preference the accessibility service enforces (lockdown until
- * midnight, exactly like the per-app daily limits below).
+ * preference the accessibility service enforces (#46: a warning page
+ * plus a race to switch the capped transport off — no lockdown).
  */
 @Composable
 private fun DataUsageLimitsCard(
@@ -567,8 +567,8 @@ private fun DataUsageLimitsCard(
             )
             Text(
                 text = tr(
-                    "When today's usage passes a cap, the phone locks until midnight — the same as the daily app limits.",
-                    "وقتی مصرف امروز از سقف بگذرد، گوشی تا نیمه‌شب قفل می‌شود — مثل محدودیت روزانه برنامه‌ها."
+                    "When the cap is reached, mobile data / Wi-Fi is turned off.",
+                    "با پر شدن سقف، داده همراه / وای‌فای خاموش می‌شود."
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary,

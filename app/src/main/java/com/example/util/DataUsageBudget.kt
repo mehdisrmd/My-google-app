@@ -5,8 +5,9 @@ import java.util.Locale
 /**
  * #43 (batch 2): pure math for the daily data-usage caps — separate
  * budgets for Wi-Fi and mobile data. A cap of 0 MB means "no cap".
- * Enforcement mirrors the daily app limits: reaching the cap locks the
- * phone until midnight (see ShieldAccessibilityService step 3b).
+ * Enforcement (#46, batch 3): reaching a cap raises a warning page for
+ * that transport and the app races the user to switch it off — see
+ * DataCapEnforcer and ShieldAccessibilityService step 3b.
  */
 object DataUsageBudget {
 

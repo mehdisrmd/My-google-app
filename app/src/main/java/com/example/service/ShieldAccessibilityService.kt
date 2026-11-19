@@ -2,6 +2,7 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
+import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,14 +10,17 @@ import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.example.ShieldApplication
@@ -32,10 +36,12 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.deviceowner.DeviceOwnerManager
+import com.example.ui.lockdown.DataCapWarningActivity
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
-import com.example.util.DataUsageBudget
+import com.example.util.DataCapEnforcer
+import com.example.util.TransportStateReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -150,8 +156,33 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     @Volatile
     private var lastUsageTickTimestamp = 0L
-    // #43 (batch 2): the data-cap check runs ~4x a minute, not per tick.
+    // #43 (batch 2) / #46 (batch 3): the data-cap usage evaluation runs
+    // ~4x a minute, not per tick (the stats query is heavy); the warning
+    // state poll in manageDataCapWarnings runs every tick on cheap
+    // state reads instead.
     private var lastDataUsageCheckMs = 0L
+
+    // #46 (batch 3): data-cap warning race state (in-memory; the durable
+    // warning set + release latch live in preferences). Transports whose
+    // switch-off our own attempts caused, for incident attribution.
+    @Volatile
+    private var dataCapOffByApp: Set<DataCapEnforcer.Transport> = emptySet()
+
+    // The transport whose Settings page the automation is working on,
+    // and when that page trip gives up.
+    @Volatile
+    private var dataCapAutomationTransport: DataCapEnforcer.Transport? = null
+
+    @Volatile
+    private var dataCapAutomationDeadlineMs = 0L
+
+    // Transports that already had their one Settings-page automation
+    // trip in the current warning episode.
+    @Volatile
+    private var dataCapAutomationDone: Set<DataCapEnforcer.Transport> = emptySet()
+
+    @Volatile
+    private var lastDataCapWarningLaunchMs = 0L
 
 
     // Guards "is a lock running? -> start one" so the ticker thread and the
@@ -619,49 +650,15 @@ class ShieldAccessibilityService : AccessibilityService() {
                         lastUsageTickTimestamp = now
                     }
 
-                    // 3b. Daily data-usage caps (#43, batch 2): separate
-                    // Wi-Fi and mobile budgets for the whole device,
-                    // enforced exactly like the daily app limits above —
-                    // a lockdown until midnight. The trigger word starts
-                    // with "Daily Limit" so the block screen shows its
-                    // daily "Time's Up" variant, and BlockLogPolicy maps
-                    // it to its own reason. The stats query is too heavy
-                    // for the 1-second tick, so it runs ~4x a minute.
-                    if (preferences.getIsProtectionEnabled() &&
-                        !preferences.isCurrentlyLocked() &&
-                        now - lastDataUsageCheckMs >= 15_000L
-                    ) {
-                        lastDataUsageCheckMs = now
-                        val wifiCapMb = preferences.getDataLimitWifiMb()
-                        val mobileCapMb = preferences.getDataLimitMobileMb()
-                        if (wifiCapMb > 0 || mobileCapMb > 0) {
-                            val usage = DataUsageMeter.todayUsageBytes(
-                                this@ShieldAccessibilityService,
-                                preferences
-                            )
-                            val exceededTransport = when {
-                                DataUsageBudget.isExceeded(
-                                    usage.wifiBytes,
-                                    DataUsageBudget.mbToBytes(wifiCapMb)
-                                ) -> "Wi-Fi"
-                                DataUsageBudget.isExceeded(
-                                    usage.mobileBytes,
-                                    DataUsageBudget.mbToBytes(mobileCapMb)
-                                ) -> "Mobile"
-                                else -> null
-                            }
-                            if (exceededTransport != null) {
-                                triggerLockdown(
-                                    triggerWord = "Daily Limit: Data ($exceededTransport)",
-                                    sourceApp = "Data Usage",
-                                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
-                                        nowMs = now,
-                                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                                    )
-                                )
-                            }
-                        }
-                    }
+                    // 3b. Daily data-usage caps (#43, redesigned by #46
+                    // in batch 3): NO lockdown. A reached cap raises a
+                    // persistent warning page for that transport while
+                    // the app races the user to switch the transport
+                    // off; the warning releases when the transport is
+                    // observed off and never re-fires for it that day.
+                    // (Reached only with master protection ON and no
+                    // lockdown running — the guards above guarantee it.)
+                    manageDataCapWarnings(now, activePkg)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -731,6 +728,19 @@ class ShieldAccessibilityService : AccessibilityService() {
         // which is exactly how an expired timer resurrected itself.
         val activeWindowPkg = rootNode?.packageName?.toString().orEmpty()
         if (activeWindowPkg == packageName) return
+
+        // #46 (batch 3): data-cap warning housekeeping on the event
+        // path. The Settings automation gets first claim on Settings
+        // windows (it may be mid-trip on the page the app itself
+        // opened); then the warning's persistence — if a warning is
+        // active and the user wandered somewhere that is neither
+        // Settings nor System UI, pull the warning page back.
+        if (dataCapAutomationTransport != null && isSettingsHostPackage(activeWindowPkg)) {
+            handleDataCapAutomationWindow(rootNode)
+        }
+        if (dataCapWarningTransports().isNotEmpty() && !isDataCapFreeForeground(activeWindowPkg)) {
+            launchDataCapWarning()
+        }
 
         // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
         //    #6): covers uninstall, Clear Data on our App-info page, and
@@ -1139,6 +1149,403 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
+    // ------------------------------------------------------------------
+    // #46 (batch 3): the daily data-cap warning. The pure decisions live
+    // in DataCapEnforcer; this section owns the durable warning state
+    // (preferences), the race to switch the transport off, the Settings
+    // automation, the warning page's persistence, and the release
+    // logging. The warning is NOT a lockdown: no lock is ever started
+    // for a data cap.
+    // ------------------------------------------------------------------
+
+    private fun dataCapWarningTransports(): Set<DataCapEnforcer.Transport> {
+        return preferences.getDataCapWarningTransports().mapNotNull { name ->
+            try {
+                DataCapEnforcer.Transport.valueOf(name)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        }.toSet()
+    }
+
+    private fun setDataCapWarningTransports(transports: Set<DataCapEnforcer.Transport>) {
+        preferences.setDataCapWarningTransports(transports.map { it.name }.toSet())
+    }
+
+    /**
+     * Runs on every ticker tick (master ON, no lockdown — the caller
+     * guarantees both). The usage evaluation is throttled to ~4x a
+     * minute; everything else works on cheap transport state reads.
+     */
+    private fun manageDataCapWarnings(now: Long, activePkg: String) {
+        val today = DataCapEnforcer.localDayNumber(
+            nowMs = now,
+            zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
+        )
+
+        // Day rollover: the usage counters reset at midnight, so a
+        // warning left over from yesterday ends silently — no incident,
+        // the episode expired with the day; nobody switched anything.
+        var active = dataCapWarningTransports()
+        if (active.isNotEmpty() && preferences.getDataCapWarningDay() != today) {
+            setDataCapWarningTransports(emptySet())
+            dataCapOffByApp = emptySet()
+            dataCapAutomationDone = emptySet()
+            dataCapAutomationTransport = null
+            active = emptySet()
+        }
+
+        // Release poll: a transport observed OFF releases its warning
+        // and is latched for the rest of the day.
+        if (active.isNotEmpty()) {
+            val (_, released) = DataCapEnforcer.partitionByState(active) { transport ->
+                TransportStateReader.isOn(this, transport)
+            }
+            for (transport in released) {
+                releaseDataCapTransport(transport, today)
+            }
+            active = dataCapWarningTransports()
+        }
+
+        // Exceeded evaluation (throttled — the stats query is heavy).
+        if (now - lastDataUsageCheckMs >= 15_000L) {
+            lastDataUsageCheckMs = now
+            val wifiCapMb = preferences.getDataLimitWifiMb()
+            val mobileCapMb = preferences.getDataLimitMobileMb()
+            if (wifiCapMb > 0 || mobileCapMb > 0) {
+                val usage = DataUsageMeter.todayUsageBytes(
+                    this@ShieldAccessibilityService,
+                    preferences
+                )
+                val exceeded = DataCapEnforcer.exceededTransports(
+                    wifiUsedBytes = usage.wifiBytes,
+                    wifiCapMb = wifiCapMb,
+                    mobileUsedBytes = usage.mobileBytes,
+                    mobileCapMb = mobileCapMb
+                )
+                val resolvedDays = mapOf(
+                    DataCapEnforcer.Transport.WIFI to preferences.getDataCapWifiResolvedDay(),
+                    DataCapEnforcer.Transport.MOBILE to preferences.getDataCapMobileResolvedDay()
+                )
+                val fresh = DataCapEnforcer.newWarnings(exceeded, active, resolvedDays, today)
+                for (transport in fresh) {
+                    activateDataCapWarning(transport, today)
+                }
+                active = dataCapWarningTransports()
+            }
+        }
+
+        if (active.isEmpty()) return
+
+        // Persistence: pull the warning page back whenever the user is
+        // somewhere it does not belong — unless a Settings automation
+        // trip is in flight (the app is working there itself).
+        if (dataCapAutomationTransport == null && !isDataCapFreeForeground(activePkg)) {
+            launchDataCapWarning()
+        }
+
+        // Race progression: one Settings-page automation trip at a
+        // time, for the next still-on transport that has not had its
+        // trip this episode.
+        progressDataCapAutomation(now, active)
+    }
+
+    private fun activateDataCapWarning(transport: DataCapEnforcer.Transport, today: Long) {
+        setDataCapWarningTransports(dataCapWarningTransports() + transport)
+        preferences.setDataCapWarningDay(today)
+        launchDataCapWarning()
+        // The race starts now: the synchronous layers (Device Owner
+        // global setting, WifiManager) fire immediately; the Settings
+        // automation follows from the manage loop if the transport
+        // stays on, and the user can always win by hand.
+        attemptDataCapShutoffSync(transport)
+    }
+
+    /** Synchronous shutoff layers: (a) Device Owner, (b) WifiManager. */
+    private fun attemptDataCapShutoffSync(transport: DataCapEnforcer.Transport) {
+        // (a) Device Owner route — the strongest lever available: the
+        // global setting IS the system toggle for both transports.
+        if (DeviceOwnerManager.isDeviceOwner(this)) {
+            try {
+                val manager = getSystemService(DevicePolicyManager::class.java)
+                val admin = DeviceOwnerManager.adminComponent(this)
+                when (transport) {
+                    DataCapEnforcer.Transport.MOBILE ->
+                        manager?.setGlobalSetting(admin, Settings.Global.MOBILE_DATA, "0")
+                    DataCapEnforcer.Transport.WIFI ->
+                        manager?.setGlobalSetting(admin, Settings.Global.WIFI_ON, "0")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Data cap Device Owner shutoff failed for $transport", e)
+            }
+            if (TransportStateReader.isOn(this, transport) == false) {
+                dataCapOffByApp = dataCapOffByApp + transport
+                return
+            }
+        }
+        // (b) WifiManager: deprecated, and a no-op for regular apps on
+        // API 29+ — but still functional on older devices, so attempt
+        // it inside try/catch and let the state read judge the result.
+        if (transport == DataCapEnforcer.Transport.WIFI) {
+            try {
+                @Suppress("DEPRECATION")
+                getSystemService(WifiManager::class.java)?.setWifiEnabled(false)
+            } catch (e: Exception) {
+                Log.w(TAG, "Data cap WifiManager shutoff failed", e)
+            }
+            if (TransportStateReader.isOn(this, transport) == false) {
+                dataCapOffByApp = dataCapOffByApp + transport
+            }
+        }
+    }
+
+    /**
+     * Layer (c): open the transport's system Settings page and let the
+     * accessibility event path click its switch off. One trip per
+     * transport per episode, one trip in flight at a time.
+     */
+    private fun progressDataCapAutomation(now: Long, active: Set<DataCapEnforcer.Transport>) {
+        val inFlight = dataCapAutomationTransport
+        if (inFlight != null) {
+            if (inFlight !in active || now > dataCapAutomationDeadlineMs) {
+                dataCapAutomationTransport = null
+            } else {
+                return
+            }
+        }
+        val next = active.firstOrNull { transport ->
+            transport !in dataCapAutomationDone &&
+                TransportStateReader.isOn(this, transport) != false
+        } ?: return
+        dataCapAutomationDone = dataCapAutomationDone + next
+        dataCapAutomationTransport = next
+        dataCapAutomationDeadlineMs = now + DATA_CAP_AUTOMATION_WINDOW_MS
+        openTransportSettings(next)
+    }
+
+    private fun openTransportSettings(transport: DataCapEnforcer.Transport) {
+        // Register the trip: while it is active, the warning page's
+        // own pull-back must not fight the Settings screen the app
+        // just opened on purpose (same window the page's button uses).
+        preferences.setDataCapSettingsTripUntil(
+            System.currentTimeMillis() + DATA_CAP_AUTOMATION_WINDOW_MS + 30_000L
+        )
+        val action = when (transport) {
+            DataCapEnforcer.Transport.WIFI -> Settings.ACTION_WIFI_SETTINGS
+            DataCapEnforcer.Transport.MOBILE -> Settings.ACTION_DATA_ROAMING_SETTINGS
+        }
+        mainHandler.post {
+            try {
+                startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not open Settings for data cap $transport", e)
+                if (dataCapAutomationTransport == transport) {
+                    dataCapAutomationTransport = null
+                }
+            }
+        }
+    }
+
+    /**
+     * Event-path half of layer (c): while an automation trip is in
+     * flight and a Settings window is in front, find the transport's
+     * switch and click it off. Best-effort by construction — OEM
+     * Settings layouts vary; a miss just leaves the manual path.
+     */
+    private fun handleDataCapAutomationWindow(root: AccessibilityNodeInfo?) {
+        val transport = dataCapAutomationTransport ?: return
+        if (root == null) return
+        if (System.currentTimeMillis() > dataCapAutomationDeadlineMs ||
+            TransportStateReader.isOn(this, transport) == false
+        ) {
+            dataCapAutomationTransport = null
+            return
+        }
+        if (tryClickTransportSwitchOff(root, transport)) {
+            // The flip itself is observed by the release poll, which
+            // now credits this transport's switch-off to the app.
+            dataCapOffByApp = dataCapOffByApp + transport
+            dataCapAutomationTransport = null
+        }
+    }
+
+    private fun tryClickTransportSwitchOff(
+        root: AccessibilityNodeInfo,
+        transport: DataCapEnforcer.Transport
+    ): Boolean {
+        val labels = when (transport) {
+            DataCapEnforcer.Transport.WIFI ->
+                listOf("wi-fi", "wifi", "وای‌فای", "وای فای")
+            DataCapEnforcer.Transport.MOBILE ->
+                listOf("mobile data", "داده همراه", "اینترنت موبایل", "داده موبایل")
+        }
+        val switches = mutableListOf<AccessibilityNodeInfo>()
+        val labelNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectDataCapNodes(root, 0, intArrayOf(DATA_CAP_NODE_BUDGET), labels, switches, labelNodes)
+
+        // Preferred: the checked switch sharing a row (a common
+        // ancestor) with the transport's label — on a page with several
+        // switches (mobile data + roaming, say) this picks the right
+        // one instead of the first.
+        for (labelNode in labelNodes) {
+            var ancestor: AccessibilityNodeInfo? = labelNode.parent
+            var hops = 0
+            while (ancestor != null && hops < 8) {
+                val rowSwitch = switches.firstOrNull { candidate ->
+                    candidate.isChecked && isNodeInSubtree(ancestor, candidate)
+                }
+                if (rowSwitch != null) return clickDataCapNode(rowSwitch)
+                ancestor = ancestor.parent
+                hops++
+            }
+        }
+        // Fallback: the page's only checked switch (the Wi-Fi page's
+        // master toggle is the common case).
+        val checkedSwitches = switches.filter { it.isChecked }
+        if (checkedSwitches.size == 1) return clickDataCapNode(checkedSwitches.first())
+        return false
+    }
+
+    private fun collectDataCapNodes(
+        node: AccessibilityNodeInfo?,
+        depth: Int,
+        budget: IntArray,
+        labels: List<String>,
+        switches: MutableList<AccessibilityNodeInfo>,
+        labelNodes: MutableList<AccessibilityNodeInfo>
+    ) {
+        if (node == null || depth > 30 || budget[0] <= 0) return
+        budget[0]--
+        val className = node.className?.toString().orEmpty()
+        if (node.isCheckable || className.contains("Switch")) {
+            switches.add(node)
+        }
+        val texts = listOfNotNull(
+            node.text?.toString(),
+            node.contentDescription?.toString()
+        )
+        if (texts.any { text -> labels.any { label -> text.lowercase().contains(label) } }) {
+            labelNodes.add(node)
+        }
+        for (i in 0 until node.childCount) {
+            if (budget[0] <= 0) return
+            val child = try {
+                node.getChild(i)
+            } catch (e: Exception) {
+                null
+            }
+            if (child != null) {
+                collectDataCapNodes(child, depth + 1, budget, labels, switches, labelNodes)
+            }
+        }
+    }
+
+    private fun isNodeInSubtree(ancestor: AccessibilityNodeInfo, node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops < 40) {
+            if (current == ancestor) return true
+            current = current.parent
+            hops++
+        }
+        return false
+    }
+
+    private fun clickDataCapNode(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops < 6) {
+            if (current.isClickable) {
+                return try {
+                    current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            current = current.parent
+            hops++
+        }
+        return false
+    }
+
+    /** Ends one transport's warning: latch it for today, log it once. */
+    private fun releaseDataCapTransport(transport: DataCapEnforcer.Transport, today: Long) {
+        setDataCapWarningTransports(dataCapWarningTransports() - transport)
+        when (transport) {
+            DataCapEnforcer.Transport.WIFI -> preferences.setDataCapWifiResolvedDay(today)
+            DataCapEnforcer.Transport.MOBILE -> preferences.setDataCapMobileResolvedDay(today)
+        }
+        if (dataCapAutomationTransport == transport) {
+            dataCapAutomationTransport = null
+        }
+        dataCapAutomationDone = dataCapAutomationDone - transport
+        val actor = if (transport in dataCapOffByApp) {
+            DataCapEnforcer.OffActor.BY_APP
+        } else {
+            DataCapEnforcer.OffActor.MANUAL
+        }
+        dataCapOffByApp = dataCapOffByApp - transport
+        recordIncidentNow(
+            triggerWord = DataCapEnforcer.triggerWordFor(transport, actor),
+            sourceApp = "Data Usage",
+            durationMinutes = 0,
+            screenshotPath = null,
+            blockReason = DataCapEnforcer.reasonFor(transport, actor),
+            blockedUrl = null
+        )
+    }
+
+    private fun launchDataCapWarning() {
+        // Same call / lock-screen gate as the block screen: never cover
+        // a call, and never show over the keyguard — the warning state
+        // persists in preferences and the ticker relaunches on unlock.
+        if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (nowElapsed - lastDataCapWarningLaunchMs < DATA_CAP_WARNING_RELAUNCH_MIN_INTERVAL_MS) return
+        lastDataCapWarningLaunchMs = nowElapsed
+        mainHandler.post {
+            // The warning may have released (or a real lockdown taken
+            // precedence) while this launch sat in the queue.
+            if (dataCapWarningTransports().isEmpty()) return@post
+            if (preferences.isCurrentlyLocked()) return@post
+            if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return@post
+            try {
+                startActivity(
+                    Intent(this, DataCapWarningActivity::class.java).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                        )
+                    }
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start DataCapWarningActivity", e)
+            }
+        }
+    }
+
+    /** Settings hosts, mirroring TamperAttemptClassifier's definition. */
+    private fun isSettingsHostPackage(pkgName: String): Boolean {
+        val lower = pkgName.lowercase()
+        return lower == "com.android.settings" ||
+            lower.contains("miui.securitycenter") ||
+            lower.contains("permissioncontroller")
+    }
+
+    /**
+     * Foregrounds the data-cap warning must NOT cover: our own app (the
+     * warning page itself), System UI (the quick-settings tiles are a
+     * legitimate manual path), and Settings hosts (the manual path and
+     * the automation both work there).
+     */
+    private fun isDataCapFreeForeground(pkgName: String): Boolean {
+        if (pkgName.isBlank() || pkgName == packageName) return true
+        if (isIgnoredSystemUiPackage(pkgName)) return true
+        return isSettingsHostPackage(pkgName)
+    }
+
     private fun launchLockdownOverlay(
         triggerWord: String,
         sourceApp: String,
@@ -1408,5 +1815,16 @@ class ShieldAccessibilityService : AccessibilityService() {
     private companion object {
         const val TAG = "ShieldA11y"
         const val OVERLAY_RELAUNCH_MIN_INTERVAL_MS = 400L
+        // #46: the warning page's own relaunch throttle (the 400 ms
+        // lockdown interval would re-post startActivity far too often
+        // for a page that can stay relevant for minutes).
+        const val DATA_CAP_WARNING_RELAUNCH_MIN_INTERVAL_MS = 3_000L
+        // #46: how long one Settings-page automation trip may take
+        // before the app stops trying to click and leaves the manual
+        // path to the user.
+        const val DATA_CAP_AUTOMATION_WINDOW_MS = 25_000L
+        // #46: node budget for one Settings-page switch hunt, mirroring
+        // TextContentScanner's traversal cap.
+        const val DATA_CAP_NODE_BUDGET = 2500
     }
 }

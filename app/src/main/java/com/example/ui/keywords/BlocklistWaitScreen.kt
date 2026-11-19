@@ -1,17 +1,23 @@
 package com.example.ui.keywords
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -28,12 +34,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.AmberWarning
+import com.example.ui.theme.CrimsonDark
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianTextPrimary
@@ -52,9 +63,12 @@ import kotlinx.coroutines.delay
  * "Update lists now" button keep trying afterwards).
  *
  * #29 (batch 2): while waiting, a «رد شدن» / Skip option appears after
- * 5 seconds. Skipping (like continuing with the starter seed) does NOT
- * count as an update: the app then stays not-fully-activated — see
- * [BlocklistActivationBlockedScreen] — until a real download succeeds.
+ * 5 seconds. #48 (batch 3): that Skip is a proper Liquid Glass pill, not
+ * a faint text link. #50 (batch 3): skipping (or continuing with the
+ * starter seed) lets the user straight INTO the app — this screen never
+ * covers the app again afterwards, and nothing else gates entry; the
+ * list is demanded only when protection is switched ON (see
+ * BlocklistActivationGate in MainActivity).
  */
 @Composable
 fun BlocklistWaitScreen(
@@ -125,20 +139,60 @@ fun BlocklistWaitScreen(
                     modifier = Modifier.size(40.dp)
                 )
 
-                // #29: after 5 seconds of waiting the user may skip — but
-                // the list then counts as NOT updated (see the activation
-                // screen), so this is a deferral, not a free pass.
+                // #29: after 5 seconds of waiting the user may skip.
+                // #48 (batch 3): the Skip is a Liquid Glass pill in the
+                // app's primary-button language — gradient accent fill,
+                // specular rim light, soft shadow, bold white label —
+                // not the faint text link it used to be. #50: skipping
+                // lets the user into the app; it is a deferral of the
+                // download, never a trap.
                 if (showSkip) {
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(28.dp))
 
-                    TextButton(
-                        onClick = onSkip,
-                        modifier = Modifier.testTag("blocklist_wait_skip_button")
+                    val skipShape = RoundedCornerShape(50)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .shadow(elevation = 8.dp, shape = skipShape)
+                            .clip(skipShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        CrimsonPrimary.copy(alpha = 0.92f),
+                                        CrimsonDark.copy(alpha = 0.92f)
+                                    )
+                                )
+                            )
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = 0.50f),
+                                        Color.White.copy(alpha = 0.10f)
+                                    )
+                                ),
+                                shape = skipShape
+                            )
+                            .clickable { onSkip() }
+                            .testTag("blocklist_wait_skip_button"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = tr("Skip", "رد شدن"),
-                            color = ObsidianTextSecondary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = tr("Skip", "رد شدن"),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             } else {
@@ -190,79 +244,3 @@ fun BlocklistWaitScreen(
 
 /** How long the first-launch wait runs before Skip appears (#29). */
 private const val SKIP_DELAY_MS = 5_000L
-
-/**
- * #29 (batch 2): shown instead of the main UI when the first-launch list
- * download was skipped (or replaced by the starter seed). The list
- * counts as NOT updated, so the app is not fully activated: the only way
- * forward is a successful list update, and the button routes straight
- * back into that update flow.
- */
-@Composable
-fun BlocklistActivationBlockedScreen(
-    onUpdateNow: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(ObsidianBg)
-            .testTag("blocklist_activation_blocked_screen"),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = 36.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Warning,
-                contentDescription = null,
-                tint = AmberWarning,
-                modifier = Modifier.size(56.dp)
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = tr(
-                    "The site list still needs an update",
-                    "فهرست سایت‌ها هنوز به به‌روزرسانی نیاز دارد"
-                ),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = ObsidianTextPrimary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = tr(
-                    "The first download was skipped, so X Blocker is not fully activated yet. Update the site list to finish activation.",
-                    "دانلود اول رد شد، پس ایکس بلاکر هنوز کامل فعال نشده است. برای کامل شدن فعال‌سازی، فهرست سایت‌ها را به‌روزرسانی کنید."
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = ObsidianTextSecondary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            Button(
-                onClick = onUpdateNow,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CrimsonPrimary,
-                    contentColor = ObsidianTextPrimary
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.testTag("blocklist_activation_update_button")
-            ) {
-                Text(
-                    text = tr("Update the list now", "همین حالا فهرست را به‌روزرسانی کن"),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}

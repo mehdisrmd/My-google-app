@@ -70,6 +70,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.blocklist.AdultBlocklistParser
+import com.example.data.blocklist.BlocklistSource
 import com.example.data.blocklist.BlocklistSources
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockIncident
@@ -102,6 +103,10 @@ fun KeywordManagerScreen(
     userBlocklistDomains: List<String> = emptyList(),
     onAddUserBlocklistDomain: (String) -> Unit = {},
     onRemoveUserBlocklistDomain: (String) -> Unit = {},
+    blocklistSources: List<BlocklistSource> = BlocklistSources.SOURCES,
+    onRemoveBlocklistSource: (BlocklistSource) -> Unit = {},
+    onAddBlocklistSource: (BlocklistSource) -> Unit = {},
+    onRestoreDefaultBlocklistSources: () -> Unit = {},
     incidents: List<BlockIncident> = emptyList(),
     incidentStreakDays: Int = 0,
     incidentAppLimits: List<AppUsageLimit> = emptyList(),
@@ -201,7 +206,11 @@ fun KeywordManagerScreen(
                 onUpdateBlocklistNow = onUpdateBlocklistNow,
                 userBlocklistDomains = userBlocklistDomains,
                 onAddUserBlocklistDomain = onAddUserBlocklistDomain,
-                onRemoveUserBlocklistDomain = onRemoveUserBlocklistDomain
+                onRemoveUserBlocklistDomain = onRemoveUserBlocklistDomain,
+                blocklistSources = blocklistSources,
+                onRemoveBlocklistSource = onRemoveBlocklistSource,
+                onAddBlocklistSource = onAddBlocklistSource,
+                onRestoreDefaultBlocklistSources = onRestoreDefaultBlocklistSources
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -410,7 +419,11 @@ private fun AdultBlockCard(
     onUpdateBlocklistNow: () -> Unit,
     userBlocklistDomains: List<String> = emptyList(),
     onAddUserBlocklistDomain: (String) -> Unit = {},
-    onRemoveUserBlocklistDomain: (String) -> Unit = {}
+    onRemoveUserBlocklistDomain: (String) -> Unit = {},
+    blocklistSources: List<BlocklistSource> = BlocklistSources.SOURCES,
+    onRemoveBlocklistSource: (BlocklistSource) -> Unit = {},
+    onAddBlocklistSource: (BlocklistSource) -> Unit = {},
+    onRestoreDefaultBlocklistSources: () -> Unit = {}
 ) {
     val lastUpdatedText = remember(blocklistLastUpdatedMs) {
         if (blocklistLastUpdatedMs > 0L) {
@@ -556,19 +569,179 @@ private fun AdultBlockCard(
                 }
             }
 
-            // #38 (batch 2, corrected): the list sources, shown openly —
-            // exactly two famous porn-only repositories, nothing else is
-            // merged into the list (plus the user's own additions below).
-            Spacer(modifier = Modifier.height(8.dp))
+            // #38 (batch 2, corrected): the list sources, shown openly.
+            // #49 (batch 3): they are also MANAGED here — each repository
+            // can be removed, new ones added by list URL, and the two
+            // built-in defaults restored. The list lives in preferences;
+            // changes take effect on the next update.
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = tr(
-                    "List sources: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} (${it.repositoryUrl})" },
-                    "منابع فهرست: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} ‏(${it.repositoryUrl})" }
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = ObsidianTextSecondary,
-                modifier = Modifier.testTag("adult_blocklist_source_text")
+                text = tr("List repositories", "مخازن فهرست"),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
             )
+            if (blocklistSources.isEmpty()) {
+                Text(
+                    text = tr(
+                        "No repositories configured. The list now relies on your own sites below and the built-in starter list — add or restore a repository to download a full list again.",
+                        "هیچ مخزنی تنظیم نشده است. فهرست حالا به سایت‌های خودتان در پایین و فهرست اولیهٔ داخلی تکیه دارد — برای دانلود دوبارهٔ فهرست کامل، یک مخزن اضافه یا بازیابی کنید."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary,
+                    modifier = Modifier.testTag("blocklist_sources_empty_note")
+                )
+            } else {
+                blocklistSources.forEachIndexed { index, source ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
+                            Text(
+                                text = source.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = source.repositoryUrl,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ObsidianTextSecondary
+                            )
+                        }
+                        IconButton(
+                            onClick = { onRemoveBlocklistSource(source) },
+                            modifier = Modifier.testTag("blocklist_source_remove_$index")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = tr("Remove repository", "حذف مخزن"),
+                                tint = CrimsonPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            if (blocklistSources != BlocklistSources.SOURCES) {
+                TextButton(
+                    onClick = onRestoreDefaultBlocklistSources,
+                    modifier = Modifier.testTag("blocklist_sources_restore_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        tint = CrimsonPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Restore default repositories", "بازیابی مخازن پیش‌فرض"),
+                        color = CrimsonPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            var newSourceName by remember { mutableStateOf("") }
+            var newSourceUrl by remember { mutableStateOf("") }
+            var sourceUrlError by remember { mutableStateOf(false) }
+            OutlinedTextField(
+                value = newSourceName,
+                onValueChange = { newSourceName = it },
+                placeholder = {
+                    Text(
+                        tr("Repository name (optional)", "نام مخزن (اختیاری)"),
+                        color = ObsidianTextSecondary
+                    )
+                },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CrimsonPrimary,
+                    unfocusedBorderColor = ObsidianBorder,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = CrimsonPrimary,
+                    focusedContainerColor = ObsidianSurface,
+                    unfocusedContainerColor = ObsidianSurface
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("blocklist_source_name_input")
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newSourceUrl,
+                    onValueChange = {
+                        newSourceUrl = it
+                        sourceUrlError = false
+                    },
+                    placeholder = {
+                        Text(
+                            tr("https://example.com/list.txt", "https://example.com/list.txt"),
+                            color = ObsidianTextSecondary
+                        )
+                    },
+                    singleLine = true,
+                    isError = sourceUrlError,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CrimsonPrimary,
+                        unfocusedBorderColor = ObsidianBorder,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = CrimsonPrimary,
+                        focusedContainerColor = ObsidianSurface,
+                        unfocusedContainerColor = ObsidianSurface
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("blocklist_source_url_input")
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val source = BlocklistSources.sourceFromUserInput(newSourceName, newSourceUrl)
+                        if (source == null) {
+                            sourceUrlError = true
+                        } else {
+                            onAddBlocklistSource(source)
+                            newSourceName = ""
+                            newSourceUrl = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("blocklist_source_add_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(tr("Add", "افزودن"), fontWeight = FontWeight.Bold)
+                }
+            }
+            if (sourceUrlError) {
+                Text(
+                    text = tr(
+                        "That does not look like a list URL — type the full https:// address of a domain list.",
+                        "این شبیه آدرس فهرست نیست — آدرس کامل https:// یک فهرست دامنه را بنویسید."
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CrimsonPrimary
+                )
+            }
 
             // #38 (batch 2): the user's own additions to the list. They
             // are merged into the on-disk index immediately, survive
