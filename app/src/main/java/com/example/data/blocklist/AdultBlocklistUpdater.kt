@@ -58,7 +58,10 @@ class AdultBlocklistUpdater(
      */
     fun writeFallbackSeed() {
         val seed = AdultBlocklistParser.mergeDomainSets(
-            listOf(BlocklistSources.FALLBACK_SEED_DOMAINS)
+            listOf(
+                BlocklistSources.FALLBACK_SEED_DOMAINS,
+                preferences.getUserBlocklistDomains()
+            )
         )
         store.writeDomainsAtomically(seed)
         preferences.setAdultBlocklistDomainCount(seed.size)
@@ -85,12 +88,17 @@ class AdultBlocklistUpdater(
             )
         }
 
-        val merged = AdultBlocklistParser.mergeDomainSets(parsedSets)
+        val merged = AdultBlocklistParser.mergeDomainSets(
+            parsedSets + listOf(preferences.getUserBlocklistDomains())
+        )
         store.writeDomainsAtomically(merged)
         preferences.saveAdultBlocklistUpdate(
             lastUpdatedMs = System.currentTimeMillis(),
             domainCount = merged.size
         )
+        // #29 (batch 2): a real download succeeded — the first-launch
+        // skip state (if any) is over and the app may fully activate.
+        preferences.setBlocklistUpdatePending(false)
         return UpdateResult(
             success = true,
             domainCount = merged.size,

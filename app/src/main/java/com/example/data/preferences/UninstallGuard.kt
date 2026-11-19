@@ -4,23 +4,32 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * Pure logic for the 5-hour uninstall delay (Feature: Uninstall Guard).
+ * Pure logic for the uninstall delay (Feature: Uninstall Guard).
  *
  * Honest Android model: without device-admin there is no way to hard-block a
  * system uninstall. Instead, requesting an uninstall starts a persisted
- * 5-hour countdown (a wall-clock deadline in SharedPreferences, so it
- * survives reboot). While no request exists or the countdown is still
- * running, the master protection switch cannot be turned OFF. Only after the
- * deadline passes may protection be disabled — which is what then allows a
- * normal uninstall from system Settings.
+ * countdown (a wall-clock deadline in SharedPreferences, so it survives
+ * reboot). The wait length is user-chosen during first setup (#41); the
+ * built-in default is 1 hour (#40, batch 2 — previously 5 hours). While no
+ * request exists or the countdown is still running, the uninstall guard
+ * stays armed; only after the deadline passes does the guard stand down,
+ * which is what then allows a normal uninstall from system Settings.
  */
 object UninstallGuard {
 
-    /** Mandatory wait between an uninstall request and protection switch-off. */
-    val WAIT_MILLIS: Long = TimeUnit.HOURS.toMillis(5)
+    /** Default wait between an uninstall request and the guard standing down. */
+    val WAIT_MILLIS: Long = TimeUnit.HOURS.toMillis(1)
 
     /** Deadline created by a fresh uninstall request made at [nowMs]. */
     fun deadlineForRequest(nowMs: Long): Long = nowMs + WAIT_MILLIS
+
+    /**
+     * Deadline for a fresh request with a caller-chosen wait (#41: the
+     * length picked during first setup). A non-positive wait means the
+     * deadline is simply [nowMs] itself.
+     */
+    fun deadlineForRequest(nowMs: Long, waitMillis: Long): Long =
+        nowMs + waitMillis.coerceAtLeast(0L)
 
     /** True once an uninstall request has been recorded. */
     fun isRequested(deadlineMs: Long): Boolean = deadlineMs > 0L
@@ -29,13 +38,15 @@ object UninstallGuard {
     fun remainingMillis(deadlineMs: Long, nowMs: Long): Long =
         (deadlineMs - nowMs).coerceAtLeast(0L)
 
-    /** True when a request exists and its 5-hour wait has fully elapsed. */
+    /** True when a request exists and its wait has fully elapsed. */
     fun isUnlocked(deadlineMs: Long, nowMs: Long): Boolean =
         isRequested(deadlineMs) && nowMs >= deadlineMs
 
     /**
-     * The master protection switch may only be turned OFF once the uninstall
-     * wait has elapsed. Not requested yet -> false. Still counting -> false.
+     * The uninstall guard stands down only once the uninstall wait has
+     * elapsed. Not requested yet -> false. Still counting -> false.
+     * (Since batch 2 #35 the master switch no longer consults this; it
+     * describes the guard's own arming window.)
      */
     fun canDisableProtection(deadlineMs: Long, nowMs: Long): Boolean =
         isUnlocked(deadlineMs, nowMs)

@@ -56,6 +56,10 @@ android {
     }
   }
   compileOptions {
+    // Core library desugaring: the Jalali calendar library
+    // (org.bardframework:jalali-date) is built on java.time, which only
+    // exists natively on API 26+; desugaring keeps minSdk 24 working.
+    isCoreLibraryDesugaringEnabled = true
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
@@ -116,6 +120,12 @@ dependencies {
   // WorkManager: the weekly adult-blocklist refresh (#13). The updater
   // itself uses HttpURLConnection, so no new HTTP stack is pulled in.
   implementation(libs.androidx.work.runtime.ktx)
+  // Jalali (Shamsi) calendar conversion (#34): the established Bard
+  // Framework jalali-date library (Maven Central) — no hand-rolled
+  // calendar math in the app. Needs the core library desugaring
+  // enabled in compileOptions above to work on API 24/25.
+  implementation(libs.bardframework.jalali.date)
+  coreLibraryDesugaring(libs.desugar.jdk.libs)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

@@ -116,15 +116,21 @@ class TamperAttemptClassifierTest {
     }
 
     @Test
-    fun appInfoMainPage_isIgnored() {
+    fun appInfoMainPage_isForceStop() {
         // The main App-info page (Open / Uninstall / Force stop buttons,
-        // "Storage & cache" row) has no danger action on it yet.
+        // "Storage & cache" row): no confirmation dialog is up yet, so
+        // it is not UNINSTALL / CLEAR_DATA — but since #45 the Force
+        // stop button makes this page itself the guarded surface
+        // (the service only acts when the guard's own toggle is ON).
         val texts = listOf(
             "X Blocker",
             "Open", "Uninstall", "Force stop",
             "Storage & cache", "Permissions", "Notifications"
         )
-        assertNull(TamperAttemptClassifier.classify(texts, settings, own))
+        assertEquals(
+            TamperAction.FORCE_STOP,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
     }
 
     // ---- DISABLE_ACCESSIBILITY (#6b) ----
@@ -210,6 +216,119 @@ class TamperAttemptClassifierTest {
                 settings,
                 own
             )
+        )
+    }
+
+    // ---- VPN_CONFIG (#42, batch 2) ----
+
+    @Test
+    fun settingsVpnProfileEditor_isVpnConfig() {
+        // The VPN editor never mentions X Blocker — it must still classify.
+        val texts = listOf("Edit VPN profile", "Name", "Type", "Server address", "Save")
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun settingsAddVpn_isVpnConfig() {
+        val texts = listOf("Add VPN", "Always-on VPN", "Block connections without VPN")
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun vpnConsentDialog_isVpnConfig() {
+        val texts = listOf(
+            "Connection request",
+            "Some App wants to set up a VPN connection so it can monitor network traffic."
+        )
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, "com.android.vpndialogs", own)
+        )
+    }
+
+    @Test
+    fun networkSettingsPageWithVpnRow_isNotClassified() {
+        // The Network & internet page merely LISTS a VPN row among the
+        // other radios — no configuration surface is open yet.
+        val texts = listOf(
+            "Network & internet", "Wi-Fi", "Mobile", "Airplane mode", "VPN", "Private DNS"
+        )
+        assertNull(TamperAttemptClassifier.classify(texts, settings, own))
+    }
+
+    @Test
+    fun vpnEditorInBrowserPackage_isNotClassified() {
+        val texts = listOf("Edit VPN profile", "Name", "Save")
+        assertNull(
+            TamperAttemptClassifier.classify(texts, "com.android.chrome", own)
+        )
+    }
+
+    // ---- FORCE_STOP (#45, batch 2) ----
+
+    @Test
+    fun persianAppInfoPage_isForceStop() {
+        val texts = listOf(
+            "ایکس بلاکر",
+            "باز کردن", "حذف نصب", "توقف اجباری",
+            "حافظه و فضای ذخیره‌سازی", "مجوزها"
+        )
+        // Like the FA uninstall test: the Latin package string is what
+        // mentionsOurApp keys on.
+        assertEquals(
+            TamperAction.FORCE_STOP,
+            TamperAttemptClassifier.classify(texts + own, settings, own)
+        )
+    }
+
+    @Test
+    fun otherAppsAppInfoPage_isIgnored() {
+        // Another app's App-info page has the same Force stop button —
+        // the mentionsOurApp gate keeps it fully usable.
+        val texts = listOf(
+            "Some Other App",
+            "Open", "Uninstall", "Force stop",
+            "Storage & cache", "Permissions"
+        )
+        assertNull(TamperAttemptClassifier.classify(texts, settings, own))
+    }
+
+    @Test
+    fun settingsPageWithoutOurApp_isNotForceStop() {
+        // The phrase alone is not enough: without our app on the page
+        // there is nothing to protect.
+        val texts = listOf("Apps", "See all apps", "Force stop")
+        assertNull(TamperAttemptClassifier.classify(texts, settings, own))
+    }
+
+    @Test
+    fun forceStopTextOutsideSettings_isIgnored() {
+        // Host gate: the same words in a browser window never classify.
+        val texts = listOf("X Blocker", "Force stop")
+        assertNull(
+            TamperAttemptClassifier.classify(texts, "com.android.chrome", own)
+        )
+    }
+
+    @Test
+    fun uninstallDialogWinsOverForceStop() {
+        // The uninstall confirmation is the more advanced stage and
+        // keeps its own classification (and its own guard).
+        val texts = listOf(
+            "X Blocker",
+            "Do you want to uninstall this app?",
+            "Force stop",
+            "Cancel", "OK"
+        )
+        assertEquals(
+            TamperAction.UNINSTALL,
+            TamperAttemptClassifier.classify(texts, settings, own)
         )
     }
 }

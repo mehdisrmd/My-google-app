@@ -35,6 +35,7 @@ import com.example.deviceowner.DeviceOwnerManager
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
+import com.example.util.DataUsageBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +150,8 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     @Volatile
     private var lastUsageTickTimestamp = 0L
+    // #43 (batch 2): the data-cap check runs ~4x a minute, not per tick.
+    private var lastDataUsageCheckMs = 0L
 
 
     // Guards "is a lock running? -> start one" so the ticker thread and the
@@ -359,12 +362,28 @@ class ShieldAccessibilityService : AccessibilityService() {
                     //     fast path; this covers a missed broadcast).
                     flushDeferredOverlay()
 
-                    // 2. Strict Lockdown Enforcement: If timer is counting down, ONLY allow X Blocker
-                    //    or whitelisted Phone Call / SMS apps launched from the Block Screen!
+                    // 2. Lockdown Enforcement: while a lock counts down,
+                    //    #39 (batch 2) splits behavior on Strict Lock Mode:
+                    //    STRICT ON — the whole phone stays pinned to the
+                    //    block screen (only X Blocker + the temporary
+                    //    Call/SMS window may come forward).
+                    //    STRICT OFF — only the offending app (recorded as
+                    //    the lock's package) is met by the block page
+                    //    again; every other app stays usable.
                     if (preferences.isCurrentlyLocked()) {
-                        if (activePkg.isNotBlank() &&
-                            !preferences.isPackageAllowedDuringLockdown(activePkg)
-                        ) {
+                        val strictMode = preferences.getStrictModeEnabled()
+                        val shouldEnforce = when {
+                            LockdownPinningPolicy.shouldPinWholePhone(strictMode) ->
+                                activePkg.isNotBlank() &&
+                                    !preferences.isPackageAllowedDuringLockdown(activePkg)
+                            LockdownPinningPolicy.shouldReblockForegroundApp(
+                                strictModeEnabled = strictMode,
+                                activeLockPackage = preferences.getActiveLockPackage(),
+                                foregroundPackage = activePkg
+                            ) -> true
+                            else -> false
+                        }
+                        if (shouldEnforce) {
                             launchLockdownOverlay(
                                 triggerWord = preferences.getActiveLockTrigger(),
                                 sourceApp = preferences.getActiveLockApp(),
@@ -376,12 +395,14 @@ class ShieldAccessibilityService : AccessibilityService() {
 
                     // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
-                    //     screens that target X Blocker while the guard is armed.
+                    //     screens that target X Blocker while a guard applies.
                     //     #6: the classifier also covers Clear Data on our
                     //     App-info page and switching our accessibility
                     //     service off — same intervention for all three.
+                    //     Batch 2: each action follows its own guard toggle
+                    //     (#35/#36/#42/#45), independent of master protection.
                     val tamperAction = if (rootNode != null && activePkg.isNotBlank() &&
-                        isUninstallGuardArmed()
+                        anyTamperGuardEnabled()
                     ) {
                         TextContentScanner.findTamperAttempt(
                             rootNode,
@@ -391,11 +412,12 @@ class ShieldAccessibilityService : AccessibilityService() {
                     } else {
                         null
                     }
-                    if (tamperAction != null) {
+                    if (tamperAction != null && isTamperGuardApplicable(tamperAction)) {
                         triggerLockdown(
 
                             triggerWord = tamperTriggerWord(tamperAction),
-                            sourceApp = "System Settings"
+                            sourceApp = "System Settings",
+                            lockPackage = activePkg
                         )
                         continue
                     }
@@ -506,7 +528,9 @@ class ShieldAccessibilityService : AccessibilityService() {
                                 sourceApp = resolveReadableAppName(
                                     activePkg.ifBlank { lastForegroundPackage }
                                 ),
-                                graceAvailable = false
+                                graceAvailable = false,
+                                lockPackage = activePkg.ifBlank { lastForegroundPackage }
+                                    .takeIf { it.isNotBlank() }
                             )
                         } else {
                             graceRecheckAbsentScans += 1
@@ -585,13 +609,58 @@ class ShieldAccessibilityService : AccessibilityService() {
                                     customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
                                         nowMs = now,
                                         zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                                    )
+                                    ),
+                                    lockPackage = matchedLimit.packageName
                                 )
                             }
 
                         }
                     } else {
                         lastUsageTickTimestamp = now
+                    }
+
+                    // 3b. Daily data-usage caps (#43, batch 2): separate
+                    // Wi-Fi and mobile budgets for the whole device,
+                    // enforced exactly like the daily app limits above —
+                    // a lockdown until midnight. The trigger word starts
+                    // with "Daily Limit" so the block screen shows its
+                    // daily "Time's Up" variant, and BlockLogPolicy maps
+                    // it to its own reason. The stats query is too heavy
+                    // for the 1-second tick, so it runs ~4x a minute.
+                    if (preferences.isProtectionEnabled() &&
+                        !preferences.isCurrentlyLocked() &&
+                        now - lastDataUsageCheckMs >= 15_000L
+                    ) {
+                        lastDataUsageCheckMs = now
+                        val wifiCapMb = preferences.getDataLimitWifiMb()
+                        val mobileCapMb = preferences.getDataLimitMobileMb()
+                        if (wifiCapMb > 0 || mobileCapMb > 0) {
+                            val usage = DataUsageMeter.todayUsageBytes(
+                                this@ShieldAccessibilityService,
+                                preferences
+                            )
+                            val exceededTransport = when {
+                                DataUsageBudget.isExceeded(
+                                    usage.wifiBytes,
+                                    DataUsageBudget.mbToBytes(wifiCapMb)
+                                ) -> "Wi-Fi"
+                                DataUsageBudget.isExceeded(
+                                    usage.mobileBytes,
+                                    DataUsageBudget.mbToBytes(mobileCapMb)
+                                ) -> "Mobile"
+                                else -> null
+                            }
+                            if (exceededTransport != null) {
+                                triggerLockdown(
+                                    triggerWord = "Daily Limit: Data ($exceededTransport)",
+                                    sourceApp = "Data Usage",
+                                    customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
+                                        nowMs = now,
+                                        zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
+                                    )
+                                )
+                            }
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -610,7 +679,11 @@ class ShieldAccessibilityService : AccessibilityService() {
             lastForegroundPackage = pkgName
         }
 
-        // 1. If device is currently in active lockdown, block leaving X Blocker (except whitelisted Call/SMS)
+        // 1. If device is currently in active lockdown, keep the user on the
+        //    block screen — but only as far as #39 (batch 2) prescribes:
+        //    Strict Lock Mode ON pins the whole phone (except whitelisted
+        //    Call/SMS); Strict OFF re-blocks only the offending app itself
+        //    when it returns to the foreground.
         //    Enforcement fires only on REAL app presence: a notification
         //    posted by some app (TYPE_NOTIFICATION_STATE_CHANGED carries the
         //    NOTIFYING app's package, not the foreground app) or a SystemUI /
@@ -619,7 +692,15 @@ class ShieldAccessibilityService : AccessibilityService() {
         //    screen (v0.4.9 bug: Call / Messages buttons "did nothing"
         //    because the overlay instantly returned on unrelated events).
         if (preferences.isCurrentlyLocked()) {
-            if (!isIgnoredSystemUiPackage(pkgName) &&
+            val strictMode = preferences.getStrictModeEnabled()
+            val shouldEnforce = LockdownPinningPolicy.shouldPinWholePhone(strictMode) ||
+                LockdownPinningPolicy.shouldReblockForegroundApp(
+                    strictModeEnabled = strictMode,
+                    activeLockPackage = preferences.getActiveLockPackage(),
+                    foregroundPackage = pkgName
+                )
+            if (shouldEnforce &&
+                !isIgnoredSystemUiPackage(pkgName) &&
                 event.eventType != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
 
                 !preferences.isPackageAllowedDuringLockdown(pkgName)
@@ -652,19 +733,25 @@ class ShieldAccessibilityService : AccessibilityService() {
         if (activeWindowPkg == packageName) return
 
         // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
-        //    #6): armed while the standalone toggle is ON or master
-        //    protection is ON — but never after the 5-hour uninstall wait
-        //    has elapsed, which is the owner's deliberate escape hatch.
-        //    Covers uninstall, Clear Data on our App-info page, and
-        //    switching our accessibility service off.
-        if (isUninstallGuardArmed()) {
+        //    #6): covers uninstall, Clear Data on our App-info page, and
+        //    switching our accessibility service off. Batch 2 decoupled
+        //    the guards (#35/#36/#42/#45): each action is governed by its OWN
+        //    toggle, independent of the master switch — so this block
+        //    runs even while master protection is OFF. The uninstall
+        //    guard still disarms after the uninstall wait has elapsed,
+        //    which is the owner's deliberate escape hatch.
+        if (anyTamperGuardEnabled()) {
             val tamperAction = TextContentScanner.findTamperAttempt(rootNode, pkgName, packageName)
-            if (tamperAction != null) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                performGlobalAction(GLOBAL_ACTION_HOME)
+            if (tamperAction != null && isTamperGuardApplicable(tamperAction)) {
+                // #37 (batch 2): NO BACK/HOME here — triggerLockdown
+                // initiates the block-log screenshot FIRST and only then
+                // navigates away; leaving the Settings page before the
+                // capture would record the launcher instead of the
+                // tamper screen.
                 triggerLockdown(
                     triggerWord = tamperTriggerWord(tamperAction),
-                    sourceApp = "System Settings"
+                    sourceApp = "System Settings",
+                    lockPackage = pkgName
                 )
                 return
             }
@@ -731,7 +818,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                     customDurationMinutes = AppLimitBudget.minutesUntilNextMidnight(
                         nowMs = now,
                         zoneOffsetMs = TimeZone.getDefault().getOffset(now).toLong()
-                    )
+                    ),
+                    lockPackage = matchedLimit.packageName
                 )
                 return
             }
@@ -763,7 +851,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 triggerLockdown(
                     triggerWord = "${matchedSectionRule.sectionName} (${resolveReadableAppName(activeRootPkg)})",
                     sourceApp = resolveReadableAppName(activeRootPkg),
-                    blockReason = "Blocked app section"
+                    blockReason = "Blocked app section",
+                    lockPackage = activeRootPkg
                 )
             }
             return
@@ -792,12 +881,25 @@ class ShieldAccessibilityService : AccessibilityService() {
                 AdultDomainMatcher.findBlockedHost(screenTexts, it)
             }
             if (blockedHost != null) {
+                // #37 (batch 2): record + capture BEFORE the redirect —
+                // the redirect replaces the blocked page with the Google
+                // homepage, so a capture started inside triggerLockdown
+                // (after the redirect) would only ever show Google.
+                recordIncidentWithScreenshot(
+                    triggerWord = "Adult Site Blocked: $blockedHost",
+                    sourceApp = resolveReadableAppName(activeRootPkg),
+                    durationMinutes = preferences.getLockDurationMinutes(),
+                    blockReason = "Adult site",
+                    blockedUrl = blockedHost
+                )
                 redirectBrowserToGoogleHome(activeRootPkg)
                 triggerLockdown(
                     triggerWord = "Adult Site Blocked: $blockedHost",
                     sourceApp = resolveReadableAppName(activeRootPkg),
                     blockReason = "Adult site",
-                    blockedUrl = blockedHost
+                    blockedUrl = blockedHost,
+                    lockPackage = activeRootPkg,
+                    incidentAlreadyRecorded = true
                 )
                 return
             }
@@ -820,7 +922,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                     triggerLockdown(
                         triggerWord = matchedWord,
                         sourceApp = resolveReadableAppName(activeRootPkg),
-                        graceAvailable = decision.graceAvailable
+                        graceAvailable = decision.graceAvailable,
+                        lockPackage = activeRootPkg
                     )
                 }
             }
@@ -843,7 +946,9 @@ class ShieldAccessibilityService : AccessibilityService() {
         customDurationMinutes: Int? = null,
         graceAvailable: Boolean = false,
         blockReason: String? = null,
-        blockedUrl: String? = null
+        blockedUrl: String? = null,
+        lockPackage: String? = null,
+        incidentAlreadyRecorded: Boolean = false
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         // Check-then-start must be one atomic step: the 1-second ticker (IO
@@ -857,7 +962,8 @@ class ShieldAccessibilityService : AccessibilityService() {
                 durationMinutes = durationMinutes,
                 triggerWord = triggerWord,
                 sourceApp = sourceApp,
-                graceAvailable = graceAvailable
+                graceAvailable = graceAvailable,
+                lockPackage = lockPackage
             )
         }
 
@@ -865,13 +971,18 @@ class ShieldAccessibilityService : AccessibilityService() {
         // incident. The capture is INITIATED here — before the overlay
         // launch below — so the display still shows the offending page;
         // the incident row itself is written when the capture resolves.
-        recordIncidentWithScreenshot(
-            triggerWord = triggerWord,
-            sourceApp = sourceApp,
-            durationMinutes = durationMinutes,
-            blockReason = blockReason,
-            blockedUrl = blockedUrl
-        )
+        // (#37: callers that had to act on the page first — the adult
+        // redirect — pre-record the incident themselves and pass
+        // incidentAlreadyRecorded so it is not written twice.)
+        if (!incidentAlreadyRecorded) {
+            recordIncidentWithScreenshot(
+                triggerWord = triggerWord,
+                sourceApp = sourceApp,
+                durationMinutes = durationMinutes,
+                blockReason = blockReason,
+                blockedUrl = blockedUrl
+            )
+        }
 
         // #17: while a call is ringing / in progress, do not yank the
         // user around with BACK/HOME — on some OEMs that buries the call
@@ -900,6 +1011,11 @@ class ShieldAccessibilityService : AccessibilityService() {
      * - Uses AccessibilityService.takeScreenshot, which exists only on
      *   API 30+; on older devices the incident is recorded without an
      *   image, exactly as before this feature.
+     * - #37 (batch 2): takeScreenshot ALSO requires the service config
+     *   to declare android:canTakeScreenshot="true"
+     *   (res/xml/accessibility_service_config.xml). Without that
+     *   capability every call fails and every record silently degrades
+     *   to "no screenshot" — which is exactly what shipped in v0.5.
      * - The capture is fire-and-forget: this function returns immediately
      *   and NEVER delays the lockdown that called it. The incident row is
      *   inserted from the capture callback (or right away when no capture
@@ -1129,13 +1245,15 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Incident-log wording per tamper action (#6). */
+    /** Incident-log wording per tamper action (#6, VPN by #42, force stop by #45). */
     private fun tamperTriggerWord(action: TamperAttemptClassifier.TamperAction): String {
         return when (action) {
             TamperAttemptClassifier.TamperAction.UNINSTALL -> "Prevent Uninstall Guard"
             TamperAttemptClassifier.TamperAction.CLEAR_DATA -> "Prevent Clear Data Guard"
             TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
                 "Prevent Accessibility Disable Guard"
+            TamperAttemptClassifier.TamperAction.VPN_CONFIG -> "Prevent VPN Setup Guard"
+            TamperAttemptClassifier.TamperAction.FORCE_STOP -> "Prevent Force Stop Guard"
         }
     }
 
@@ -1195,13 +1313,48 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The Settings / package-uninstaller block is armed while the standalone
-     * Prevent Uninstall toggle is ON or master protection is ON — and disarms
-     * for everyone once the owner has completed the 5-hour uninstall wait.
+     * #35 (batch 2): the uninstall guard is armed by its OWN toggle only.
+     * It no longer depends on master protection — so it keeps working
+     * while the master switch is OFF, and turning the master switch off
+     * no longer needs the guard's permission. It still disarms once the
+     * owner has completed the uninstall wait, which remains the
+     * deliberate escape hatch.
      */
     private fun isUninstallGuardArmed(): Boolean {
         if (preferences.isUninstallUnlocked()) return false
-        return preferences.getIsPreventUninstallEnabled() || preferences.getIsProtectionEnabled()
+        return preferences.getIsPreventUninstallEnabled()
+    }
+
+    /**
+     * Batch 2 guard independence (#35/#36/#42/#45): the tamper classifier is
+     * worth running when ANY of the independent guards is on — each
+     * action then applies only under its own guard (see
+     * [isTamperGuardApplicable]).
+     */
+    private fun anyTamperGuardEnabled(): Boolean {
+        return isUninstallGuardArmed() ||
+            preferences.getIsClearDataGuardEnabled() ||
+            preferences.getIsVpnConfigBlockEnabled() ||
+            preferences.getIsForceStopGuardEnabled() ||
+            preferences.getIsProtectionEnabled()
+    }
+
+    /** Which guard governs each tamper action (batch 2 decoupling). */
+    private fun isTamperGuardApplicable(action: TamperAttemptClassifier.TamperAction): Boolean {
+        return when (action) {
+            TamperAttemptClassifier.TamperAction.UNINSTALL -> isUninstallGuardArmed()
+            TamperAttemptClassifier.TamperAction.CLEAR_DATA ->
+                preferences.getIsClearDataGuardEnabled()
+            // Switching our accessibility service off kills every guard,
+            // so it stays protected by the uninstall guard OR by master
+            // protection, exactly as before the decoupling.
+            TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
+                isUninstallGuardArmed() || preferences.getIsProtectionEnabled()
+            TamperAttemptClassifier.TamperAction.VPN_CONFIG ->
+                preferences.getIsVpnConfigBlockEnabled()
+            TamperAttemptClassifier.TamperAction.FORCE_STOP ->
+                preferences.getIsForceStopGuardEnabled()
+        }
     }
 
     private fun isIgnoredSystemUiPackage(pkgName: String): Boolean {

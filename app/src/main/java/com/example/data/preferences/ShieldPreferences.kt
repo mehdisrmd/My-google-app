@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class ShieldPreferences(private val context: Context) {
@@ -36,6 +37,18 @@ class ShieldPreferences(private val context: Context) {
     init {
         val now = System.currentTimeMillis()
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
+
+        // #28 (batch 2): before anything else, if no language has ever
+        // been stored, take the app language from the phone's system
+        // locale — a Persian phone starts in Persian, an English phone in
+        // English, and any other locale keeps the previous built-in
+        // default (Persian). Once a value exists (written here, by the
+        // first-run wipe below, or by the user's own language toggle) the
+        // system locale is never consulted again.
+        if (!prefs.contains(KEY_IS_PERSIAN_LANGUAGE)) {
+            val persianByLocale = Locale.getDefault().language != "en"
+            prefs.edit().putBoolean(KEY_IS_PERSIAN_LANGUAGE, persianByLocale).apply()
+        }
 
         if (!prefs.getBoolean(KEY_FRESH_SCRATCH_V4_INIT, false)) {
             val defaultPledge =
@@ -52,6 +65,15 @@ class ShieldPreferences(private val context: Context) {
             val preservedQuizScore = prefs.getInt(KEY_QUIZ_SCORE_PERCENT, -1)
             val preservedQuizSevEn = prefs.getString(KEY_QUIZ_SEVERITY_EN, null)
             val preservedQuizSevFa = prefs.getString(KEY_QUIZ_SEVERITY_FA, null)
+            // #32 (batch 2): the clean streak is the user's own history,
+            // not protection state — this automatic first-run wipe must
+            // never zero it. The streak may ONLY be reset by the user's
+            // explicit Reset / "I Slipped" action (resetStreak) or the
+            // manual full reset; a block episode ending never touches it.
+            val preservedStreakStart = prefs.getLong(KEY_STREAK_START_TIME, 0L)
+            val preservedLongestStreak = prefs.getInt(KEY_LONGEST_STREAK, 0)
+            val preservedSlipsCount = prefs.getInt(KEY_SLIPS_COUNT, 0)
+            val preservedFirstInstallDay = prefs.getLong(KEY_FIRST_INSTALL_EPOCH_DAY, 0L)
             val wipe = prefs.edit()
                 .clear()
                 .putBoolean(KEY_FRESH_SCRATCH_V4_INIT, true)
@@ -63,12 +85,18 @@ class ShieldPreferences(private val context: Context) {
                 .putBoolean(KEY_STRICT_MODE_ENABLED, false)
                 .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
                 .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
-                .putLong(KEY_STREAK_START_TIME, now)
-                .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
+                .putLong(
+                    KEY_STREAK_START_TIME,
+                    if (preservedStreakStart > 0L) preservedStreakStart else now
+                )
+                .putLong(
+                    KEY_FIRST_INSTALL_EPOCH_DAY,
+                    if (preservedFirstInstallDay > 0L) preservedFirstInstallDay else todayEpochDay
+                )
 
-                .putInt(KEY_LONGEST_STREAK, 0)
+                .putInt(KEY_LONGEST_STREAK, preservedLongestStreak)
                 .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
-                .putInt(KEY_SLIPS_COUNT, 0)
+                .putInt(KEY_SLIPS_COUNT, preservedSlipsCount)
                 .putString(KEY_LAST_SLIP_REASON, "")
                 .putInt(KEY_URGES_DEFEATED_COUNT, 0)
                 .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
@@ -168,6 +196,25 @@ class ShieldPreferences(private val context: Context) {
     private val _isInstallGuardEnabled = MutableStateFlow(getIsInstallGuardEnabled())
     val isInstallGuardEnabled: StateFlow<Boolean> = _isInstallGuardEnabled.asStateFlow()
 
+    // #36 (batch 2): the Clear Data guard's OWN toggle — independent of
+    // the uninstall guard and of the master switch. Defaults ON so the
+    // protection level existing users already have does not silently
+    // drop when the guard is decoupled.
+    private val _isClearDataGuardEnabled = MutableStateFlow(getIsClearDataGuardEnabled())
+    val isClearDataGuardEnabled: StateFlow<Boolean> = _isClearDataGuardEnabled.asStateFlow()
+
+    // #42 (batch 2): block VPN configuration (Device Owner restriction
+    // DISALLOW_CONFIG_VPN + accessibility intervention fallback).
+    private val _isVpnConfigBlockEnabled = MutableStateFlow(getIsVpnConfigBlockEnabled())
+    val isVpnConfigBlockEnabled: StateFlow<Boolean> = _isVpnConfigBlockEnabled.asStateFlow()
+
+    // #45 (batch 2): protect against Force Stop on this app's App-info
+    // page (Device Owner restriction DISALLOW_APPS_CONTROL +
+    // accessibility intervention fallback). Opt-in extra guard, so it
+    // defaults OFF like the VPN block (#42).
+    private val _isForceStopGuardEnabled = MutableStateFlow(getIsForceStopGuardEnabled())
+    val isForceStopGuardEnabled: StateFlow<Boolean> = _isForceStopGuardEnabled.asStateFlow()
+
     private val _isDeviceOwnerProtectionEnabled = MutableStateFlow(getIsDeviceOwnerProtectionEnabled())
     val isDeviceOwnerProtectionEnabled: StateFlow<Boolean> = _isDeviceOwnerProtectionEnabled.asStateFlow()
 
@@ -181,6 +228,28 @@ class ShieldPreferences(private val context: Context) {
 
     private val _adultBlocklistDomainCount = MutableStateFlow(getAdultBlocklistDomainCount())
     val adultBlocklistDomainCount: StateFlow<Int> = _adultBlocklistDomainCount.asStateFlow()
+
+    // #29 (batch 2): true when the user skipped the first-launch list
+    // download (or continued with the starter seed) — the list then
+    // counts as NOT updated and the app stays not-fully-activated until
+    // a real download succeeds.
+    private val _blocklistUpdatePending = MutableStateFlow(isBlocklistUpdatePending())
+    val blocklistUpdatePending: StateFlow<Boolean> = _blocklistUpdatePending.asStateFlow()
+
+    // #38 (batch 2): domains the user added to the adult list by hand.
+    // Stored separately from the downloaded list and merged into the
+    // on-disk index, so they survive weekly updates and can be removed.
+    private val _userBlocklistDomains = MutableStateFlow(getUserBlocklistDomains())
+    val userBlocklistDomains: StateFlow<Set<String>> = _userBlocklistDomains.asStateFlow()
+
+    // #43 (batch 2): daily data-usage caps in megabytes, per transport;
+    // 0 = no cap. Enforced by the accessibility service like the daily
+    // app limits (lockdown until midnight).
+    private val _dataLimitWifiMb = MutableStateFlow(getDataLimitWifiMb())
+    val dataLimitWifiMb: StateFlow<Int> = _dataLimitWifiMb.asStateFlow()
+
+    private val _dataLimitMobileMb = MutableStateFlow(getDataLimitMobileMb())
+    val dataLimitMobileMb: StateFlow<Int> = _dataLimitMobileMb.asStateFlow()
 
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
@@ -213,6 +282,12 @@ class ShieldPreferences(private val context: Context) {
     private val _securityQuestion = MutableStateFlow(getSecurityQuestion())
     val securityQuestionFlow: StateFlow<String> = _securityQuestion.asStateFlow()
 
+    // #30 (batch 2): set whenever a lockdown ends (see clearLockdown) so
+    // the next entry into the app UI demands the PIN again — returning
+    // from the block screen must never land inside without the gate.
+    private val _pinRelockRequired = MutableStateFlow(isPinRelockRequired())
+    val pinRelockRequired: StateFlow<Boolean> = _pinRelockRequired.asStateFlow()
+
     // Anti-Agent Blackout Screen Shield (FLAG_SECURE)
     private val _isBlackoutPrivacyShieldEnabled = MutableStateFlow(getIsBlackoutPrivacyShieldEnabled())
     val isBlackoutPrivacyShieldEnabled: StateFlow<Boolean> = _isBlackoutPrivacyShieldEnabled.asStateFlow()
@@ -235,9 +310,15 @@ class ShieldPreferences(private val context: Context) {
     private val _githubRepoSlug = MutableStateFlow(getGithubRepoSlug())
     val githubRepoSlug: StateFlow<String> = _githubRepoSlug.asStateFlow()
 
-    // Uninstall Guard: persisted wall-clock deadline of the 5-hour wait
+    // Uninstall Guard: persisted wall-clock deadline of the uninstall wait
     private val _uninstallUnlockDeadline = MutableStateFlow(getUninstallUnlockDeadline())
     val uninstallUnlockDeadline: StateFlow<Long> = _uninstallUnlockDeadline.asStateFlow()
+
+    // #41 (batch 2): the uninstall-wait length the user picked during
+    // first setup (effective value — falls back to UninstallGuard's
+    // default when nothing was ever stored).
+    private val _uninstallWaitMinutes = MutableStateFlow(getUninstallWaitMinutes())
+    val uninstallWaitMinutes: StateFlow<Int> = _uninstallWaitMinutes.asStateFlow()
 
     // Seasonal Theme palette selection (stored as the enum name)
     private val _seasonalThemeName = MutableStateFlow(getSeasonalTheme().name)
@@ -478,7 +559,7 @@ class ShieldPreferences(private val context: Context) {
         val editor = prefs.edit().putBoolean(KEY_PROTECTION_ENABLED, enabled)
         if (enabled) {
             // Re-arming the shield consumes any pending/elapsed uninstall
-            // unlock: switching protection off again needs a fresh 5h wait.
+            // unlock: switching protection off again needs a fresh wait.
 
             editor.putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, 0L)
             _uninstallUnlockDeadline.value = 0L
@@ -519,7 +600,8 @@ class ShieldPreferences(private val context: Context) {
         _isPreventUninstallEnabled.value = enabled
     }
 
-    // Uninstall Guard — 5-hour wait before protection may be turned off.
+    // Uninstall Guard — a user-chosen wait (#41, default per
+    // UninstallGuard.WAIT_MILLIS) before protection may be turned off.
     // The deadline is a persisted wall-clock timestamp, so the countdown
     // keeps running across reboots with no receiver or service needed.
     fun getUninstallUnlockDeadline(): Long {
@@ -527,7 +609,27 @@ class ShieldPreferences(private val context: Context) {
     }
 
     /**
-     * Starts the 5-hour uninstall wait and returns the deadline. If a wait is
+     * The uninstall-wait length in minutes: the value picked during
+     * first setup (#41), or [UninstallGuard.WAIT_MILLIS] when the user
+     * never picked one (installs from before the choice existed).
+     */
+    fun getUninstallWaitMinutes(): Int {
+        val stored = prefs.getInt(KEY_UNINSTALL_WAIT_MINUTES, -1)
+        return if (stored > 0) stored else (UninstallGuard.WAIT_MILLIS / 60_000L).toInt()
+    }
+
+    fun getUninstallWaitMillis(): Long {
+        return TimeUnit.MINUTES.toMillis(getUninstallWaitMinutes().toLong())
+    }
+
+    fun setUninstallWaitMinutes(minutes: Int) {
+        val safeMinutes = minutes.coerceIn(1, 24 * 60)
+        prefs.edit().putInt(KEY_UNINSTALL_WAIT_MINUTES, safeMinutes).apply()
+        _uninstallWaitMinutes.value = safeMinutes
+    }
+
+    /**
+     * Starts the uninstall wait and returns the deadline. If a wait is
      * already running, the original deadline is kept (tapping again never
      * extends or restarts the countdown).
      */
@@ -536,7 +638,7 @@ class ShieldPreferences(private val context: Context) {
         if (UninstallGuard.isRequested(existing) && !UninstallGuard.isUnlocked(existing, nowMs)) {
             return existing
         }
-        val deadline = UninstallGuard.deadlineForRequest(nowMs)
+        val deadline = UninstallGuard.deadlineForRequest(nowMs, getUninstallWaitMillis())
         prefs.edit().putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, deadline).apply()
         _uninstallUnlockDeadline.value = deadline
         return deadline
@@ -574,6 +676,49 @@ class ShieldPreferences(private val context: Context) {
         }
         editor.apply()
         _isInstallGuardEnabled.value = enabled
+    }
+
+    // Clear Data Guard (#36) — its own toggle: "Clear data" on this app's
+    // App-info page is intercepted while this is ON, regardless of the
+    // uninstall guard or the master switch.
+    fun getIsClearDataGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_CLEAR_DATA_GUARD_ENABLED, true)
+    }
+
+    fun setClearDataGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_CLEAR_DATA_GUARD_ENABLED, enabled).apply()
+        _isClearDataGuardEnabled.value = enabled
+    }
+
+    // VPN Config Block (#42) — its own toggle: while ON, setting up a
+    // VPN is prevented (hard DPM restriction under Device Owner,
+    // accessibility intervention otherwise).
+    fun getIsVpnConfigBlockEnabled(): Boolean {
+        return prefs.getBoolean(KEY_VPN_CONFIG_BLOCK_ENABLED, false)
+    }
+
+    fun setVpnConfigBlockEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_VPN_CONFIG_BLOCK_ENABLED, enabled).apply()
+        _isVpnConfigBlockEnabled.value = enabled
+    }
+
+    // Force Stop Guard (#45) — its own toggle: while ON, this app's
+    // App-info page is intercepted so "Force stop" cannot be tapped
+    // (hard DPM restriction under Device Owner, accessibility
+    // intervention otherwise).
+    fun getIsForceStopGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_BLOCK_FORCE_STOP, false)
+    }
+
+    fun setForceStopGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_BLOCK_FORCE_STOP, enabled).apply()
+        _isForceStopGuardEnabled.value = enabled
     }
 
     /**
@@ -652,6 +797,62 @@ class ShieldPreferences(private val context: Context) {
     fun setAdultBlocklistDomainCount(domainCount: Int) {
         prefs.edit().putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount).apply()
         _adultBlocklistDomainCount.value = domainCount
+    }
+
+    // #29 (batch 2): the first-launch download was skipped (or replaced
+    // by the starter seed), so the list counts as not updated and the app
+    // must not fully activate until a real download succeeds. Any
+    // successful update (first-launch, manual, or the weekly worker)
+    // clears this flag inside the updater.
+    fun isBlocklistUpdatePending(): Boolean {
+        return prefs.getBoolean(KEY_BLOCKLIST_UPDATE_PENDING, false)
+    }
+
+    fun setBlocklistUpdatePending(pending: Boolean) {
+        prefs.edit().putBoolean(KEY_BLOCKLIST_UPDATE_PENDING, pending).apply()
+        _blocklistUpdatePending.value = pending
+    }
+
+    // #38 (batch 2): the user's own additions to the adult domain list.
+    fun getUserBlocklistDomains(): Set<String> {
+        return prefs.getStringSet(KEY_USER_BLOCKLIST_DOMAINS, emptySet())?.toSet() ?: emptySet()
+    }
+
+    fun setUserBlocklistDomains(domains: Set<String>) {
+        prefs.edit().putStringSet(KEY_USER_BLOCKLIST_DOMAINS, domains).apply()
+        _userBlocklistDomains.value = domains
+    }
+
+    // #43 (batch 2): daily data caps (MB per day, 0 = off).
+    fun getDataLimitWifiMb(): Int = prefs.getInt(KEY_DATA_LIMIT_WIFI_MB, 0)
+
+    fun setDataLimitWifiMb(mb: Int) {
+        prefs.edit().putInt(KEY_DATA_LIMIT_WIFI_MB, mb).apply()
+        _dataLimitWifiMb.value = mb
+    }
+
+    fun getDataLimitMobileMb(): Int = prefs.getInt(KEY_DATA_LIMIT_MOBILE_MB, 0)
+
+    fun setDataLimitMobileMb(mb: Int) {
+        prefs.edit().putInt(KEY_DATA_LIMIT_MOBILE_MB, mb).apply()
+        _dataLimitMobileMb.value = mb
+    }
+
+    // #43 (batch 2): TrafficStats fallback baselines — the since-boot
+    // counters captured at the first read of each local day, so the
+    // fallback meter can report per-day usage. See DataUsageMeter.
+    fun getDataBaselineDay(): String = prefs.getString(KEY_DATA_BASELINE_DAY, "") ?: ""
+
+    fun getDataBaselineWifi(): Long = prefs.getLong(KEY_DATA_BASELINE_WIFI, 0L)
+
+    fun getDataBaselineMobile(): Long = prefs.getLong(KEY_DATA_BASELINE_MOBILE, 0L)
+
+    fun setDataBaselines(day: String, wifiBytes: Long, mobileBytes: Long) {
+        prefs.edit()
+            .putString(KEY_DATA_BASELINE_DAY, day)
+            .putLong(KEY_DATA_BASELINE_WIFI, wifiBytes)
+            .putLong(KEY_DATA_BASELINE_MOBILE, mobileBytes)
+            .apply()
     }
 
     /**
@@ -1064,7 +1265,8 @@ class ShieldPreferences(private val context: Context) {
         durationMinutes: Int,
         triggerWord: String,
         sourceApp: String,
-        graceAvailable: Boolean = false
+        graceAvailable: Boolean = false,
+        lockPackage: String? = null
     ): Long {
         val now = System.currentTimeMillis()
         val existingEnd = getActiveLockEndTime()
@@ -1077,11 +1279,22 @@ class ShieldPreferences(private val context: Context) {
 
             .putString(KEY_ACTIVE_LOCK_TRIGGER, triggerWord)
             .putString(KEY_ACTIVE_LOCK_APP, sourceApp)
+            .putString(KEY_ACTIVE_LOCK_PACKAGE, lockPackage ?: "")
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, graceAvailable)
             .putLong(KEY_LAST_INCIDENT_TIME, now)
             .apply()
         _activeLockEndTime.value = endTime
         return endTime
+    }
+
+    /**
+     * #39 (batch 2): the package whose offense started the current lock,
+     * when the trigger path knew it. With Strict Lock Mode OFF only this
+     * app is re-blocked during the lock; everything else stays usable.
+     * Null when no package was recorded (scheduled/voluntary locks).
+     */
+    fun getActiveLockPackage(): String? {
+        return prefs.getString(KEY_ACTIVE_LOCK_PACKAGE, null)?.takeIf { it.isNotBlank() }
     }
 
     @Synchronized
@@ -1092,8 +1305,25 @@ class ShieldPreferences(private val context: Context) {
             .putBoolean(KEY_ACTIVE_LOCK_GRACE_AVAILABLE, false)
             .remove(KEY_ACTIVE_LOCK_TRIGGER)
             .remove(KEY_ACTIVE_LOCK_APP)
+            .remove(KEY_ACTIVE_LOCK_PACKAGE)
             .apply()
         _activeLockEndTime.value = 0L
+        // #30 (batch 2): a lock just ended — the next entry into the app
+        // UI must pass the PIN gate again, even when the user returns
+        // straight from this block screen.
+        setPinRelockRequired(true)
+    }
+
+    // #30 (batch 2): the PIN-relock flag (see clearLockdown). MainActivity
+    // consumes it: when set, the PIN gate covers the UI again and the
+    // flag is cleared.
+    fun isPinRelockRequired(): Boolean {
+        return prefs.getBoolean(KEY_PIN_RELOCK_REQUIRED, false)
+    }
+
+    fun setPinRelockRequired(required: Boolean) {
+        prefs.edit().putBoolean(KEY_PIN_RELOCK_REQUIRED, required).apply()
+        _pinRelockRequired.value = required
     }
 
     /** True when the current lock may offer the one-time 10-second grace. */
@@ -1561,6 +1791,14 @@ class ShieldPreferences(private val context: Context) {
         _isPersianLanguage.value = preservedPersian
         _seasonalThemeName.value = preservedSeasonalTheme.name
         _uninstallUnlockDeadline.value = 0L
+        _uninstallWaitMinutes.value = getUninstallWaitMinutes()
+        _isClearDataGuardEnabled.value = true
+        _isVpnConfigBlockEnabled.value = false
+        _isForceStopGuardEnabled.value = false
+        _blocklistUpdatePending.value = false
+        _userBlocklistDomains.value = emptySet()
+        _dataLimitWifiMb.value = 0
+        _dataLimitMobileMb.value = 0
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
@@ -1584,6 +1822,9 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
         private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
         private const val KEY_INSTALL_GUARD_ENABLED = "key_install_guard_enabled"
+        private const val KEY_CLEAR_DATA_GUARD_ENABLED = "key_clear_data_guard_enabled"
+        private const val KEY_VPN_CONFIG_BLOCK_ENABLED = "key_vpn_config_block_enabled"
+        private const val KEY_BLOCK_FORCE_STOP = "key_block_force_stop_enabled"
         private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"
@@ -1591,6 +1832,13 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ADULT_BLOCK_ENABLED = "key_adult_block_enabled"
         private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
         private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
+        private const val KEY_BLOCKLIST_UPDATE_PENDING = "key_blocklist_update_pending"
+        private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
+        private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
+        private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
+        private const val KEY_DATA_BASELINE_DAY = "key_data_baseline_day"
+        private const val KEY_DATA_BASELINE_WIFI = "key_data_baseline_wifi"
+        private const val KEY_DATA_BASELINE_MOBILE = "key_data_baseline_mobile"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"
@@ -1602,6 +1850,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ACTIVE_LOCK_DURATION = "key_active_lock_duration"
         private const val KEY_ACTIVE_LOCK_TRIGGER = "key_active_lock_trigger"
         private const val KEY_ACTIVE_LOCK_APP = "key_active_lock_app"
+        private const val KEY_ACTIVE_LOCK_PACKAGE = "key_active_lock_package"
         private const val KEY_LAST_INCIDENT_TIME = "key_last_incident_time"
         private const val KEY_STREAK_START_TIME = "key_streak_start_time"
         private const val KEY_LONGEST_STREAK = "key_longest_streak"
@@ -1618,6 +1867,7 @@ class ShieldPreferences(private val context: Context) {
 
         // PIN gate v2 (#7): salted hashes only, never the PIN itself.
         private const val KEY_PIN_HASH_V2 = "key_pin_hash_v2"
+        private const val KEY_PIN_RELOCK_REQUIRED = "key_pin_relock_required"
         private const val KEY_PIN_SALT_V2 = "key_pin_salt_v2"
         private const val KEY_PIN_V2_MIGRATED = "key_pin_v2_migrated"
         private const val KEY_SECURITY_QUESTION = "key_security_question"
@@ -1632,6 +1882,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_IS_PERSIAN_LANGUAGE = "key_is_persian_language"
         private const val KEY_SEASONAL_THEME = "key_seasonal_theme"
         private const val KEY_UNINSTALL_UNLOCK_DEADLINE = "key_uninstall_unlock_deadline"
+        private const val KEY_UNINSTALL_WAIT_MINUTES = "key_uninstall_wait_minutes"
         private const val KEY_ACTIVE_LOCK_GRACE_AVAILABLE = "key_active_lock_grace_available"
         private const val KEY_GRACE_EPISODE_WORD = "key_grace_episode_word"
         private const val KEY_GRACE_EPISODE_OFFERED = "key_grace_episode_offered"

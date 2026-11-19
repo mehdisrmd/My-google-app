@@ -64,7 +64,9 @@ import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockIncident
 import com.example.data.preferences.ShieldPreferences
 import com.example.ui.components.WeeklyActivityCard
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.keywords.KeywordSelection
+import com.example.ui.theme.AppThemeState
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.JetBrainsMonoFontFamily
@@ -72,11 +74,33 @@ import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.util.JalaliCalendar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+/**
+ * #33 (batch 2): block reasons are recorded in English at block time
+ * (see BlockLogPolicy); the log screen translates the known set for
+ * display in Persian. Unknown/future reasons pass through unchanged.
+ */
+private fun localizedBlockReason(reason: String?, isPersian: Boolean): String? {
+    if (reason.isNullOrBlank() || !isPersian) return reason
+    return when (reason) {
+        "Adult site" -> "سایت بزرگسال"
+        "Daily app limit reached" -> "رسیدن به سقف روزانه برنامه"
+        "Daily data limit reached" -> "رسیدن به سقف روزانه اینترنت"
+        "Blocked app section" -> "بخش مسدود برنامه"
+        "Scheduled focus session" -> "جلسه تمرکز زمان‌بندی‌شده"
+        "Tamper attempt" -> "تلاش برای دست‌کاری"
+        "Force stop attempt blocked" -> "تلاش برای توقف اجباری"
+        "Manual panic lock" -> "قفل اضطراری دستی"
+        "Blocked keyword" -> "کلمه کلیدی مسدود"
+        else -> reason
+    }
+}
 
 @Composable
 fun IncidentHistoryScreen(
@@ -133,13 +157,16 @@ fun IncidentHistoryScreen(
                     .padding(end = 10.dp)
             ) {
                 Text(
-                    text = "Weekly Status & Activity Log",
+                    text = tr("Weekly Status & Activity Log", "وضعیت هفتگی و گزارش بلاک‌ها"),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
                 Text(
-                    text = "7-day discipline telemetry and blocked attempt timeline",
+                    text = tr(
+                        "7-day discipline telemetry and blocked attempt timeline",
+                        "نمای ۷ روزه و خط زمانی تلاش‌های مسدودشده"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = ObsidianTextSecondary
                 )
@@ -152,7 +179,7 @@ fun IncidentHistoryScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.DeleteSweep,
-                        contentDescription = "Clear history",
+                        contentDescription = tr("Clear history", "پاک کردن تاریخچه"),
                         tint = ObsidianTextSecondary
                     )
                 }
@@ -185,12 +212,15 @@ fun IncidentHistoryScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Cancel selection",
+                            contentDescription = tr("Cancel selection", "لغو انتخاب"),
                             tint = ObsidianTextSecondary
                         )
                     }
                     Text(
-                        text = "${selectedIds.size} selected",
+                        text = tr(
+                            "${selectedIds.size} selected",
+                            "${JalaliCalendar.toPersianDigits(selectedIds.size.toString())} انتخاب شده"
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
@@ -205,7 +235,7 @@ fun IncidentHistoryScreen(
                         },
                         modifier = Modifier.testTag("incident_selection_select_all_button")
                     ) {
-                        Text(text = "Select all", color = CrimsonPrimary)
+                        Text(text = tr("Select all", "انتخاب همه"), color = CrimsonPrimary)
                     }
                     IconButton(
                         onClick = {
@@ -218,7 +248,7 @@ fun IncidentHistoryScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete selected",
+                            contentDescription = tr("Delete selected", "حذف انتخاب‌شده‌ها"),
                             tint = if (selectedIds.isNotEmpty()) CrimsonPrimary
                             else ObsidianTextSecondary
                         )
@@ -251,7 +281,10 @@ fun IncidentHistoryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Blocked Attempt Timeline (${incidents.size})",
+                        text = tr(
+                            "Blocked Attempt Timeline (${incidents.size})",
+                            "خط زمانی تلاش‌های مسدودشده (${JalaliCalendar.toPersianDigits(incidents.size.toString())})"
+                        ),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -261,7 +294,10 @@ fun IncidentHistoryScreen(
                         color = EmeraldShield.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = "$streakDays Days Clean",
+                            text = tr(
+                                "$streakDays Days Clean",
+                                "${JalaliCalendar.toPersianDigits(streakDays.toString())} روز پاک"
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = JetBrainsMonoFontFamily,
                             fontWeight = FontWeight.Bold,
@@ -304,13 +340,16 @@ fun IncidentHistoryScreen(
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "100% Clean Timeline",
+                                text = tr("100% Clean Timeline", "خط زمانی کاملاً پاک"),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                             Text(
-                                text = "Zero explicit content or restricted sections triggered.",
+                                text = tr(
+                                    "Zero explicit content or restricted sections triggered.",
+                                    "هیچ محتوای صریح یا بخش ممنوعه‌ای فعال نشده است."
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ObsidianTextSecondary
                             )
@@ -352,10 +391,18 @@ fun IncidentHistoryScreen(
             AlertDialog(
                 onDismissRequest = { showClearDialog = false },
                 containerColor = ObsidianSurface,
-                title = { Text("Clear Incident History", color = Color.White) },
+                title = {
+                    Text(
+                        tr("Clear Incident History", "پاک کردن تاریخچه بلاک‌ها"),
+                        color = Color.White
+                    )
+                },
                 text = {
                     Text(
-                        "Are you sure you want to clear all blocked attempt records and their screenshots? Your clean streak days will remain intact.",
+                        tr(
+                            "Are you sure you want to clear all blocked attempt records and their screenshots? Your clean streak days will remain intact.",
+                            "مطمئنید که می‌خواهید همه رکوردهای تلاش‌های مسدودشده و اسکرین‌شات‌هایشان پاک شود؟ روزهای پاک شما دست‌نخورده می‌ماند."
+                        ),
                         color = ObsidianTextSecondary
                     )
                 },
@@ -367,12 +414,12 @@ fun IncidentHistoryScreen(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary)
                     ) {
-                        Text("Clear", color = Color.White)
+                        Text(tr("Clear", "پاک کردن"), color = Color.White)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showClearDialog = false }) {
-                        Text("Cancel", color = ObsidianTextSecondary)
+                        Text(tr("Cancel", "انصراف"), color = ObsidianTextSecondary)
                     }
                 }
             )
@@ -416,8 +463,11 @@ fun IncidentItemCard(
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {}
 ) {
-    val dateFormat = remember { SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()) }
-    val formattedDate = remember(incident.timestamp) { dateFormat.format(Date(incident.timestamp)) }
+    // #33/#34 (batch 2): the row date renders Jalali in Persian.
+    val isPersian = AppThemeState.isPersianLanguage
+    val formattedDate = remember(incident.timestamp, isPersian) {
+        JalaliCalendar.dateTimeLabel(incident.timestamp, isPersian)
+    }
 
     // #14: the row leads with a thumbnail of the blocked page when a
     // screenshot was captured for this record.
@@ -464,7 +514,7 @@ fun IncidentItemCard(
             if (thumbnail != null) {
                 Image(
                     bitmap = thumbnail,
-                    contentDescription = "Screenshot of the blocked page",
+                    contentDescription = tr("Screenshot of the blocked page", "اسکرین‌شات صفحه مسدودشده"),
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(42.dp)
@@ -496,7 +546,10 @@ fun IncidentItemCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Triggered: \"${incident.matchedWord}\"",
+                        text = tr(
+                            "Triggered: \"${incident.matchedWord}\"",
+                            "محرک: «${incident.matchedWord}»"
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
@@ -509,7 +562,10 @@ fun IncidentItemCard(
                         color = CrimsonPrimary.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = "${incident.lockDurationMinutes}m lock",
+                            text = tr(
+                                "${incident.lockDurationMinutes}m lock",
+                                "${JalaliCalendar.toPersianDigits(incident.lockDurationMinutes.toString())} دقیقه قفل"
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = JetBrainsMonoFontFamily,
                             color = CrimsonPrimary,
@@ -528,7 +584,10 @@ fun IncidentItemCard(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Source: ${incident.sourceApp.substringAfterLast('.')}",
+                        text = tr(
+                            "Source: ${incident.sourceApp.substringAfterLast('.')}",
+                            "منبع: ${incident.sourceApp.substringAfterLast('.')}"
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = ObsidianTextSecondary
                     )
@@ -540,10 +599,14 @@ fun IncidentItemCard(
                 }
 
                 // #14: the recorded reason, when this block carried one.
+                // #33: known reasons are translated for display in FA.
                 if (!incident.blockReason.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Reason: ${incident.blockReason}",
+                        text = tr(
+                            "Reason: ${incident.blockReason}",
+                            "دلیل: ${localizedBlockReason(incident.blockReason, isPersian = true)}"
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = CrimsonPrimary
                     )
@@ -564,11 +627,18 @@ fun IncidentDetailDialog(
     incident: BlockIncident,
     onDismiss: () -> Unit
 ) {
+    // #33/#34 (batch 2): full date renders Jalali in Persian.
+    val isPersian = AppThemeState.isPersianLanguage
     val fullDateFormat = remember {
-        SimpleDateFormat("MMM d, yyyy · h:mm:ss a", Locale.getDefault())
+        SimpleDateFormat("MMM d, yyyy · h:mm:ss a", Locale.US)
     }
-    val formattedFullDate = remember(incident.timestamp) {
-        fullDateFormat.format(Date(incident.timestamp))
+    val formattedFullDate = remember(incident.timestamp, isPersian) {
+        if (isPersian) {
+            "${JalaliCalendar.fullDateLabel(incident.timestamp, isPersian = true)} · " +
+                JalaliCalendar.timeLabel(incident.timestamp, isPersian = true)
+        } else {
+            fullDateFormat.format(Date(incident.timestamp))
+        }
     }
     val screenshot = rememberBlockScreenshot(incident.screenshotPath, maxDimensionPx = 1080)
 
@@ -593,7 +663,7 @@ fun IncidentDetailDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Block Details",
+                        text = tr("Block Details", "جزئیات بلاک"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
@@ -605,7 +675,7 @@ fun IncidentDetailDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = tr("Close", "بستن"),
                             tint = ObsidianTextSecondary
                         )
                     }
@@ -615,7 +685,7 @@ fun IncidentDetailDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                     Image(
                         bitmap = screenshot,
-                        contentDescription = "Screenshot of the blocked page",
+                        contentDescription = tr("Screenshot of the blocked page", "اسکرین‌شات صفحه مسدودشده"),
                         contentScale = ContentScale.FillWidth,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -626,20 +696,32 @@ fun IncidentDetailDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                IncidentDetailRow(label = "Date & time", value = formattedFullDate)
                 IncidentDetailRow(
-                    label = "Reason",
-                    value = incident.blockReason?.takeIf { it.isNotBlank() }
-                        ?: incident.matchedWord
+                    label = tr("Date & time", "تاریخ و ساعت"),
+                    value = formattedFullDate
                 )
-                IncidentDetailRow(label = "Trigger", value = incident.matchedWord)
-                IncidentDetailRow(label = "Source app", value = incident.sourceApp)
+                IncidentDetailRow(
+                    label = tr("Reason", "دلیل"),
+                    value = localizedBlockReason(
+                        incident.blockReason?.takeIf { it.isNotBlank() }
+                            ?: incident.matchedWord,
+                        isPersian
+                    ) ?: incident.matchedWord
+                )
+                IncidentDetailRow(label = tr("Trigger", "محرک"), value = incident.matchedWord)
+                IncidentDetailRow(label = tr("Source app", "برنامه منبع"), value = incident.sourceApp)
                 if (!incident.blockedUrl.isNullOrBlank()) {
-                    IncidentDetailRow(label = "Blocked address", value = incident.blockedUrl)
+                    IncidentDetailRow(
+                        label = tr("Blocked address", "آدرس مسدودشده"),
+                        value = incident.blockedUrl
+                    )
                 }
                 IncidentDetailRow(
-                    label = "Lock duration",
-                    value = "${incident.lockDurationMinutes} min"
+                    label = tr("Lock duration", "مدت قفل"),
+                    value = tr(
+                        "${incident.lockDurationMinutes} min",
+                        "${JalaliCalendar.toPersianDigits(incident.lockDurationMinutes.toString())} دقیقه"
+                    )
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -649,7 +731,7 @@ fun IncidentDetailDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Close", color = Color.White)
+                    Text(tr("Close", "بستن"), color = Color.White)
                 }
             }
         }

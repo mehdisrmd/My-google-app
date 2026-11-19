@@ -2,7 +2,9 @@ package com.example.ui.limits
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -93,9 +95,11 @@ import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
+import com.example.service.DataUsageMeter
 import com.example.ui.focus.AddFocusSlotDialog
 import com.example.ui.focus.SmartFocusSlotsList
 import com.example.ui.i18n.AppStrings.tr
+import com.example.util.DataUsageBudget
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
@@ -366,6 +370,14 @@ fun AppLimitsAndSectionsScreen(
             ) {
             when (selectedTab) {
                 0 -> {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // #43 (batch 2): daily data-usage caps sit at the
+                        // top of the Limits tab, above the per-app limits.
+                        DataUsageLimitsCard(
+                            preferences = preferences,
+                            nowMs = nowMs
+                        )
+                        Box(modifier = Modifier.weight(1f)) {
                     AppLimitsList(
                         appLimits = appLimits,
                         preferences = preferences,
@@ -410,6 +422,8 @@ fun AppLimitsAndSectionsScreen(
                         },
                         onTriggerUsageLockdown = onTriggerUsageLockdown
                     )
+                        }
+                    }
                 }
 
                 1 -> {
@@ -517,6 +531,146 @@ fun AppLimitsAndSectionsScreen(
 }
 
 @Composable
+/**
+ * #43 (batch 2): daily data-usage caps — one budget for Wi-Fi, one for
+ * mobile data. Usage is read live from [DataUsageMeter] whenever the
+ * screen's 5-second tick advances [nowMs]; picking a cap writes the
+ * preference the accessibility service enforces (lockdown until
+ * midnight, exactly like the per-app daily limits below).
+ */
+@Composable
+private fun DataUsageLimitsCard(
+    preferences: ShieldPreferences,
+    nowMs: Long
+) {
+    val context = LocalContext.current
+    val wifiCapMb by preferences.dataLimitWifiMb.collectAsStateWithLifecycle()
+    val mobileCapMb by preferences.dataLimitMobileMb.collectAsStateWithLifecycle()
+    val usage = remember(nowMs) {
+        DataUsageMeter.todayUsageBytes(context, preferences)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp)
+            .testTag("data_usage_limits_card"),
+        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, ObsidianBorder)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = tr("Daily Data Limits", "محدودیت روزانه اینترنت"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = ObsidianTextPrimary
+            )
+            Text(
+                text = tr(
+                    "When today's usage passes a cap, the phone locks until midnight — the same as the daily app limits.",
+                    "وقتی مصرف امروز از سقف بگذرد، گوشی تا نیمه‌شب قفل می‌شود — مثل محدودیت روزانه برنامه‌ها."
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = ObsidianTextSecondary,
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            )
+            DataCapRow(
+                label = tr("Wi-Fi", "وای‌فای"),
+                usedBytes = usage.wifiBytes,
+                capMb = wifiCapMb,
+                onSelectCap = { preferences.setDataLimitWifiMb(it) },
+                testTagPrefix = "data_limit_wifi"
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            DataCapRow(
+                label = tr("Mobile data", "اینترنت موبایل"),
+                usedBytes = usage.mobileBytes,
+                capMb = mobileCapMb,
+                onSelectCap = { preferences.setDataLimitMobileMb(it) },
+                testTagPrefix = "data_limit_mobile"
+            )
+        }
+    }
+}
+
+@Composable
+private fun DataCapRow(
+    label: String,
+    usedBytes: Long,
+    capMb: Int,
+    onSelectCap: (Int) -> Unit,
+    testTagPrefix: String
+) {
+    val capBytes = DataUsageBudget.mbToBytes(capMb)
+    val usedText = if (capMb > 0) {
+        tr(
+            "${DataUsageBudget.formatBytes(usedBytes)} of ${DataUsageBudget.formatBytes(capBytes)} used today",
+            "امروز ${DataUsageBudget.formatBytes(usedBytes)} از ${DataUsageBudget.formatBytes(capBytes)} مصرف شده"
+        )
+    } else {
+        tr(
+            "${DataUsageBudget.formatBytes(usedBytes)} used today · no cap",
+            "مصرف امروز: ${DataUsageBudget.formatBytes(usedBytes)} · بدون سقف"
+        )
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Bold,
+        color = ObsidianTextPrimary
+    )
+    Text(
+        text = usedText,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (DataUsageBudget.isExceeded(usedBytes, capBytes)) {
+            CrimsonPrimary
+        } else {
+            ObsidianTextSecondary
+        },
+        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DataUsageBudget.PRESET_CAPS_MB.forEach { presetMb ->
+            val selected = presetMb == capMb
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (selected) CrimsonPrimary else ObsidianCard)
+                    .border(
+                        1.dp,
+                        if (selected) CrimsonPrimary else ObsidianBorder,
+                        RoundedCornerShape(50)
+                    )
+                    .clickable { onSelectCap(presetMb) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("${testTagPrefix}_$presetMb")
+            ) {
+                Text(
+                    text = dataCapLabel(presetMb),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (selected) Color.White else ObsidianTextSecondary
+                )
+            }
+        }
+    }
+}
+
+private fun dataCapLabel(capMb: Int): String = when (capMb) {
+    0 -> tr("Off", "خاموش")
+    1024 -> "1 GB"
+    2048 -> "2 GB"
+    5120 -> "5 GB"
+    10240 -> "10 GB"
+    else -> "$capMb MB"
+}
+
 fun AppLimitsList(
     appLimits: List<AppUsageLimit>,
     preferences: ShieldPreferences,

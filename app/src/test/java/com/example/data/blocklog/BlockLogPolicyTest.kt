@@ -162,10 +162,17 @@ class BlockLogPolicyTest {
     fun `reason labels follow the trigger word conventions`() {
         assertEquals("Adult site", BlockLogPolicy.reasonFor("Adult Site Blocked: example.com"))
         assertEquals("Daily app limit reached", BlockLogPolicy.reasonFor("Daily Limit (30m): TikTok"))
+        // #43 (batch 2): the data-cap trigger gets its own reason and is
+        // not swallowed by the generic "Daily Limit" branch above it.
+        assertEquals("Daily data limit reached", BlockLogPolicy.reasonFor("Daily Limit: Data (Wi-Fi)"))
+        assertEquals("Daily data limit reached", BlockLogPolicy.reasonFor("Daily Limit: Data (Mobile)"))
         assertEquals("Blocked app section", BlockLogPolicy.reasonFor("Section Blocked: Instagram Reels"))
         assertEquals("Scheduled focus session", BlockLogPolicy.reasonFor("Smart Focus: Deep Work (09:00 – 11:00)"))
         assertEquals("Tamper attempt", BlockLogPolicy.reasonFor("Prevent Clear Data Guard"))
         assertEquals("Tamper attempt", BlockLogPolicy.reasonFor("Prevent Uninstall Guard"))
+        // #45 (batch 2): the force-stop guard's trigger word gets its own
+        // reason, ahead of the generic "Prevent … Guard" tamper branch.
+        assertEquals("Force stop attempt blocked", BlockLogPolicy.reasonFor("Prevent Force Stop Guard"))
         assertEquals("Manual panic lock", BlockLogPolicy.reasonFor("Emergency Panic Shield (15m Voluntary Lock)"))
         assertEquals("Blocked keyword", BlockLogPolicy.reasonFor("some custom word"))
     }

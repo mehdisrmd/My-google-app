@@ -9,7 +9,7 @@ package com.example.service
  * so the whole decision table is unit-testable without Android types.
  * [TextContentScanner.findTamperAttempt] is the node-tree entry point.
  *
- * Three actions are recognised, all targeting THIS app:
+ * Four actions are recognised, all targeting THIS app:
  *  - [TamperAction.UNINSTALL] — the legacy guard: uninstall confirmation
  *    in Settings / the package installer, or the app-info "disable" dialog.
  *  - [TamperAction.CLEAR_DATA] — X Blocker's App-info storage page (the
@@ -18,6 +18,19 @@ package com.example.service
  *  - [TamperAction.DISABLE_ACCESSIBILITY] — X Blocker's own accessibility
  *    service page (its detail page shows the service description, which
  *    the services LIST does not) or the "stop this service" dialog.
+ *  - [TamperAction.FORCE_STOP] — X Blocker's own App-info page (#45,
+ *    batch 2): the "Force stop" button lives there, and force-stopping
+ *    the app kills every guard at once, so the page itself is the
+ *    guarded surface — the same reasoning as CLEAR_DATA's storage page.
+ *    Best-effort layer; under Device Owner the DISALLOW_APPS_CONTROL
+ *    restriction is the hard block.
+ *
+ * Plus one that does NOT target this app (#42, batch 2):
+ *  - [TamperAction.VPN_CONFIG] — a VPN setup surface (the Settings VPN
+ *    profile editor, or the system's VPN consent dialog): a VPN would
+ *    bypass the blocker, so configuring one is tamper-class. This is
+ *    the best-effort layer; under Device Owner the DISALLOW_CONFIG_VPN
+ *    restriction is the hard block.
  *
  * Honest limits (same as the plan): this is a deterrent layer. Page
  * layouts and wording differ across Android versions and OEMs (AOSP vs
@@ -32,7 +45,9 @@ object TamperAttemptClassifier {
     enum class TamperAction {
         UNINSTALL,
         CLEAR_DATA,
-        DISABLE_ACCESSIBILITY
+        DISABLE_ACCESSIBILITY,
+        VPN_CONFIG,
+        FORCE_STOP
     }
 
     /**
@@ -56,9 +71,19 @@ object TamperAttemptClassifier {
         val isSettingsHost = pkgLower == "com.android.settings" ||
             pkgLower.contains("miui.securitycenter") ||
             pkgLower.contains("permissioncontroller")
-        if (!isInstaller && !isSettingsHost) return null
+        // #42: the system's VPN consent dialogs live in their own package.
+        val isVpnDialogHost = pkgLower == "com.android.vpndialogs"
+        if (!isInstaller && !isSettingsHost && !isVpnDialogHost) return null
 
         val combinedLower = screenTexts.joinToString(" | ").lowercase()
+
+        // #42 (batch 2): VPN setup surfaces are checked BEFORE the
+        // our-app gate below — a VPN settings page never mentions
+        // X Blocker, but configuring a VPN would bypass it entirely.
+        if ((isSettingsHost || isVpnDialogHost) && hasVpnConfigSignal(combinedLower)) {
+            return TamperAction.VPN_CONFIG
+        }
+
         val ownLower = ownPackage.trim().lowercase()
         val mentionsOurApp = combinedLower.contains("x blocker") ||
             combinedLower.contains("com.aistudio.shieldblock") ||
@@ -87,6 +112,13 @@ object TamperAttemptClassifier {
         }
         if (hasClearDataSignal(combinedLower)) {
             return TamperAction.CLEAR_DATA
+        }
+        // #45 (batch 2): checked BEFORE the accessibility branch — the
+        // Persian force-stop label «توقف اجباری» contains «توقف», which
+        // the accessibility branch's stop-dialog check would otherwise
+        // claim for itself on this very page.
+        if (hasForceStopSignal(combinedLower)) {
+            return TamperAction.FORCE_STOP
         }
         if (hasAccessibilityOffSignal(combinedLower)) {
             return TamperAction.DISABLE_ACCESSIBILITY
@@ -141,8 +173,7 @@ object TamperAttemptClassifier {
      * confirmation dialog, or our service's own detail page (recognised
      * by its description text / the "Use X Blocker" switch label).
      */
-    private fun hasAccessibilityOffSignal(combinedLower: String): Boolean {
-        val stopDialog = combinedLower.contains("stop this service") ||
+    private fun hasAccessibilityOffSignal(combinedLower: String): Boolean {        val stopDialog = combinedLower.contains("stop this service") ||
             combinedLower.contains("stop x blocker") ||
             combinedLower.contains("do you want to stop") ||
             combinedLower.contains("توقف")
@@ -151,5 +182,44 @@ object TamperAttemptClassifier {
         val serviceDetailPage = combinedLower.contains(SERVICE_DESCRIPTION_FRAGMENT) ||
             combinedLower.contains("use x blocker")
         return serviceDetailPage
+    }
+
+    /**
+     * Force-stop signals (#45): the "Force stop" button label on this
+     * app's own App-info page. This branch is only reached after the
+     * [mentionsOurApp] gate above, so the label is a reliable "user is
+     * staring at OUR Force stop button" signal — the same reasoning as
+     * [hasClearDataSignal]'s storage page. Another app's App-info page
+     * never passes that gate, so its Force stop button stays usable.
+     * The Persian label is matched in full («توقف اجباری») so unrelated
+     * «توقف» wording elsewhere is not claimed by this branch.
+     */
+    private fun hasForceStopSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("force stop") ||
+            combinedLower.contains("توقف اجباری")
+    }
+
+    /**
+     * VPN-setup signals (#42): the profile editor / add flow in Settings
+     * ("Edit VPN profile", "Add VPN", "Always-on VPN"…) and the system
+     * consent dialog an app raises to request a VPN connection ("…wants
+     * to set up a VPN connection…"). The bare VPN list page is
+     * deliberately NOT a signal — its wording is indistinguishable from
+     * the "VPN" row on the Network settings page, and the tap-through
+     * lands on the editor/consent surfaces covered here.
+     */
+    private fun hasVpnConfigSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("add vpn") ||
+            combinedLower.contains("edit vpn") ||
+            combinedLower.contains("vpn profile") ||
+            combinedLower.contains("vpn configuration") ||
+            combinedLower.contains("configure vpn") ||
+            combinedLower.contains("always-on vpn") ||
+            combinedLower.contains("always on vpn") ||
+            combinedLower.contains("set up a vpn") ||
+            combinedLower.contains("vpn connection") ||
+            combinedLower.contains("تنظیمات vpn") ||
+            combinedLower.contains("افزودن vpn") ||
+            combinedLower.contains("پیکربندی vpn")
     }
 }

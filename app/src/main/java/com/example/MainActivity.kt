@@ -98,6 +98,7 @@ import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.info.AppInfo
 import com.example.ui.info.InfoAndUpdateScreen
+import com.example.ui.keywords.BlocklistActivationBlockedScreen
 import com.example.ui.keywords.BlocklistWaitScreen
 import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
@@ -312,7 +313,7 @@ class MainActivity : ComponentActivity() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(LockdownActivity.EXTRA_STRICT_MODE, true)
+            putExtra(LockdownActivity.EXTRA_STRICT_MODE, app.preferences.getStrictModeEnabled())
             putExtra(LockdownActivity.EXTRA_TRIGGER_WORD, triggerWord)
             putExtra(LockdownActivity.EXTRA_SOURCE_APP, "X Blocker Enforcement")
             putExtra(LockdownActivity.EXTRA_END_TIME_EPOCH, endTime)
@@ -386,6 +387,45 @@ fun MainContent(
         mutableStateOf(true)
     }
 
+    // #30 (batch 2): the PIN is demanded on EVERY entry into the app UI.
+    // (a) When a lockdown ends, preferences raise the relock flag (see
+    // ShieldPreferences.clearLockdown) — consume it here so returning
+    // from the block screen lands on the PIN gate, never inside.
+    val pinRelockRequired by preferences.pinRelockRequired.collectAsStateWithLifecycle()
+    LaunchedEffect(pinRelockRequired) {
+        if (pinRelockRequired) {
+            isPinSessionLocked = true
+            preferences.setPinRelockRequired(false)
+        }
+    }
+
+    // (b) Leaving the app and coming back re-locks too: ON_STOP arms the
+    // relock, ON_RESUME applies it (only once a PIN exists — the first
+    // setup flow must not fight itself).
+    var relockOnNextResume by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    relockOnNextResume = true
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (relockOnNextResume) {
+                        relockOnNextResume = false
+                        if (preferences.isPinSet()) {
+                            isPinSessionLocked = true
+                        }
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     // #13 first-launch gate: while no adult domain list exists on disk,
     // a wait screen covers the app and the first download runs. A failed
     // download is not a lockout — the wait screen offers Retry, or
@@ -394,6 +434,11 @@ fun MainContent(
         mutableStateOf(app.adultBlocklistStore.hasList())
     }
     var blocklistDownloadFailed by remember { mutableStateOf(false) }
+
+    // #29 (batch 2): the first-launch download was skipped (or replaced
+    // by the starter seed) — the list counts as not updated and the app
+    // stays not-fully-activated until a real download succeeds.
+    val blocklistUpdatePending by preferences.blocklistUpdatePending.collectAsStateWithLifecycle()
 
     fun startBlocklistDownload() {
         coroutineScope.launch {
@@ -417,6 +462,7 @@ fun MainContent(
     val isAdultBlockEnabled by preferences.isAdultBlockEnabled.collectAsStateWithLifecycle()
     val blocklistLastUpdatedMs by preferences.adultBlocklistLastUpdatedMs.collectAsStateWithLifecycle()
     val blocklistDomainCount by preferences.adultBlocklistDomainCount.collectAsStateWithLifecycle()
+    val userBlocklistDomains by preferences.userBlocklistDomains.collectAsStateWithLifecycle()
     var isBlocklistUpdating by remember { mutableStateOf(false) }
     var isAppInBackgroundCurtain by remember { mutableStateOf(false) }
 
@@ -790,6 +836,25 @@ fun MainContent(
                                 }
                             }
                         },
+                        userBlocklistDomains = userBlocklistDomains.toList(),
+                        onAddUserBlocklistDomain = { domain ->
+                            val previous = preferences.getUserBlocklistDomains()
+                            val updated = previous + domain
+                            preferences.setUserBlocklistDomains(updated)
+                            app.adultBlocklistStore.rebuildWithUserDomains(updated, previous)
+                            preferences.setAdultBlocklistDomainCount(
+                                app.adultBlocklistStore.readDomains().size
+                            )
+                        },
+                        onRemoveUserBlocklistDomain = { domain ->
+                            val previous = preferences.getUserBlocklistDomains()
+                            val updated = previous - domain
+                            preferences.setUserBlocklistDomains(updated)
+                            app.adultBlocklistStore.rebuildWithUserDomains(updated, previous)
+                            preferences.setAdultBlocklistDomainCount(
+                                app.adultBlocklistStore.readDomains().size
+                            )
+                        },
                         incidents = incidents,
                         incidentStreakDays = streakDays,
                         incidentAppLimits = appLimits,
@@ -891,8 +956,30 @@ fun MainContent(
                 onContinueWithSeed = {
                     coroutineScope.launch {
                         app.adultBlocklistUpdater.writeFallbackSeed()
+                        // #29: the starter seed is not a real update —
+                        // the app stays not-fully-activated.
+                        preferences.setBlocklistUpdatePending(true)
                         blocklistGatePassed = true
                     }
+                },
+                onSkip = {
+                    // #29: skipping defers activation until a real
+                    // download succeeds (the updater clears the flag).
+                    preferences.setBlocklistUpdatePending(true)
+                    blocklistGatePassed = true
+                }
+            )
+        }
+
+        // #29 (batch 2): after a skip, the main UI stays covered by the
+        // activation screen (PIN first — this sits under the wait screen
+        // but over the tabs) until a successful list update lands. Its
+        // button routes straight back into the update flow.
+        if (blocklistUpdatePending && !isPinSessionLocked && blocklistGatePassed) {
+            BlocklistActivationBlockedScreen(
+                onUpdateNow = {
+                    blocklistGatePassed = false
+                    startBlocklistDownload()
                 }
             )
         }

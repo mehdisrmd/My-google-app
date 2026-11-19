@@ -48,7 +48,9 @@ import com.example.data.model.BlockIncident
 import com.example.data.preferences.ShieldPreferences
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.AmberWarning
+import com.example.ui.theme.AppThemeState
 import com.example.ui.theme.CyanTelemetry
+import com.example.util.JalaliCalendar
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.ObsidianBorder
@@ -166,10 +168,12 @@ fun WeeklyActivityCard(
     val currentStreakDays = preferences.getStreakDays()
     val bestChainDays = preferences.getLongestStreakDays()
 
-    val calendarNodes = remember(incidents, appLimits, usageRefreshTrigger, currentStreakDays) {
+    // #34 (batch 2): in Persian the calendar shows Jalali day numbers and
+    // date labels; the language is a remember key so toggling it rebuilds
+    // the nodes with the other calendar.
+    val isPersian = AppThemeState.isPersianLanguage
+    val calendarNodes = remember(incidents, appLimits, usageRefreshTrigger, currentStreakDays, isPersian) {
         val dayFmtEn = SimpleDateFormat("EEE", Locale.US)
-        val dateNumFmt = SimpleDateFormat("d", Locale.US)
-        val fullFmt = SimpleDateFormat("MMM d", Locale.US)
 
         (6 downTo 0).map { daysAgo ->
             val cal = Calendar.getInstance().apply {
@@ -207,8 +211,8 @@ fun WeeklyActivityCard(
                 daysAgo = daysAgo,
                 dayShortEn = dayShortEn,
                 dayShortFa = dayShortFa,
-                dateNumber = dateNumFmt.format(cal.time),
-                fullDateLabel = fullFmt.format(cal.time),
+                dateNumber = JalaliCalendar.dayNumberLabel(cal.timeInMillis, isPersian),
+                fullDateLabel = JalaliCalendar.shortDateLabel(cal.timeInMillis, isPersian),
                 status = status,
                 isToday = daysAgo == 0,
                 urgesDefeated = urges
@@ -484,6 +488,8 @@ fun WeeklyActivityCard(
                                 Text(
                                     text = if (selectedNode.isToday) {
                                         tr("Today (${selectedNode.fullDateLabel})", "امروز (${selectedNode.fullDateLabel})")
+                                    } else if (isPersian) {
+                                        "${selectedNode.dayShortFa} (${selectedNode.fullDateLabel})"
                                     } else {
                                         "${selectedNode.dayShortEn} (${selectedNode.fullDateLabel})"
                                     },

@@ -69,6 +69,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.blocklist.AdultBlocklistParser
+import com.example.data.blocklist.BlocklistSources
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockIncident
 import com.example.data.model.BlockedCategory
@@ -97,6 +99,9 @@ fun KeywordManagerScreen(
     blocklistLastUpdatedMs: Long,
     isBlocklistUpdating: Boolean,
     onUpdateBlocklistNow: () -> Unit,
+    userBlocklistDomains: List<String> = emptyList(),
+    onAddUserBlocklistDomain: (String) -> Unit = {},
+    onRemoveUserBlocklistDomain: (String) -> Unit = {},
     incidents: List<BlockIncident> = emptyList(),
     incidentStreakDays: Int = 0,
     incidentAppLimits: List<AppUsageLimit> = emptyList(),
@@ -193,7 +198,10 @@ fun KeywordManagerScreen(
                 blocklistDomainCount = blocklistDomainCount,
                 blocklistLastUpdatedMs = blocklistLastUpdatedMs,
                 isBlocklistUpdating = isBlocklistUpdating,
-                onUpdateBlocklistNow = onUpdateBlocklistNow
+                onUpdateBlocklistNow = onUpdateBlocklistNow,
+                userBlocklistDomains = userBlocklistDomains,
+                onAddUserBlocklistDomain = onAddUserBlocklistDomain,
+                onRemoveUserBlocklistDomain = onRemoveUserBlocklistDomain
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -399,7 +407,10 @@ private fun AdultBlockCard(
     blocklistDomainCount: Int,
     blocklistLastUpdatedMs: Long,
     isBlocklistUpdating: Boolean,
-    onUpdateBlocklistNow: () -> Unit
+    onUpdateBlocklistNow: () -> Unit,
+    userBlocklistDomains: List<String> = emptyList(),
+    onAddUserBlocklistDomain: (String) -> Unit = {},
+    onRemoveUserBlocklistDomain: (String) -> Unit = {}
 ) {
     val lastUpdatedText = remember(blocklistLastUpdatedMs) {
         if (blocklistLastUpdatedMs > 0L) {
@@ -412,7 +423,7 @@ private fun AdultBlockCard(
 
     val statusText = when {
         isBlocklistUpdating -> tr(
-            "Updating the site lists…",
+            "Updating the site list…",
             "در حال به‌روزرسانی فهرست سایت‌ها…"
         )
         blocklistDomainCount <= 0 -> tr(
@@ -538,11 +549,142 @@ private fun AdultBlockCard(
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = tr("Update lists now", "به‌روزرسانی فهرست"),
+                        text = tr("Update list now", "به‌روزرسانی فهرست"),
                         color = CrimsonPrimary,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+
+            // #38 (batch 2, corrected): the list sources, shown openly —
+            // exactly two famous porn-only repositories, nothing else is
+            // merged into the list (plus the user's own additions below).
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = tr(
+                    "List sources: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} (${it.repositoryUrl})" },
+                    "منابع فهرست: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} ‏(${it.repositoryUrl})" }
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = ObsidianTextSecondary,
+                modifier = Modifier.testTag("adult_blocklist_source_text")
+            )
+
+            // #38 (batch 2): the user's own additions to the list. They
+            // are merged into the on-disk index immediately, survive
+            // updates, and can be removed again here.
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = tr("Sites you added yourself", "سایت‌هایی که خودتان اضافه کردید"),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            if (userBlocklistDomains.isEmpty()) {
+                Text(
+                    text = tr(
+                        "None yet. Add any site below and it will be blocked like the downloaded list.",
+                        "هنوز هیچی نیست. هر سایتی را پایین اضافه کنید، مثل فهرست دانلودشده مسدود می‌شود."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary
+                )
+            } else {
+                userBlocklistDomains.sorted().forEach { domain ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = domain,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        )
+                        IconButton(
+                            onClick = { onRemoveUserBlocklistDomain(domain) },
+                            modifier = Modifier.testTag("user_blocklist_remove_$domain")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = tr("Remove", "حذف"),
+                                tint = CrimsonPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            var newUserDomain by remember { mutableStateOf("") }
+            var userDomainError by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = newUserDomain,
+                    onValueChange = {
+                        newUserDomain = it
+                        userDomainError = false
+                    },
+                    placeholder = {
+                        Text(
+                            tr("example.com", "example.com"),
+                            color = ObsidianTextSecondary
+                        )
+                    },
+                    singleLine = true,
+                    isError = userDomainError,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CrimsonPrimary,
+                        unfocusedBorderColor = ObsidianBorder,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = CrimsonPrimary,
+                        focusedContainerColor = ObsidianSurface,
+                        unfocusedContainerColor = ObsidianSurface
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("user_blocklist_input")
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        val normalized = AdultBlocklistParser.normalizeDomain(newUserDomain)
+                        if (normalized == null) {
+                            userDomainError = true
+                        } else {
+                            onAddUserBlocklistDomain(normalized)
+                            newUserDomain = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("user_blocklist_add_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(tr("Add", "افزودن"), fontWeight = FontWeight.Bold)
+                }
+            }
+            if (userDomainError) {
+                Text(
+                    text = tr(
+                        "That does not look like a domain — type something like example.com.",
+                        "این شبیه دامنه نیست — چیزی مثل example.com بنویسید."
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CrimsonPrimary
+                )
             }
         }
     }
