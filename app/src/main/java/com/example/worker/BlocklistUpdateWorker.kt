@@ -50,10 +50,18 @@ object BlocklistUpdateScheduler {
         val request = PeriodicWorkRequestBuilder<BlocklistUpdateWorker>(7, TimeUnit.DAYS)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            UNIQUE_WEEKLY_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
-            request
-        )
+        try {
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                UNIQUE_WEEKLY_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+        } catch (_: IllegalStateException) {
+            // WorkManager is not initialized in this process — e.g. under
+            // Robolectric, where the library's InitializationProvider does
+            // not run. On a real device the default initializer runs before
+            // Application.onCreate, so this is a no-op safeguard: skip the
+            // schedule instead of crashing app startup.
+        }
     }
 }
