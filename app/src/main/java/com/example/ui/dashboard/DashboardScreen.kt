@@ -74,7 +74,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -120,6 +119,7 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.preferences.UninstallGuard
 import com.example.ui.components.MotivationalQuoteBannerCard
+import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
 import com.example.ui.i18n.AppStrings.tr
@@ -1612,9 +1612,14 @@ private fun MotivationUnlockGateDialog(
                     )
                 }
 
-                OutlinedTextField(
+                // Secure anti-cheat field (#5, #8, #9): FLAG_SECURE while the
+                // dialog is open, paste/dictation bulk inserts rejected, and an
+                // orange underline marks where the typed text differs from the
+                // target sentence so a disabled Confirm is self-explanatory.
+                SecureTypeField(
                     value = typedPhrase,
                     onValueChange = { typedPhrase = it },
+                    targetSentence = longMotivationalSentence,
                     placeholder = {
                         Text(
                             tr(
