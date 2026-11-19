@@ -129,9 +129,10 @@ object WeeklyActivityCalculator {
 /**
  * Pure day classification for the streak calendar (Feature: Streak Calendar
  * Colors). Mapping, exactly as the owner asked:
- *  - TODAY is always "in progress" (rendered GRAY) — even if a relapse was
- *    logged earlier today; the day is not over yet.
- *  - A past day with a recorded reset/relapse is a RELAPSE day (RED).
+ *  - A day with a recorded reset/relapse is a RELAPSE day (RED) — including
+ *    TODAY: pressing Reset turns today red immediately (batch #4a).
+ *  - TODAY without a recorded relapse is "in progress" (rendered GRAY);
+ *    the day is not over yet.
  *  - Any other past day since install counts as a passed clean day (GREEN):
  *    the streak clock runs continuously from install/reset, so every day
  *    that ended without a relapse was a day the user passed.
@@ -146,9 +147,9 @@ object StreakDayClassifier {
     ): CalendarDayStatus {
         return when {
             dayEpochDay > todayEpochDay -> CalendarDayStatus.PRE_INSTALL_GRAY
-            dayEpochDay == todayEpochDay -> CalendarDayStatus.TODAY_IN_PROGRESS
             dayEpochDay < firstInstallEpochDay -> CalendarDayStatus.PRE_INSTALL_GRAY
             relapseEpochDays.contains(dayEpochDay) -> CalendarDayStatus.RELAPSE_DAY
+            dayEpochDay == todayEpochDay -> CalendarDayStatus.TODAY_IN_PROGRESS
             else -> CalendarDayStatus.CLEAN_STREAK_DAY
         }
     }
@@ -185,8 +186,9 @@ fun WeeklyActivityCard(
                 Calendar.FRIDAY -> "ج"
                 else -> dayShortEn
             }
-            // Classification (Streak Calendar Colors): TODAY = gray,
-            // passed clean day = green, relapse day = red, pre-install = muted.
+            // Classification (Streak Calendar Colors): TODAY = gray (red if a
+            // reset was logged today), passed clean day = green, relapse day =
+            // red, pre-install = muted.
             val todayEpochDay = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(
                 System.currentTimeMillis()
             )
@@ -217,8 +219,6 @@ fun WeeklyActivityCard(
     var selectedIndex by remember { mutableIntStateOf(6) } // Default to Today
     val selectedNode = calendarNodes.getOrElse(selectedIndex) { calendarNodes.last() }
 
-    val cleanDaysInWeek = calendarNodes.count { it.status == CalendarDayStatus.CLEAN_STREAK_DAY }
-
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -234,7 +234,10 @@ fun WeeklyActivityCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         modifier = Modifier
                             .size(44.dp)
@@ -258,30 +261,15 @@ fun WeeklyActivityCard(
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = tr("Clean Streak Calendar", "تقویم زنجیره پاکی (سبک دولینگو)"),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = if (cleanDaysInWeek == 0) {
-                                tr(
-                                    "0 clean days • Starting from Day 0 (Pre-install gray)",
-                                    "۰ روز پاک • شروع از روز صفر (روزهای قبل خاکستری)"
-                                )
-                            } else {
-                                tr(
-                                    "$cleanDaysInWeek clean day(s) this week • Pre-install days are gray",
-                                    "$cleanDaysInWeek روز پاک در این هفته • روزهای قبل از نصب خاکستری هستند"
-                                )
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            fontSize = 11.sp,
-                            color = ObsidianTextSecondary
-                        )
-                    }
+                    // Batch #20: subtitle line removed entirely (also closes #2)
+                    // and the "(Duolingo style)" parenthetical dropped from the
+                    // Persian title.
+                    Text(
+                        text = tr("Clean Streak Calendar", "تقویم زنجیره پاکی"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = ObsidianTextPrimary
+                    )
                 }
 
                 // Best Chain Pill
@@ -305,12 +293,16 @@ fun WeeklyActivityCard(
                                 modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
+                            // Batch #20c: keep the record text on ONE line in
+                            // both EN and FA/RTL (it used to wrap inside the pill).
                             Text(
                                 text = tr("Best: ${bestChainDays}d", "رکورد: ${bestChainDays} روز"),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Black,
-                                color = EmeraldShield
+                                color = EmeraldShield,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }

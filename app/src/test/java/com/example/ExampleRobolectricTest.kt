@@ -402,15 +402,20 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test streak day classifier - today gray, passed green, relapse red`() {
+    fun `test streak day classifier - today gray unless relapse, passed green, relapse red`() {
         val today = 20_000L
         val install = 19_990L
         val relapses = setOf(19_995L, today)
 
-        // Today is gray/in-progress regardless — even with a relapse logged today
+        // Batch #4a: a relapse logged TODAY turns today RED right away
+        assertEquals(
+            CalendarDayStatus.RELAPSE_DAY,
+            StreakDayClassifier.classify(today, today, install, relapses)
+        )
+        // Today with no relapse logged is gray/in-progress
         assertEquals(
             CalendarDayStatus.TODAY_IN_PROGRESS,
-            StreakDayClassifier.classify(today, today, install, relapses)
+            StreakDayClassifier.classify(today, today, install, setOf(19_995L))
         )
         // Yesterday, inside the running streak, no relapse: passed clean (green)
         assertEquals(

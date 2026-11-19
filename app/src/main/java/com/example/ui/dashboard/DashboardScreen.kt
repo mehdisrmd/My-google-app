@@ -31,9 +31,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -506,13 +508,17 @@ fun DashboardScreen(
         }
 
         // 2. Compact Action Strip: Emergency Panic Mode (SOS) + Scientific Addiction Quiz
+        // Batch #3: both cards share one intrinsic height so they always align.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Max),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Card(
                 modifier = Modifier
                     .weight(1.15f)
+                    .fillMaxHeight()
                     .clickable { onOpenPanicMode() }
                     .testTag("dashboard_panic_mode_card"),
                 colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
@@ -573,8 +579,9 @@ fun DashboardScreen(
                             .height(34.dp)
                             .testTag("dashboard_panic_button")
                     ) {
+                        // Batch #3: the panic button is a "Breathe" button now.
                         Text(
-                            text = "SOS",
+                            text = tr("Breathe", "تنفس"),
                             fontWeight = FontWeight.Black,
                             fontSize = 11.sp
                         )
@@ -586,6 +593,7 @@ fun DashboardScreen(
             Card(
                 modifier = Modifier
                     .weight(0.95f)
+                    .fillMaxHeight()
                     .clickable { onOpenAddictionQuiz() }
                     .testTag("dashboard_scientific_quiz_card"),
                 colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
@@ -687,49 +695,40 @@ fun DashboardScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = tr("Reset My Streak (I Slipped)", "ریست روزهای پاک (لغزش داشتم)"),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = tr(
-                                "Tap to reset your streak to Day 0 — best chain stays saved",
-                                "برای ریست زنجیره به روز ۰ بزنید — بهترین زنجیره حفظ می‌شود"
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 10.sp,
-                            color = ObsidianTextSecondary
-                        )
-                    }
+                    // Batch #4b: subtitle under the title removed.
+                    Text(
+                        text = tr("Reset My Streak (I Slipped)", "ریست روزهای پاک (لغزش داشتم)"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = CrimsonPrimary.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.5f))
+                // Batch #4c: the Reset action is a bigger, solid RED button.
+                Button(
+                    onClick = { showHomeResetStreakYoutubeDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CrimsonPrimary,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("dashboard_reset_streak_action_button")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("Reset", "ریست"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 10.sp,
-                            color = CrimsonPrimary
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Reset", "ریست"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp
+                    )
                 }
             }
         }

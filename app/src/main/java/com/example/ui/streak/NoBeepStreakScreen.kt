@@ -10,14 +10,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +22,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -58,7 +49,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -75,15 +65,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -259,7 +245,6 @@ fun NoBeepStreakScreen(
     var selectedShareMilestoneIndex by remember(defaultMilestoneIndex) {
         mutableIntStateOf(defaultMilestoneIndex)
     }
-    val selectedShareMilestone = STREAK_MILESTONES[selectedShareMilestoneIndex]
 
     val progressToNext = remember(elapsedMillis, nextMilestone, prevMilestoneDays) {
         val spanDays = (nextMilestone.days - prevMilestoneDays).coerceAtLeast(1)
@@ -451,17 +436,6 @@ fun NoBeepStreakScreen(
             }
         }
 
-        // Minimal & Cute Share Streak Card (Items 12 & 13: No "Instagram/X" text, shows @mehdisrmd in small font, opens Android system share sheet with app icon)
-        MinimalCuteStreakShareCard(
-            currentStreakDays = days,
-            bestChainDays = bestChainDays,
-            urgesDefeatedCount = urgesDefeatedCount,
-            selectedMilestone = selectedShareMilestone,
-            onSelectMilestoneIndex = { selectedShareMilestoneIndex = it },
-            selectedMilestoneIndex = selectedShareMilestoneIndex,
-            context = context
-        )
-
         // Daily Motivational Quote Card (Item 10: Non-tappable, 1 new quote per day)
         MotivationalQuoteBannerCard(streakDays = days)
 
@@ -635,25 +609,29 @@ fun NoBeepStreakScreen(
         }
 
         // Relapse / Reset Streak Action
-        OutlinedButton(
+        // Batch #4c: the Reset button is BIGGER and solid RED.
+        Button(
             onClick = { showRelapseDialog = true },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(56.dp)
                 .testTag("reset_streak_button"),
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.6f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonPrimary)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CrimsonPrimary,
+                contentColor = Color.White
+            )
         ) {
             Icon(
                 imageVector = Icons.Default.Refresh,
                 contentDescription = null,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = tr("I Slipped — Reset My Clean Streak", "لغزش داشتم — شروع مجدد روزهای پاک"),
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
             )
         }
     }
@@ -847,334 +825,6 @@ private fun StatMiniCard(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
-        }
-    }
-}
-
-/**
- * Minimal & Cute Share Streak Card (Items 12 & 13):
- * - Removes "Instagram / X" from the title.
- * - Minimal, cute floating animation with the new Material Design 3 App Icon.
- * - Shows ONLY `@mehdisrmd` in small font at the bottom (instead of the app name).
- * - Tapping the card or Share button opens the Android system share chooser (`Intent.createChooser`)
- *   so the user can pick any app with native app icons.
- */
-@Composable
-fun MinimalCuteStreakShareCard(
-    currentStreakDays: Int,
-    bestChainDays: Int,
-    urgesDefeatedCount: Int,
-    selectedMilestone: StreakMilestone,
-    selectedMilestoneIndex: Int,
-    onSelectMilestoneIndex: (Int) -> Unit,
-    context: Context,
-    modifier: Modifier = Modifier
-) {
-    val infiniteTransition = rememberInfiniteTransition(label = "minimal_cute_share_anim")
-    val gentleFloatY by infiniteTransition.animateFloat(
-        initialValue = -4f,
-        targetValue = 4f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "gentle_float_y"
-    )
-    val softGlowScale by infiniteTransition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "soft_glow_scale"
-    )
-
-    val displayedDays = maxOf(currentStreakDays, selectedMilestone.days)
-    val quoteForCard = remember {
-        MotivationalQuotesRepository.getDailyQuoteForToday()
-    }
-
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("streak_milestone_share_studio_card"),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.5.dp, selectedMilestone.badgeColor.copy(alpha = 0.65f))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Header with Material 3 App Icon
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                        contentDescription = "App Icon",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .border(1.dp, selectedMilestone.badgeColor, RoundedCornerShape(10.dp))
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = tr(
-                                "Share Clean Streak Card",
-                                "اشتراک‌گذاری کارت زنجیره پاکی"
-                            ),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Black,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = tr(
-                                "Minimal animated card • Tap to share to any app",
-                                "کارت مینیمال با انیمیشن لطیف • اشتراک در هر برنامه"
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ObsidianTextSecondary,
-                            fontSize = 10.sp
-                        )
-                    }
-                }
-
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = selectedMilestone.badgeColor,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // Milestone Tier Selector Pills (0d, 1d, 3d, 7d, 14d, 30d, 60d, 90d)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                STREAK_MILESTONES.forEachIndexed { idx, ms ->
-                    val isSelected = idx == selectedMilestoneIndex
-                    val isUnlocked = currentStreakDays >= ms.days
-                    Surface(
-                        onClick = { onSelectMilestoneIndex(idx) },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) ms.badgeColor.copy(alpha = 0.25f) else ObsidianCard,
-                        border = BorderStroke(
-                            1.dp,
-                            if (isSelected) ms.badgeColor else ObsidianBorder
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("share_milestone_pill_${ms.days}d")
-                    ) {
-                        Box(
-                            modifier = Modifier.padding(vertical = 5.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${ms.days}d",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = if (isSelected || isUnlocked) FontWeight.Black else FontWeight.Medium,
-                                color = if (isSelected) ms.badgeColor else ObsidianTextSecondary,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Minimal & Cute Visual Share Card Preview (Tap opens Android System Share Sheet!)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(215.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF0F172A),
-                                Color(0xFF111827),
-                                Color(0xFF0B132B)
-                            )
-                        )
-                    )
-                    .border(1.5.dp, selectedMilestone.badgeColor.copy(alpha = 0.8f), RoundedCornerShape(22.dp))
-                    .clickable {
-                        StreakShareImageGenerator.shareMilestoneViaSystemSheet(
-                            context = context,
-                            milestone = selectedMilestone,
-                            currentStreakDays = currentStreakDays,
-                            bestChainDays = bestChainDays,
-                            urgesDefeatedCount = urgesDefeatedCount,
-                            quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa)
-                        )
-                    }
-                    .testTag("streak_visual_poster_preview"),
-                contentAlignment = Alignment.Center
-            ) {
-                // Minimal cute soft glowing pastel circles in background
-                val primaryGlow = selectedMilestone.badgeColor
-                val secondaryGlow = selectedMilestone.secondaryGlowColor
-                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                    val center = Offset(size.width / 2f, size.height / 2f - 8.dp.toPx())
-                    drawCircle(
-                        color = primaryGlow.copy(alpha = 0.12f),
-                        radius = 74.dp.toPx() * softGlowScale,
-                        center = center
-                    )
-                    drawCircle(
-                        color = secondaryGlow.copy(alpha = 0.16f),
-                        radius = 52.dp.toPx() / softGlowScale,
-                        center = center
-                    )
-                    // Minimal cute sparkle dots
-                    drawCircle(
-                        color = primaryGlow.copy(alpha = 0.65f),
-                        radius = 3.5.dp.toPx(),
-                        center = Offset(center.x - 85.dp.toPx(), center.y - 34.dp.toPx())
-                    )
-                    drawCircle(
-                        color = AmberWarning.copy(alpha = 0.7f),
-                        radius = 3.dp.toPx(),
-                        center = Offset(center.x + 88.dp.toPx(), center.y - 26.dp.toPx())
-                    )
-                    drawCircle(
-                        color = EmeraldShield.copy(alpha = 0.65f),
-                        radius = 3.dp.toPx(),
-                        center = Offset(center.x - 74.dp.toPx(), center.y + 32.dp.toPx())
-                    )
-                    drawCircle(
-                        color = primaryGlow.copy(alpha = 0.65f),
-                        radius = 3.5.dp.toPx(),
-                        center = Offset(center.x + 78.dp.toPx(), center.y + 30.dp.toPx())
-                    )
-                }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // Top Minimal Pill with M3 App Icon + Milestone Title
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = Color(0xFF1E293B),
-                        border = BorderStroke(1.dp, selectedMilestone.badgeColor.copy(alpha = 0.65f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clip(CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = tr(selectedMilestone.titleEn, selectedMilestone.titleFa),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-                    }
-
-                    // Center Cute Floating Streak Emblem
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .offset(y = gentleFloatY.dp)
-                            .scale(softGlowScale)
-                    ) {
-                        Text(
-                            text = "${displayedDays}d Clean ✨",
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Black,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = tr(selectedMilestone.shareMottoEn, selectedMilestone.shareMottoFa),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = selectedMilestone.badgeColor,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-
-                    // Bottom Footer: ONLY `@mehdisrmd` in small font (instead of the app name!)
-                    Text(
-                        text = "@mehdisrmd",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF94A3B8)
-                    )
-                }
-            }
-
-            // Single Sleek Share Button with M3 App Icon -> Opens Native Android System Share Sheet
-            Button(
-                onClick = {
-                    StreakShareImageGenerator.shareMilestoneViaSystemSheet(
-                        context = context,
-                        milestone = selectedMilestone,
-                        currentStreakDays = currentStreakDays,
-                        bestChainDays = bestChainDays,
-                        urgesDefeatedCount = urgesDefeatedCount,
-                        quoteText = tr(quoteForCard.quoteEn, quoteForCard.quoteFa)
-                    )
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = selectedMilestone.badgeColor,
-                    contentColor = Color.Black
-                ),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .testTag("share_streak_instagram_button")
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.Default.Share,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = tr(
-                        "Share Clean Streak Card (@mehdisrmd)",
-                        "اشتراک‌گذاری کارت پاکی (@mehdisrmd)"
-                    ),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Black
-                )
-            }
         }
     }
 }
