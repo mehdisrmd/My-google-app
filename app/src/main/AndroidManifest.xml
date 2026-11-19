@@ -121,6 +121,29 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/streak_widget_info" />
         </receiver>
+
+        <!--
+            Device Owner protection (item #11): the admin receiver behind
+            the definitive ADB/computer-uninstall block. The app can never
+            grant itself this role — it only becomes Device Owner through
+            one-time provisioning outside the app (adb shell dpm
+            set-device-owner on a phone with no accounts signed in, or QR
+            provisioning during initial setup). This receiver is the
+            component Android binds once that has happened.
+        -->
+        <receiver
+            android:name=".deviceowner.ShieldDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

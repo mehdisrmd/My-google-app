@@ -46,6 +46,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteForever
@@ -119,6 +120,9 @@ import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.preferences.UninstallGuard
+import com.example.deviceowner.DeviceOwnerManager
+import com.example.deviceowner.DeviceOwnerPolicy
+import com.example.deviceowner.ShieldDeviceAdminReceiver
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
@@ -190,6 +194,13 @@ fun DashboardScreen(
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
     val isInstallGuardEnabled by effectivePrefs.isInstallGuardEnabled.collectAsStateWithLifecycle()
+    val isDeviceOwnerProtectionEnabled by effectivePrefs.isDeviceOwnerProtectionEnabled.collectAsStateWithLifecycle()
+    // Device Owner standing (#11) is system state, not a preference: read
+    // it live and refresh on every ON_RESUME (see checkPermissions), so
+    // the card flips to ACTIVE the moment provisioning has happened.
+    var deviceOwnerStatus by remember {
+        mutableStateOf(DeviceOwnerManager.status(context))
+    }
     val bestChainDays by effectivePrefs.longestStreakDays.collectAsStateWithLifecycle()
     val quizScorePercent by effectivePrefs.quizScorePercent.collectAsStateWithLifecycle()
     val quizSeverityEn by effectivePrefs.quizSeverityEn.collectAsStateWithLifecycle()
@@ -250,6 +261,7 @@ fun DashboardScreen(
         hasOverlayPermission = ShieldPreferences.hasOverlayPermission(context)
         isBatteryOptExempt = ShieldPreferences.isIgnoringBatteryOptimizations(context)
         hasNotificationPermission = checkNotificationPermission(context)
+        deviceOwnerStatus = DeviceOwnerManager.status(context)
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -931,6 +943,152 @@ fun DashboardScreen(
                                 checkedTrackColor = EmeraldShield
                             )
                         )
+                    }
+                }
+
+                // Device Owner Card (#11): the DEFINITIVE block against
+                // ADB/computer uninstall. An app cannot make itself Device
+                // Owner, so until one-time provisioning has happened this
+                // card shows the honest setup steps and the switch stays
+                // disabled — it never pretends to work. Once the app IS
+                // Device Owner, the switch drives the real DPM blocks
+                // (own-package uninstall block + ADB/debugging off),
+                // applied by DeviceOwnerManager.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (deviceOwnerStatus == DeviceOwnerPolicy.Status.DEVICE_OWNER &&
+                            isDeviceOwnerProtectionEnabled
+                        ) {
+                            EmeraldShield.copy(alpha = 0.55f)
+                        } else {
+                            ObsidianBorder
+                        }
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(EmeraldShield.copy(alpha = 0.18f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AdminPanelSettings,
+                                        contentDescription = null,
+                                        tint = EmeraldShield,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = tr("Device Owner Protection", "محافظ مالک دستگاه"),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ObsidianTextPrimary
+                                    )
+                                    Text(
+                                        text = tr(
+                                            "The hard block, enforced by Android itself: X Blocker cannot be uninstalled (not even via ADB) and USB debugging stays off.",
+                                            "مسدودسازی قطعی با اجرای خود اندروید: ایکس بلاکر حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.sp,
+                                        color = ObsidianTextSecondary
+                                    )
+                                }
+                            }
+
+                            Switch(
+                                checked = isDeviceOwnerProtectionEnabled,
+                                onCheckedChange = { targetEnabled ->
+                                    effectivePrefs.setDeviceOwnerProtectionEnabled(targetEnabled)
+                                    DeviceOwnerManager.reconcile(context, targetEnabled)
+                                },
+                                enabled = deviceOwnerStatus == DeviceOwnerPolicy.Status.DEVICE_OWNER,
+                                modifier = Modifier.testTag("device_owner_protection_switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.Black,
+                                    checkedTrackColor = EmeraldShield
+                                )
+                            )
+                        }
+
+                        when (deviceOwnerStatus) {
+                            DeviceOwnerPolicy.Status.DEVICE_OWNER -> Text(
+                                text = tr(
+                                    "Status: ACTIVE — X Blocker is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
+                                    "وضعیت: فعال — ایکس بلاکر مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = EmeraldShield
+                            )
+
+                            DeviceOwnerPolicy.Status.PROFILE_OWNER_ONLY -> Text(
+                                text = tr(
+                                    "Status: X Blocker only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
+                                    "وضعیت: ایکس بلاکر فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = AmberWarning
+                            )
+
+                            DeviceOwnerPolicy.Status.ADMIN_ONLY,
+                            DeviceOwnerPolicy.Status.NOT_PROVISIONED -> Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = tr(
+                                        "Status: NOT SET UP — no app can make itself Device Owner; the switch only starts working after a one-time setup from a computer. Connect the phone with USB debugging ON and run:",
+                                        "وضعیت: راه‌اندازی نشده — هیچ برنامه‌ای نمی‌تواند خودش را مالک دستگاه کند؛ کلید فقط بعد از یک راه‌اندازی یک‌باره از رایانه کار می‌کند. گوشی را با اشکال‌زدایی USB روشن وصل کنید و این دستور را بزنید:"
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                                Text(
+                                    text = DeviceOwnerPolicy.provisioningCommand(
+                                        context.packageName,
+                                        ShieldDeviceAdminReceiver::class.java.name
+                                    ),
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 11.sp,
+                                    color = CyanTelemetry
+                                )
+                                Text(
+                                    text = tr(
+                                        "⚠ The command FAILS while any Google account is signed in on the phone — remove the accounts first (you can sign back in afterwards). The only other route is QR provisioning during the very first setup screens, right after a factory reset.",
+                                        "⚠ تا وقتی هر حساب گوگلی روی گوشی وارد شده باشد این دستور خطا می‌دهد — اول حساب‌ها را حذف کنید (بعدش می‌توانید دوباره وارد شوید). راه دیگر فقط اسکن QR در صفحه‌های راه‌اندازی اولیه، درست بعد از بازنشانی کارخانه است."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = AmberWarning
+                                )
+                            }
+                        }
                     }
                 }
 

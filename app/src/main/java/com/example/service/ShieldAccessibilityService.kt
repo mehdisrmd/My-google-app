@@ -31,6 +31,7 @@ import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
+import com.example.deviceowner.DeviceOwnerManager
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
@@ -259,6 +260,12 @@ class ShieldAccessibilityService : AccessibilityService() {
         preferences = app.preferences
         adultBlocklistStore = app.adultBlocklistStore
         screenshotStore = app.screenshotStore
+
+        // Device Owner protection (#11): the service (re)starts on every
+        // boot and after every re-enable — reconcile the DPM restrictions
+        // with the stored toggle choice here too, so the hard ADB block
+        // is back in force even if the app UI is never opened.
+        DeviceOwnerManager.reconcile(this)
 
         // #18: wake the deferred-overlay flush the moment the user unlocks.
         // ACTION_USER_PRESENT is a protected system broadcast; NOT_EXPORTED
