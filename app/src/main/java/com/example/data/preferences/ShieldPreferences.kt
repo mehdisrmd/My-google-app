@@ -65,6 +65,15 @@ class ShieldPreferences(private val context: Context) {
             val preservedQuizScore = prefs.getInt(KEY_QUIZ_SCORE_PERCENT, -1)
             val preservedQuizSevEn = prefs.getString(KEY_QUIZ_SEVERITY_EN, null)
             val preservedQuizSevFa = prefs.getString(KEY_QUIZ_SEVERITY_FA, null)
+            // #32 (batch 2): the clean streak is the user's own history,
+            // not protection state — this automatic first-run wipe must
+            // never zero it. The streak may ONLY be reset by the user's
+            // explicit Reset / "I Slipped" action (resetStreak) or the
+            // manual full reset; a block episode ending never touches it.
+            val preservedStreakStart = prefs.getLong(KEY_STREAK_START_TIME, 0L)
+            val preservedLongestStreak = prefs.getInt(KEY_LONGEST_STREAK, 0)
+            val preservedSlipsCount = prefs.getInt(KEY_SLIPS_COUNT, 0)
+            val preservedFirstInstallDay = prefs.getLong(KEY_FIRST_INSTALL_EPOCH_DAY, 0L)
             val wipe = prefs.edit()
                 .clear()
                 .putBoolean(KEY_FRESH_SCRATCH_V4_INIT, true)
@@ -76,12 +85,18 @@ class ShieldPreferences(private val context: Context) {
                 .putBoolean(KEY_STRICT_MODE_ENABLED, false)
                 .putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
                 .putLong(KEY_ACTIVE_LOCK_END_TIME, 0L)
-                .putLong(KEY_STREAK_START_TIME, now)
-                .putLong(KEY_FIRST_INSTALL_EPOCH_DAY, todayEpochDay)
+                .putLong(
+                    KEY_STREAK_START_TIME,
+                    if (preservedStreakStart > 0L) preservedStreakStart else now
+                )
+                .putLong(
+                    KEY_FIRST_INSTALL_EPOCH_DAY,
+                    if (preservedFirstInstallDay > 0L) preservedFirstInstallDay else todayEpochDay
+                )
 
-                .putInt(KEY_LONGEST_STREAK, 0)
+                .putInt(KEY_LONGEST_STREAK, preservedLongestStreak)
                 .putInt(KEY_LAST_NOTIFIED_CLEAN_DAY, 0)
-                .putInt(KEY_SLIPS_COUNT, 0)
+                .putInt(KEY_SLIPS_COUNT, preservedSlipsCount)
                 .putString(KEY_LAST_SLIP_REASON, "")
                 .putInt(KEY_URGES_DEFEATED_COUNT, 0)
                 .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
@@ -232,6 +247,12 @@ class ShieldPreferences(private val context: Context) {
 
     private val _securityQuestion = MutableStateFlow(getSecurityQuestion())
     val securityQuestionFlow: StateFlow<String> = _securityQuestion.asStateFlow()
+
+    // #30 (batch 2): set whenever a lockdown ends (see clearLockdown) so
+    // the next entry into the app UI demands the PIN again — returning
+    // from the block screen must never land inside without the gate.
+    private val _pinRelockRequired = MutableStateFlow(isPinRelockRequired())
+    val pinRelockRequired: StateFlow<Boolean> = _pinRelockRequired.asStateFlow()
 
     // Anti-Agent Blackout Screen Shield (FLAG_SECURE)
     private val _isBlackoutPrivacyShieldEnabled = MutableStateFlow(getIsBlackoutPrivacyShieldEnabled())
@@ -1155,6 +1176,22 @@ class ShieldPreferences(private val context: Context) {
             .remove(KEY_ACTIVE_LOCK_APP)
             .apply()
         _activeLockEndTime.value = 0L
+        // #30 (batch 2): a lock just ended — the next entry into the app
+        // UI must pass the PIN gate again, even when the user returns
+        // straight from this block screen.
+        setPinRelockRequired(true)
+    }
+
+    // #30 (batch 2): the PIN-relock flag (see clearLockdown). MainActivity
+    // consumes it: when set, the PIN gate covers the UI again and the
+    // flag is cleared.
+    fun isPinRelockRequired(): Boolean {
+        return prefs.getBoolean(KEY_PIN_RELOCK_REQUIRED, false)
+    }
+
+    fun setPinRelockRequired(required: Boolean) {
+        prefs.edit().putBoolean(KEY_PIN_RELOCK_REQUIRED, required).apply()
+        _pinRelockRequired.value = required
     }
 
     /** True when the current lock may offer the one-time 10-second grace. */
@@ -1682,6 +1719,7 @@ class ShieldPreferences(private val context: Context) {
 
         // PIN gate v2 (#7): salted hashes only, never the PIN itself.
         private const val KEY_PIN_HASH_V2 = "key_pin_hash_v2"
+        private const val KEY_PIN_RELOCK_REQUIRED = "key_pin_relock_required"
         private const val KEY_PIN_SALT_V2 = "key_pin_salt_v2"
         private const val KEY_PIN_V2_MIGRATED = "key_pin_v2_migrated"
         private const val KEY_SECURITY_QUESTION = "key_security_question"

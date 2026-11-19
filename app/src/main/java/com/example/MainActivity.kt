@@ -387,6 +387,45 @@ fun MainContent(
         mutableStateOf(true)
     }
 
+    // #30 (batch 2): the PIN is demanded on EVERY entry into the app UI.
+    // (a) When a lockdown ends, preferences raise the relock flag (see
+    // ShieldPreferences.clearLockdown) — consume it here so returning
+    // from the block screen lands on the PIN gate, never inside.
+    val pinRelockRequired by preferences.pinRelockRequired.collectAsStateWithLifecycle()
+    LaunchedEffect(pinRelockRequired) {
+        if (pinRelockRequired) {
+            isPinSessionLocked = true
+            preferences.setPinRelockRequired(false)
+        }
+    }
+
+    // (b) Leaving the app and coming back re-locks too: ON_STOP arms the
+    // relock, ON_RESUME applies it (only once a PIN exists — the first
+    // setup flow must not fight itself).
+    var relockOnNextResume by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    relockOnNextResume = true
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (relockOnNextResume) {
+                        relockOnNextResume = false
+                        if (preferences.isPinSet()) {
+                            isPinSessionLocked = true
+                        }
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     // #13 first-launch gate: while no adult domain list exists on disk,
     // a wait screen covers the app and the first download runs. A failed
     // download is not a lockout — the wait screen offers Retry, or
