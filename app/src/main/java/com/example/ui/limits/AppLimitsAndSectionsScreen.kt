@@ -670,6 +670,7 @@ private fun dataCapLabel(capMb: Int): String = when (capMb) {
     else -> "$capMb MB"
 }
 
+@Composable
 fun AppLimitsList(
     appLimits: List<AppUsageLimit>,
     preferences: ShieldPreferences,
