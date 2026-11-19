@@ -143,6 +143,11 @@ object BlockLogPolicy {
         triggerWord == "Data Cap: Mobile Off Manual" -> "Mobile data turned off manually — daily cap reached"
         triggerWord == "Data Cap: Wi-Fi Off By App" -> "Wi-Fi turned off by the app — daily cap reached"
         triggerWord == "Data Cap: Wi-Fi Off Manual" -> "Wi-Fi turned off manually — daily cap reached"
+        // #51 (batch 4): a foreign VPN was knocked down by our own
+        // momentary VpnService, and an entry into the Settings VPN
+        // section was ejected before the Always-on controls.
+        triggerWord == "Foreign VPN Disconnected" -> "Foreign VPN disconnected"
+        triggerWord == "VPN Settings Page Blocked" -> "VPN settings blocked"
         triggerWord.startsWith("Daily Limit") -> "Daily app limit reached"
         triggerWord.startsWith("Section Blocked:") -> "Blocked app section"
         triggerWord.startsWith("Smart Focus:") -> "Scheduled focus session"

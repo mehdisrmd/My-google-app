@@ -1,9 +1,11 @@
 package com.example.ui.dashboard
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -280,6 +282,23 @@ fun DashboardScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasNotificationPermission = granted
+    }
+
+    // #51 (batch 4): the Block VPN toggle's knockdown needs the system
+    // VPN consent for X Blocker itself. It is requested the first time
+    // the toggle is turned on; a denial keeps the toggle OFF and shows
+    // the note on the VPN card.
+    var vpnConsentDenied by remember { mutableStateOf(false) }
+    val vpnConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            vpnConsentDenied = false
+            effectivePrefs.setVpnConfigBlockEnabled(true)
+            DeviceOwnerManager.reconcile(context)
+        } else {
+            vpnConsentDenied = true
+        }
     }
 
     val checkPermissions = {
@@ -1016,6 +1035,7 @@ fun DashboardScreen(
                         if (isVpnConfigBlockEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
                     )
                 ) {
+                    Column {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1066,11 +1086,35 @@ fun DashboardScreen(
                         Switch(
                             checked = isVpnConfigBlockEnabled,
                             onCheckedChange = { targetEnabled ->
-                                effectivePrefs.setVpnConfigBlockEnabled(targetEnabled)
-                                // Apply (or clear) the Device Owner
-                                // restriction right away; a no-op when
-                                // the app is not Device Owner.
-                                DeviceOwnerManager.reconcile(context)
+                                if (targetEnabled) {
+                                    // #51 (batch 4): ask for the system
+                                    // VPN consent the FIRST time the
+                                    // toggle is enabled (the knockdown
+                                    // cannot work without it). Once
+                                    // granted, prepare() returns null and
+                                    // enabling is silent forever after.
+                                    // Denied → the toggle stays OFF and
+                                    // the card shows why.
+                                    val consentIntent = try {
+                                        VpnService.prepare(context)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    if (consentIntent == null) {
+                                        vpnConsentDenied = false
+                                        effectivePrefs.setVpnConfigBlockEnabled(true)
+                                        // Apply the Device Owner
+                                        // restriction right away; a
+                                        // no-op when not Device Owner.
+                                        DeviceOwnerManager.reconcile(context)
+                                    } else {
+                                        vpnConsentLauncher.launch(consentIntent)
+                                    }
+                                } else {
+                                    vpnConsentDenied = false
+                                    effectivePrefs.setVpnConfigBlockEnabled(false)
+                                    DeviceOwnerManager.reconcile(context)
+                                }
                             },
                             modifier = Modifier.testTag("vpn_config_block_switch"),
                             colors = SwitchDefaults.colors(
@@ -1078,6 +1122,21 @@ fun DashboardScreen(
                                 checkedTrackColor = EmeraldShield
                             )
                         )
+                    }
+                    // #51 (batch 4): shown when the one-time VPN consent
+                    // was denied — the toggle stayed OFF, and this is why.
+                    if (vpnConsentDenied) {
+                        Text(
+                            text = tr(
+                                "VPN permission is required: without it, foreign VPNs cannot be disconnected.",
+                                "اجازه‌ی VPN لازمه: بدون اون نمی‌شه VPNهای خارجی رو قطع کرد."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = AmberWarning,
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)
+                        )
+                    }
                     }
                 }
 

@@ -102,6 +102,9 @@ private fun localizedBlockReason(reason: String?, isPersian: Boolean): String? {
         "Scheduled focus session" -> "جلسه تمرکز زمان‌بندی‌شده"
         "Tamper attempt" -> "تلاش برای دست‌کاری"
         "Force stop attempt blocked" -> "تلاش برای توقف اجباری"
+        // #51 (batch 4): VPN knockdown + Settings VPN section ejection.
+        "Foreign VPN disconnected" -> "وی‌پی‌ان خارجی قطع شد"
+        "VPN settings blocked" -> "ورود به تنظیمات وی‌پی‌ان مسدود شد"
         "Manual panic lock" -> "قفل اضطراری دستی"
         "Blocked keyword" -> "کلمه کلیدی مسدود"
         else -> reason

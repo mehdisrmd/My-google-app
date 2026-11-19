@@ -200,13 +200,82 @@ object TamperAttemptClassifier {
     }
 
     /**
+     * #51 (batch 4): is this Settings window the VPN SECTION itself —
+     * the profile list page, or a per-profile page carrying the
+     * "Always-on VPN" control? Batch 2 deliberately did NOT treat the
+     * bare list page as a VPN_CONFIG signal (see [hasVpnConfigSignal]);
+     * Mehdi superseded that exception: while the Block VPN toggle is
+     * on, entering the section at all ejects the user instantly
+     * (BACK out — no lockdown), so the Always-on controls can never be
+     * reached. The profile EDITOR keeps the #42 lockdown intervention:
+     * pages matching the editor signals are NOT section pages here.
+     *
+     * Page identity is best-effort (OEM wording varies): the section
+     * list page carries a bare "VPN" title element, which the parent
+     * Network hub page ALSO has as a row — so hub-page companions
+     * (Wi-Fi / airplane mode / hotspot rows) veto the match.
+     */
+    fun isVpnSettingsSectionPage(
+        screenTexts: List<String>,
+        currentPackage: String
+    ): Boolean {
+        if (screenTexts.isEmpty()) return false
+        val pkgLower = currentPackage.lowercase()
+        val isSettingsHost = pkgLower == "com.android.settings" ||
+            pkgLower.contains("miui.securitycenter") ||
+            pkgLower.contains("permissioncontroller")
+        if (!isSettingsHost) return false
+
+        val combinedLower = screenTexts.joinToString(" | ").lowercase()
+        // The editor keeps its #42 lockdown — never reclassify it as a
+        // mere section page.
+        if (hasVpnEditorSignal(combinedLower)) return false
+
+        val elements = screenTexts.map { it.trim().lowercase() }
+        val hasVpnTitle = elements.any { it == "vpn" || it == "وی‌پی‌ان" }
+        if (hasVpnTitle && !hasNetworkHubSignal(combinedLower)) return true
+
+        // Per-profile page: the Always-on switch lives here (with the
+        // "block connections without VPN" / "Forget VPN" companions).
+        return hasAlwaysOnVpnSignal(combinedLower) &&
+            (combinedLower.contains("forget vpn") ||
+                combinedLower.contains("block connections without vpn") ||
+                combinedLower.contains("حذف vpn"))
+    }
+
+    /**
+     * The VPN profile editor's own wording — #42's lockdown surface.
+     * Deliberately NOT the bare phrase "vpn profile": the list page's
+     * own "Add VPN profile" button contains it, and the list page must
+     * stay a section page (ejection), not become an editor page.
+     */
+    private fun hasVpnEditorSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("edit vpn") ||
+            combinedLower.contains("server address") ||
+            combinedLower.contains("آدرس سرور")
+    }
+
+    /** Rows that only appear together on the parent Network hub page. */
+    private fun hasNetworkHubSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("airplane mode") ||
+            combinedLower.contains("wi-fi") ||
+            combinedLower.contains("hotspot") ||
+            combinedLower.contains("حالت هواپیما") ||
+            combinedLower.contains("هات‌اسپات")
+    }
+
+    private fun hasAlwaysOnVpnSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("always-on vpn") ||
+            combinedLower.contains("always on vpn")
+    }
+
+    /**
      * VPN-setup signals (#42): the profile editor / add flow in Settings
      * ("Edit VPN profile", "Add VPN", "Always-on VPN"…) and the system
      * consent dialog an app raises to request a VPN connection ("…wants
      * to set up a VPN connection…"). The bare VPN list page is
-     * deliberately NOT a signal — its wording is indistinguishable from
-     * the "VPN" row on the Network settings page, and the tap-through
-     * lands on the editor/consent surfaces covered here.
+     * deliberately NOT a signal here — #51 (batch 4) covers the section
+     * pages separately with instant ejection ([isVpnSettingsSectionPage]).
      */
     private fun hasVpnConfigSignal(combinedLower: String): Boolean {
         return combinedLower.contains("add vpn") ||

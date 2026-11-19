@@ -106,6 +106,23 @@ object TextContentScanner {
     }
 
     /**
+     * #51 (batch 4): is the current Settings window the VPN section
+     * (list page / per-profile page)? The phrase logic lives in the
+     * pure [TamperAttemptClassifier.isVpnSettingsSectionPage]; this
+     * wrapper only extracts the window's texts, like [findTamperAttempt].
+     */
+    fun isVpnSettingsSectionPage(
+        root: AccessibilityNodeInfo?,
+        currentPackage: String
+    ): Boolean {
+        if (root == null) return false
+        return TamperAttemptClassifier.isVpnSettingsSectionPage(
+            screenTexts = extractScreenText(root),
+            currentPackage = currentPackage
+        )
+    }
+
+    /**
      * Checks if the current screen in `currentPackage` matches any enabled `SectionBlockRule`.
      */
     fun findMatchingSectionRule(

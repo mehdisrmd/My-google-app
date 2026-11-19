@@ -9,7 +9,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -45,6 +49,7 @@ import com.example.util.AppPackageResolver
 import com.example.util.BlockEscalationPolicy
 import com.example.util.DataCapEnforcer
 import com.example.util.TransportStateReader
+import com.example.util.VpnKnockdownPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -202,6 +207,41 @@ class ShieldAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastAppLimitWarningLaunchMs = 0L
 
+    // #51 (batch 4): foreign-VPN knockdown state (in-memory only — a
+    // service restart simply re-detects). lastVpnKnockMs throttles the
+    // knocks; vpnKnockStartedMs marks our own momentary TUN session so
+    // its capability changes are never mistaken for a foreign VPN.
+    @Volatile
+    private var lastVpnKnockMs = 0L
+
+    @Volatile
+    private var vpnKnockStartedMs = 0L
+
+    /** #51: the Settings VPN section ejection logs once per entry episode. */
+    @Volatile
+    private var vpnSectionEjectLogged = false
+
+    private val connectivityManager: ConnectivityManager? by lazy {
+        getSystemService(ConnectivityManager::class.java)
+    }
+
+    /**
+     * #51: immediacy for the knockdown — the moment any network gains
+     * the VPN transport (a VPN app connecting makes its network the
+     * default), re-evaluate. Our own knock also fires this; the policy
+     * guard + cooldown in [maybeKnockForeignVpn] keep it from looping.
+     */
+    private val vpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(
+            network: Network,
+            capabilities: NetworkCapabilities
+        ) {
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                maybeKnockForeignVpn()
+            }
+        }
+    }
+
 
     // Guards "is a lock running? -> start one" so the ticker thread and the
     // event thread can never both start a lock (which used to restart the
@@ -335,6 +375,14 @@ class ShieldAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Could not register USER_PRESENT receiver", e)
         }
 
+        // #51 (batch 4): watch for foreign VPNs connecting. The 1-second
+        // ticker re-checks as a backstop if registration is unavailable.
+        try {
+            connectivityManager?.registerDefaultNetworkCallback(vpnNetworkCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not register VPN network callback", e)
+        }
+
         // Keep active rules cached in memory for zero-latency scanning
         launchSafely("keywords") {
             repository.allKeywords.collect { list ->
@@ -453,6 +501,19 @@ class ShieldAccessibilityService : AccessibilityService() {
                         }
                         continue
                     }
+
+                    // #51 (batch 4, ticker path): the Settings VPN
+                    //     section ejects instantly while the Block VPN
+                    //     toggle is on (before the tamper scan below can
+                    //     turn the same page into a full lockdown), and
+                    //     the foreign-VPN knockdown re-checks as the
+                    //     NetworkCallback's backstop. Both follow the
+                    //     VPN toggle only, independent of master
+                    //     protection — like the tamper guards below.
+                    if (checkVpnSettingsSection(rootNode, activePkg)) {
+                        continue
+                    }
+                    maybeKnockForeignVpn()
 
                     // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
@@ -783,6 +844,14 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
         if (dataCapWarningTransports().isNotEmpty() && !isDataCapFreeForeground(activeWindowPkg)) {
             launchDataCapWarning()
+        }
+
+        // #51 (batch 4, event path): entering the Settings VPN section
+        //    ejects instantly while the Block VPN toggle is on — checked
+        //    BEFORE the tamper scan below, which would otherwise turn
+        //    the same page into a full lockdown.
+        if (checkVpnSettingsSection(rootNode, pkgName)) {
+            return
         }
 
         // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
@@ -1825,6 +1894,95 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
+    // ------------------------------------------------------------------
+    // #51 (batch 4): VPN enforcement beyond #42's setup block —
+    // (a) a foreign VPN already running is knocked down by our own
+    // momentary VpnService; (c) the Settings VPN section ejects
+    // instantly so its Always-on controls stay unreachable.
+    // ------------------------------------------------------------------
+
+    /** True when the system's active network currently rides a VPN. */
+    private fun hasVpnTransportNow(): Boolean {
+        return try {
+            val cm = connectivityManager ?: return false
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * (a) Knock a foreign VPN down: start [ShieldVpnService], whose
+     * momentary TUN makes Android disconnect the other VPN (only one
+     * VPN may be active), then tears itself down. Called from the
+     * NetworkCallback (fast path) and every ticker tick (backstop).
+     * Silent no-ops: toggle off, our own knock still settling, no
+     * consent for our VPN (asked when the toggle is first enabled —
+     * a later system revoke lands here too), cooldown still running.
+     */
+    private fun maybeKnockForeignVpn() {
+        try {
+            if (!preferences.getIsVpnConfigBlockEnabled()) return
+            if (VpnService.prepare(this) != null) return
+            val now = System.currentTimeMillis()
+            val ownActive = VpnKnockdownPolicy.isOwnSessionActive(now, vpnKnockStartedMs)
+            if (!VpnKnockdownPolicy.isForeignVpn(hasVpnTransportNow(), ownActive)) return
+            if (!VpnKnockdownPolicy.shouldKnock(now, lastVpnKnockMs)) return
+            startService(Intent(this, ShieldVpnService::class.java))
+            vpnKnockStartedMs = now
+            lastVpnKnockMs = now
+            recordIncidentNow(
+                triggerWord = "Foreign VPN Disconnected",
+                sourceApp = "VPN Guard",
+                durationMinutes = 0,
+                screenshotPath = null,
+                blockReason = BlockLogPolicy.reasonFor("Foreign VPN Disconnected"),
+                blockedUrl = null
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Foreign VPN knock failed", e)
+        }
+    }
+
+    /**
+     * (c) If the foreground Settings window is the VPN section, press
+     * BACK out of it at once — no lockdown, no waiting: the section
+     * itself is off-limits while the Block VPN toggle is on, so the
+     * Always-on VPN controls can never be reached. Returns true when
+     * an ejection fired (callers then stop processing this window).
+     * Logs once per entry episode; the episode resets when the
+     * foreground is no longer a matching Settings page.
+     */
+    private fun checkVpnSettingsSection(
+        rootNode: AccessibilityNodeInfo?,
+        pkg: String
+    ): Boolean {
+        if (!preferences.getIsVpnConfigBlockEnabled()) return false
+        if (rootNode == null || pkg.isBlank() || !isSettingsHostPackage(pkg)) {
+            vpnSectionEjectLogged = false
+            return false
+        }
+        if (!TextContentScanner.isVpnSettingsSectionPage(rootNode, pkg)) {
+            vpnSectionEjectLogged = false
+            return false
+        }
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        if (!vpnSectionEjectLogged) {
+            vpnSectionEjectLogged = true
+            recordIncidentNow(
+                triggerWord = "VPN Settings Page Blocked",
+                sourceApp = "System Settings",
+                durationMinutes = 0,
+                screenshotPath = null,
+                blockReason = BlockLogPolicy.reasonFor("VPN Settings Page Blocked"),
+                blockedUrl = null
+            )
+        }
+        return true
+    }
+
     /** Incident-log wording per tamper action (#6, VPN by #42, force stop by #45). */
     private fun tamperTriggerWord(action: TamperAttemptClassifier.TamperAction): String {
         return when (action) {
@@ -1977,6 +2135,11 @@ class ShieldAccessibilityService : AccessibilityService() {
             unregisterReceiver(userPresentReceiver)
         } catch (_: Exception) {
             // Never registered (registration failed in onCreate) — fine.
+        }
+        try {
+            connectivityManager?.unregisterNetworkCallback(vpnNetworkCallback)
+        } catch (_: Exception) {
+            // Never registered — fine.
         }
         // Drop any queued block-screen relaunches along with the coroutines.
         mainHandler.removeCallbacksAndMessages(null)

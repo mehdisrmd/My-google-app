@@ -145,6 +145,23 @@
         </service>
 
         <!--
+            Foreign-VPN knockdown (#51, batch 4): a momentary VpnService
+            whose TUN exists only long enough for Android to disconnect
+            the other (foreign) VPN — it adds no routes and tears itself
+            down in the same call. Needs the one-time system VPN consent,
+            requested from the dashboard when the Block VPN toggle is
+            first turned on.
+        -->
+        <service
+            android:name=".service.ShieldVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!--
             The 9:00 AM streak alarm lives only in AlarmManager, which forgets it on
             reboot, app update, and (for the 9:00 wall-clock time) time-zone or clock
             changes. All of these are protected system broadcasts, so an unexported
