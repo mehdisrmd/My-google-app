@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class ShieldPreferences(private val context: Context) {
@@ -36,6 +37,18 @@ class ShieldPreferences(private val context: Context) {
     init {
         val now = System.currentTimeMillis()
         val todayEpochDay = TimeUnit.MILLISECONDS.toDays(now)
+
+        // #28 (batch 2): before anything else, if no language has ever
+        // been stored, take the app language from the phone's system
+        // locale — a Persian phone starts in Persian, an English phone in
+        // English, and any other locale keeps the previous built-in
+        // default (Persian). Once a value exists (written here, by the
+        // first-run wipe below, or by the user's own language toggle) the
+        // system locale is never consulted again.
+        if (!prefs.contains(KEY_IS_PERSIAN_LANGUAGE)) {
+            val persianByLocale = Locale.getDefault().language != "en"
+            prefs.edit().putBoolean(KEY_IS_PERSIAN_LANGUAGE, persianByLocale).apply()
+        }
 
         if (!prefs.getBoolean(KEY_FRESH_SCRATCH_V4_INIT, false)) {
             val defaultPledge =
@@ -182,6 +195,13 @@ class ShieldPreferences(private val context: Context) {
     private val _adultBlocklistDomainCount = MutableStateFlow(getAdultBlocklistDomainCount())
     val adultBlocklistDomainCount: StateFlow<Int> = _adultBlocklistDomainCount.asStateFlow()
 
+    // #29 (batch 2): true when the user skipped the first-launch list
+    // download (or continued with the starter seed) — the list then
+    // counts as NOT updated and the app stays not-fully-activated until
+    // a real download succeeds.
+    private val _blocklistUpdatePending = MutableStateFlow(isBlocklistUpdatePending())
+    val blocklistUpdatePending: StateFlow<Boolean> = _blocklistUpdatePending.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -235,9 +255,15 @@ class ShieldPreferences(private val context: Context) {
     private val _githubRepoSlug = MutableStateFlow(getGithubRepoSlug())
     val githubRepoSlug: StateFlow<String> = _githubRepoSlug.asStateFlow()
 
-    // Uninstall Guard: persisted wall-clock deadline of the 5-hour wait
+    // Uninstall Guard: persisted wall-clock deadline of the uninstall wait
     private val _uninstallUnlockDeadline = MutableStateFlow(getUninstallUnlockDeadline())
     val uninstallUnlockDeadline: StateFlow<Long> = _uninstallUnlockDeadline.asStateFlow()
+
+    // #41 (batch 2): the uninstall-wait length the user picked during
+    // first setup (effective value — falls back to UninstallGuard's
+    // default when nothing was ever stored).
+    private val _uninstallWaitMinutes = MutableStateFlow(getUninstallWaitMinutes())
+    val uninstallWaitMinutes: StateFlow<Int> = _uninstallWaitMinutes.asStateFlow()
 
     // Seasonal Theme palette selection (stored as the enum name)
     private val _seasonalThemeName = MutableStateFlow(getSeasonalTheme().name)
@@ -519,7 +545,8 @@ class ShieldPreferences(private val context: Context) {
         _isPreventUninstallEnabled.value = enabled
     }
 
-    // Uninstall Guard — 5-hour wait before protection may be turned off.
+    // Uninstall Guard — a user-chosen wait (#41, default per
+    // UninstallGuard.WAIT_MILLIS) before protection may be turned off.
     // The deadline is a persisted wall-clock timestamp, so the countdown
     // keeps running across reboots with no receiver or service needed.
     fun getUninstallUnlockDeadline(): Long {
@@ -527,7 +554,27 @@ class ShieldPreferences(private val context: Context) {
     }
 
     /**
-     * Starts the 5-hour uninstall wait and returns the deadline. If a wait is
+     * The uninstall-wait length in minutes: the value picked during
+     * first setup (#41), or [UninstallGuard.WAIT_MILLIS] when the user
+     * never picked one (installs from before the choice existed).
+     */
+    fun getUninstallWaitMinutes(): Int {
+        val stored = prefs.getInt(KEY_UNINSTALL_WAIT_MINUTES, -1)
+        return if (stored > 0) stored else (UninstallGuard.WAIT_MILLIS / 60_000L).toInt()
+    }
+
+    fun getUninstallWaitMillis(): Long {
+        return TimeUnit.MINUTES.toMillis(getUninstallWaitMinutes().toLong())
+    }
+
+    fun setUninstallWaitMinutes(minutes: Int) {
+        val safeMinutes = minutes.coerceIn(1, 24 * 60)
+        prefs.edit().putInt(KEY_UNINSTALL_WAIT_MINUTES, safeMinutes).apply()
+        _uninstallWaitMinutes.value = safeMinutes
+    }
+
+    /**
+     * Starts the uninstall wait and returns the deadline. If a wait is
      * already running, the original deadline is kept (tapping again never
      * extends or restarts the countdown).
      */
@@ -536,7 +583,7 @@ class ShieldPreferences(private val context: Context) {
         if (UninstallGuard.isRequested(existing) && !UninstallGuard.isUnlocked(existing, nowMs)) {
             return existing
         }
-        val deadline = UninstallGuard.deadlineForRequest(nowMs)
+        val deadline = UninstallGuard.deadlineForRequest(nowMs, getUninstallWaitMillis())
         prefs.edit().putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, deadline).apply()
         _uninstallUnlockDeadline.value = deadline
         return deadline
@@ -652,6 +699,20 @@ class ShieldPreferences(private val context: Context) {
     fun setAdultBlocklistDomainCount(domainCount: Int) {
         prefs.edit().putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount).apply()
         _adultBlocklistDomainCount.value = domainCount
+    }
+
+    // #29 (batch 2): the first-launch download was skipped (or replaced
+    // by the starter seed), so the list counts as not updated and the app
+    // must not fully activate until a real download succeeds. Any
+    // successful update (first-launch, manual, or the weekly worker)
+    // clears this flag inside the updater.
+    fun isBlocklistUpdatePending(): Boolean {
+        return prefs.getBoolean(KEY_BLOCKLIST_UPDATE_PENDING, false)
+    }
+
+    fun setBlocklistUpdatePending(pending: Boolean) {
+        prefs.edit().putBoolean(KEY_BLOCKLIST_UPDATE_PENDING, pending).apply()
+        _blocklistUpdatePending.value = pending
     }
 
     /**
@@ -1561,6 +1622,8 @@ class ShieldPreferences(private val context: Context) {
         _isPersianLanguage.value = preservedPersian
         _seasonalThemeName.value = preservedSeasonalTheme.name
         _uninstallUnlockDeadline.value = 0L
+        _uninstallWaitMinutes.value = getUninstallWaitMinutes()
+        _blocklistUpdatePending.value = false
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
@@ -1591,6 +1654,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ADULT_BLOCK_ENABLED = "key_adult_block_enabled"
         private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
         private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
+        private const val KEY_BLOCKLIST_UPDATE_PENDING = "key_blocklist_update_pending"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"
@@ -1632,6 +1696,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_IS_PERSIAN_LANGUAGE = "key_is_persian_language"
         private const val KEY_SEASONAL_THEME = "key_seasonal_theme"
         private const val KEY_UNINSTALL_UNLOCK_DEADLINE = "key_uninstall_unlock_deadline"
+        private const val KEY_UNINSTALL_WAIT_MINUTES = "key_uninstall_wait_minutes"
         private const val KEY_ACTIVE_LOCK_GRACE_AVAILABLE = "key_active_lock_grace_available"
         private const val KEY_GRACE_EPISODE_WORD = "key_grace_episode_word"
         private const val KEY_GRACE_EPISODE_OFFERED = "key_grace_episode_offered"

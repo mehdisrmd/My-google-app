@@ -91,6 +91,9 @@ class AdultBlocklistUpdater(
             lastUpdatedMs = System.currentTimeMillis(),
             domainCount = merged.size
         )
+        // #29 (batch 2): a real download succeeded — the first-launch
+        // skip state (if any) is over and the app may fully activate.
+        preferences.setBlocklistUpdatePending(false)
         return UpdateResult(
             success = true,
             domainCount = merged.size,

@@ -98,6 +98,7 @@ import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.info.AppInfo
 import com.example.ui.info.InfoAndUpdateScreen
+import com.example.ui.keywords.BlocklistActivationBlockedScreen
 import com.example.ui.keywords.BlocklistWaitScreen
 import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
@@ -394,6 +395,11 @@ fun MainContent(
         mutableStateOf(app.adultBlocklistStore.hasList())
     }
     var blocklistDownloadFailed by remember { mutableStateOf(false) }
+
+    // #29 (batch 2): the first-launch download was skipped (or replaced
+    // by the starter seed) — the list counts as not updated and the app
+    // stays not-fully-activated until a real download succeeds.
+    val blocklistUpdatePending by preferences.blocklistUpdatePending.collectAsStateWithLifecycle()
 
     fun startBlocklistDownload() {
         coroutineScope.launch {
@@ -891,8 +897,30 @@ fun MainContent(
                 onContinueWithSeed = {
                     coroutineScope.launch {
                         app.adultBlocklistUpdater.writeFallbackSeed()
+                        // #29: the starter seed is not a real update —
+                        // the app stays not-fully-activated.
+                        preferences.setBlocklistUpdatePending(true)
                         blocklistGatePassed = true
                     }
+                },
+                onSkip = {
+                    // #29: skipping defers activation until a real
+                    // download succeeds (the updater clears the flag).
+                    preferences.setBlocklistUpdatePending(true)
+                    blocklistGatePassed = true
+                }
+            )
+        }
+
+        // #29 (batch 2): after a skip, the main UI stays covered by the
+        // activation screen (PIN first — this sits under the wait screen
+        // but over the tabs) until a successful list update lands. Its
+        // button routes straight back into the update flow.
+        if (blocklistUpdatePending && !isPinSessionLocked && blocklistGatePassed) {
+            BlocklistActivationBlockedScreen(
+                onUpdateNow = {
+                    blocklistGatePassed = false
+                    startBlocklistDownload()
                 }
             )
         }

@@ -22,6 +22,14 @@ object UninstallGuard {
     /** Deadline created by a fresh uninstall request made at [nowMs]. */
     fun deadlineForRequest(nowMs: Long): Long = nowMs + WAIT_MILLIS
 
+    /**
+     * Deadline for a fresh request with a caller-chosen wait (#41: the
+     * length picked during first setup). A non-positive wait means the
+     * deadline is simply [nowMs] itself.
+     */
+    fun deadlineForRequest(nowMs: Long, waitMillis: Long): Long =
+        nowMs + waitMillis.coerceAtLeast(0L)
+
     /** True once an uninstall request has been recorded. */
     fun isRequested(deadlineMs: Long): Boolean = deadlineMs > 0L
 

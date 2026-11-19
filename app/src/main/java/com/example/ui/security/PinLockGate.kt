@@ -38,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,6 +80,7 @@ private enum class PinGateStep {
     SETUP_NEW_PIN,
     SETUP_CONFIRM_PIN,
     SETUP_QUESTION,
+    SETUP_UNINSTALL_WAIT,
     CATCHUP_QUESTION,
     FORGOT_QUESTION,
     FORGOT_NEW_PIN,
@@ -102,6 +104,10 @@ fun PinLockOverlay(
     var questionInput by remember { mutableStateOf("") }
     var answerInput by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
+
+    // #41 (batch 2): the uninstall-wait length chosen during first
+    // setup; 1 hour is the default (see #40).
+    var uninstallWaitMinutes by remember { mutableIntStateOf(60) }
 
     // Brute-force lockout countdown (deadline persisted in preferences).
     var lockoutUntil by remember { mutableStateOf(preferences.getPinLockoutUntilMs()) }
@@ -202,6 +208,7 @@ fun PinLockOverlay(
         PinGateStep.SETUP_CONFIRM_PIN, PinGateStep.FORGOT_CONFIRM_PIN ->
             tr("Repeat the PIN", "پین را دوباره وارد کنید")
         PinGateStep.SETUP_QUESTION -> tr("Security Question", "سؤال امنیتی")
+        PinGateStep.SETUP_UNINSTALL_WAIT -> tr("Uninstall Wait", "زمان انتظار حذف")
         PinGateStep.CATCHUP_QUESTION -> tr("Set a Security Question", "یک سؤال امنیتی تعیین کنید")
         PinGateStep.FORGOT_QUESTION -> tr("Forgot PIN", "فراموشی پین")
         PinGateStep.FORGOT_NEW_PIN -> tr("Choose a New PIN", "پین جدید انتخاب کنید")
@@ -222,6 +229,10 @@ fun PinLockOverlay(
         PinGateStep.SETUP_QUESTION -> tr(
             "If you ever forget your PIN, answering this question lets you set a new one.",
             "اگر پین را فراموش کردید، با جواب این سؤال می‌توانید پین جدید بگذارید."
+        )
+        PinGateStep.SETUP_UNINSTALL_WAIT -> tr(
+            "If you ever request an uninstall, protection can only be turned off after this wait. Choose how long it should be.",
+            "اگر روزی درخواست حذف بدهید، محافظ فقط بعد از این مدت انتظار خاموش می‌شود. انتخاب کنید چقدر باشد."
         )
         PinGateStep.CATCHUP_QUESTION -> tr(
             "Your PIN works, but you have no recovery question yet. Set one now so a forgotten PIN can be reset.",
@@ -316,7 +327,14 @@ fun PinLockOverlay(
                                     preferences.setSecurityQuestionAndAnswer(questionInput, answerInput)
                                 }
                                 if (ok) {
-                                    onUnlocked()
+                                    if (step == PinGateStep.SETUP_QUESTION) {
+                                        // #41 (batch 2): first setup also
+                                        // asks the uninstall-wait length
+                                        // before entering the app.
+                                        goTo(PinGateStep.SETUP_UNINSTALL_WAIT)
+                                    } else {
+                                        onUnlocked()
+                                    }
                                 } else {
                                     errorText = tr(
                                         "Write a question and an answer first.",
@@ -396,6 +414,55 @@ fun PinLockOverlay(
                             Text(
                                 tr("Back to PIN", "برگشت به پین"),
                                 color = ObsidianTextSecondary
+                            )
+                        }
+                    }
+
+                    PinGateStep.SETUP_UNINSTALL_WAIT -> {
+                        // #41 (batch 2): preset choices for the uninstall
+                        // wait; 1 hour is preselected (the #40 default).
+                        val waitPresets = listOf(15, 30, 60, 120, 300)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            waitPresets.forEach { presetMinutes ->
+                                val isSelected = uninstallWaitMinutes == presetMinutes
+                                OutlinedButton(
+                                    onClick = { uninstallWaitMinutes = presetMinutes },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) EmeraldShield else ObsidianBorder
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("pin_setup_wait_chip_$presetMinutes")
+                                ) {
+                                    Text(
+                                        text = uninstallWaitLabel(presetMinutes),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (isSelected) EmeraldShield else ObsidianTextSecondary,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                preferences.setUninstallWaitMinutes(uninstallWaitMinutes)
+                                onUnlocked()
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = EmeraldShield,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("pin_setup_wait_continue_button")
+                        ) {
+                            Text(
+                                tr("Save & Continue", "ذخیره و ادامه"),
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -492,6 +559,16 @@ fun PinLockOverlay(
             }
         }
     }
+}
+
+/** Bilingual label for one uninstall-wait preset (#41). */
+private fun uninstallWaitLabel(minutes: Int): String = when (minutes) {
+    15 -> tr("15 minutes", "۱۵ دقیقه")
+    30 -> tr("30 minutes", "۳۰ دقیقه")
+    60 -> tr("1 hour (default)", "۱ ساعت (پیش‌فرض)")
+    120 -> tr("2 hours", "۲ ساعت")
+    300 -> tr("5 hours", "۵ ساعت")
+    else -> tr("$minutes minutes", "$minutes دقیقه")
 }
 
 /** Masked "● ● ●" readout for the PIN pad (never shows the digits). */
