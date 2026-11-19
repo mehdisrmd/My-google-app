@@ -93,7 +93,7 @@ import com.example.ui.limits.AppLimitsAndSectionsScreen
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.panic.PanicModeDialog
 import com.example.ui.quiz.ScientificAddictionQuizDialog
-import com.example.ui.security.BiometricLockOverlay
+import com.example.ui.security.PinLockOverlay
 import com.example.ui.security.BlackoutPrivacyCurtain
 import com.example.ui.streak.NoBeepStreakScreen
 import androidx.compose.ui.graphics.Brush
@@ -304,7 +304,6 @@ fun MainContent(
     val lockDurationMinutes by preferences.lockDurationMinutes.collectAsStateWithLifecycle()
     val strictModeEnabled by preferences.strictModeEnabled.collectAsStateWithLifecycle()
 
-    val isBiometricLockEnabled by preferences.isBiometricLockEnabled.collectAsStateWithLifecycle()
     val isBlackoutPrivacyShieldEnabled by preferences.isBlackoutPrivacyShieldEnabled.collectAsStateWithLifecycle()
     val screenshotTempUnlockUntil by preferences.screenshotTemporaryUnlockUntil.collectAsStateWithLifecycle()
     val isSmartFocusEnabled by preferences.isSmartFocusEnabled.collectAsStateWithLifecycle()
@@ -312,8 +311,10 @@ fun MainContent(
     val isDarkTheme by preferences.isDarkTheme.collectAsStateWithLifecycle()
     val isPersianLanguage by preferences.isPersianLanguage.collectAsStateWithLifecycle()
 
-    var isBiometricSessionLocked by remember {
-        mutableStateOf(preferences.getIsBiometricLockEnabled())
+    // #7: the PIN gate is mandatory — every (re)created activity starts
+    // locked, and the overlay itself routes to setup when no PIN exists.
+    var isPinSessionLocked by remember {
+        mutableStateOf(true)
     }
     var isAppInBackgroundCurtain by remember { mutableStateOf(false) }
 
@@ -321,7 +322,7 @@ fun MainContent(
         onSyncWindowSecureFlag()
     }
 
-    DisposableEffect(lifecycleOwner, isBiometricLockEnabled, isBlackoutPrivacyShieldEnabled) {
+    DisposableEffect(lifecycleOwner, isBlackoutPrivacyShieldEnabled) {
         if (!isBlackoutPrivacyShieldEnabled) {
             isAppInBackgroundCurtain = false
         }
@@ -627,7 +628,6 @@ fun MainContent(
                         sectionRules = sectionRules,
                         focusSlots = focusSlots,
                         isSmartFocusEnabled = isSmartFocusEnabled,
-                        isBiometricLockEnabled = isBiometricLockEnabled,
                         isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
                         preferences = preferences,
                         usageRefreshTrigger = usageRefreshTrigger,
@@ -657,14 +657,8 @@ fun MainContent(
                             }
                             onTriggerLockdown("Smart Focus: $title (${durationMins}m)", durationMins)
                         },
-                        onToggleBiometricLock = { enabled ->
-                            preferences.setBiometricLockEnabled(enabled)
-                            if (!enabled) {
-                                isBiometricSessionLocked = false
-                            }
-                        },
                         onLockAppNow = {
-                            isBiometricSessionLocked = true
+                            isPinSessionLocked = true
                         },
                         onToggleBlackoutShield = { enabled ->
                             preferences.setBlackoutPrivacyShieldEnabled(enabled)
@@ -829,11 +823,11 @@ fun MainContent(
             }
         }
 
-        // Biometric Lodge Security Gate Overlay
-        if (isBiometricSessionLocked) {
-            BiometricLockOverlay(
+        // PIN Security Gate Overlay (#7: PIN-only, mandatory)
+        if (isPinSessionLocked) {
+            PinLockOverlay(
                 preferences = preferences,
-                onUnlocked = { isBiometricSessionLocked = false }
+                onUnlocked = { isPinSessionLocked = false }
             )
         }
 

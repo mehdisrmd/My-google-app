@@ -123,7 +123,7 @@ import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
 import com.example.ui.i18n.AppStrings.tr
-import com.example.ui.security.BiometricAndPrivacyDashboardSection
+import com.example.ui.security.PinAndPrivacyDashboardSection
 import com.example.ui.streak.NoBeepYoutubeResetStreakDialog
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonDark
@@ -159,7 +159,6 @@ fun DashboardScreen(
     sectionRules: List<SectionBlockRule> = emptyList(),
     focusSlots: List<FocusScheduleSlot> = emptyList(),
     isSmartFocusEnabled: Boolean = true,
-    isBiometricLockEnabled: Boolean = false,
     isBlackoutPrivacyShieldEnabled: Boolean = false,
     preferences: ShieldPreferences? = null,
     usageRefreshTrigger: Long = 0L,
@@ -172,7 +171,6 @@ fun DashboardScreen(
     onToggleFocusSlot: (FocusScheduleSlot) -> Unit = {},
     onAddFocusSlot: (FocusScheduleSlot) -> Unit = {},
     onStartFocusSessionNow: (title: String, durationMinutes: Int) -> Unit = { _, _ -> },
-    onToggleBiometricLock: (Boolean) -> Unit = {},
     onLockAppNow: () -> Unit = {},
     onToggleBlackoutShield: (Boolean) -> Unit = {},
     onOpenTestSandbox: () -> Unit = {},
@@ -1078,16 +1076,16 @@ fun DashboardScreen(
             )
         }
 
-        // DROPDOWN 4: Privacy Shield, Biometrics & System Permissions
+        // DROPDOWN 4: Privacy Shield, PIN Lock & System Permissions
         val allPermsReady = allPermissionsGranted
         M3CollapsibleDropdownSection(
             title = tr(
-                "Privacy Shield, Biometrics & System Setup",
-                "حریم خصوصی، قفل بیومتریک و دسترسی‌های سیستم"
+                "Privacy Shield, PIN Lock & System Setup",
+                "حریم خصوصی، قفل پین و دسترسی‌های سیستم"
             ),
             subtitle = tr(
-                "Screenshot blocker, PIN/Biometric lock, Accessibility & Notification Bar",
-                "مسدودساز اسکرین‌شات، قفل اثرانگشت، دسترسی‌پذیری و نوار اعلان"
+                "Screenshot blocker, PIN lock, Accessibility & Notification Bar",
+                "مسدودساز اسکرین‌شات، قفل پین، دسترسی‌پذیری و نوار اعلان"
             ),
             badgeText = if (allPermsReady) tr("All Ready", "تکمیل") else tr("Setup", "نیاز به تنظیم"),
             icon = Icons.Default.Security,
@@ -1097,11 +1095,9 @@ fun DashboardScreen(
             testTag = "dropdown_security_and_permissions"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                BiometricAndPrivacyDashboardSection(
+                PinAndPrivacyDashboardSection(
                     preferences = effectivePrefs,
-                    isBiometricLockEnabled = isBiometricLockEnabled,
                     isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
-                    onToggleBiometricLock = onToggleBiometricLock,
                     onLockAppNow = onLockAppNow,
                     onToggleBlackoutShield = onToggleBlackoutShield
                 )

@@ -19,6 +19,7 @@ import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
 import com.example.ui.theme.SeasonalTheme
 import com.example.util.DayMath
+import com.example.util.PinSecurity
 import com.example.widget.StreakWidgetProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,8 +71,6 @@ class ShieldPreferences(private val context: Context) {
                 .putString(KEY_LAST_SLIP_REASON, "")
                 .putInt(KEY_URGES_DEFEATED_COUNT, 0)
                 .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
-                .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-                .putString(KEY_SECURITY_PIN_CODE, "0000")
                 .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
                 .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
                 .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
@@ -112,7 +111,6 @@ class ShieldPreferences(private val context: Context) {
                 editor.putBoolean(KEY_STRICT_MODE_ENABLED, false)
                 editor.putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
                 editor.putBoolean(KEY_SMART_FOCUS_ENABLED, false)
-                editor.putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
                 editor.putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
                 needsApply = true
             }
@@ -120,6 +118,37 @@ class ShieldPreferences(private val context: Context) {
                 editor.apply()
             }
         }
+
+        migrateLegacyPinToHash()
+    }
+
+    /**
+     * One-time migration for #7: older versions stored the gate PIN as
+     * PLAINTEXT under KEY_SECURITY_PIN_CODE, with "0000" as the default.
+     * A real user-chosen PIN is hashed in place (fresh salt) so the user
+     * keeps their code; the plaintext copy is then deleted. The legacy
+     * DEFAULT "0000" is NOT migrated — a default code must never become a
+     * valid PIN, so those installs simply have no PIN set and are routed
+     * into the mandatory setup flow.
+     */
+    private fun migrateLegacyPinToHash() {
+        if (prefs.getBoolean(KEY_PIN_V2_MIGRATED, false)) return
+        val editor = prefs.edit()
+        val legacy = prefs.getString(KEY_SECURITY_PIN_CODE, null)
+            ?.filter { it.isDigit() }
+            ?.take(PinSecurity.MAX_PIN_LENGTH)
+        if (legacy != null &&
+            legacy != LEGACY_DEFAULT_PIN &&
+            PinSecurity.isValidPin(legacy) &&
+            !prefs.contains(KEY_PIN_HASH_V2)
+        ) {
+            val salt = PinSecurity.generateSalt()
+            editor.putString(KEY_PIN_SALT_V2, salt)
+            editor.putString(KEY_PIN_HASH_V2, PinSecurity.hashPin(legacy, salt))
+        }
+        editor.remove(KEY_SECURITY_PIN_CODE)
+        editor.putBoolean(KEY_PIN_V2_MIGRATED, true)
+        editor.apply()
     }
 
     private val _isProtectionEnabled = MutableStateFlow(getIsProtectionEnabled())
@@ -159,13 +188,12 @@ class ShieldPreferences(private val context: Context) {
     private val _usageRefreshTrigger = MutableStateFlow(0L)
     val usageRefreshTrigger: StateFlow<Long> = _usageRefreshTrigger.asStateFlow()
 
-    // Biometric Lodge / Security Lock State
-    private val _isBiometricLockEnabled = MutableStateFlow(getIsBiometricLockEnabled())
-    val isBiometricLockEnabled: StateFlow<Boolean> = _isBiometricLockEnabled.asStateFlow()
+    // PIN Gate State (#7: mandatory PIN, hash-only storage)
+    private val _isPinSet = MutableStateFlow(isPinSet())
+    val isPinSetFlow: StateFlow<Boolean> = _isPinSet.asStateFlow()
 
-
-    private val _securityPinCode = MutableStateFlow(getSecurityPinCode())
-    val securityPinCode: StateFlow<String> = _securityPinCode.asStateFlow()
+    private val _securityQuestion = MutableStateFlow(getSecurityQuestion())
+    val securityQuestionFlow: StateFlow<String> = _securityQuestion.asStateFlow()
 
     // Anti-Agent Blackout Screen Shield (FLAG_SECURE)
     private val _isBlackoutPrivacyShieldEnabled = MutableStateFlow(getIsBlackoutPrivacyShieldEnabled())
@@ -290,8 +318,10 @@ class ShieldPreferences(private val context: Context) {
             put("lastSlipReason", getLastSlipReason())
             put("urgesDefeatedCount", getUrgesDefeatedCount())
             put("personalPledge", getPersonalPledge())
-            put("isBiometricLockEnabled", getIsBiometricLockEnabled())
-            put("securityPinCode", getSecurityPinCode())
+            // The gate PIN and the security-question answer are device-local
+            // secrets (#7): they are NEVER exported into a backup, and old
+            // backups carrying a plaintext "securityPinCode" field have that
+            // field ignored on import, so a backup can never restore a bypass.
             put("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
             put("isSmartFocusEnabled", getIsSmartFocusEnabled())
 
@@ -333,8 +363,9 @@ class ShieldPreferences(private val context: Context) {
         val slipReason = json.optString("lastSlipReason", getLastSlipReason())
         val urges = json.optInt("urgesDefeatedCount", getUrgesDefeatedCount()).coerceAtLeast(0)
         val pledge = json.optString("personalPledge", getPersonalPledge())
-        val bio = json.optBoolean("isBiometricLockEnabled", getIsBiometricLockEnabled())
-        val pin = json.optString("securityPinCode", getSecurityPinCode()).filter { it.isDigit() }.take(6).ifEmpty { "0000" }
+        // Note: any "securityPinCode" / "isBiometricLockEnabled" fields in
+        // old backups are deliberately ignored — the PIN gate is mandatory
+        // and its credentials never travel through backups (#7).
         val blackout = json.optBoolean("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
         val focus = json.optBoolean("isSmartFocusEnabled", getIsSmartFocusEnabled())
         val dark = json.optBoolean("isDarkTheme", getIsDarkTheme())
@@ -362,8 +393,6 @@ class ShieldPreferences(private val context: Context) {
             .putInt(KEY_URGES_DEFEATED_COUNT, urges)
 
             .putString(KEY_PERSONAL_PLEDGE, pledge)
-            .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, bio)
-            .putString(KEY_SECURITY_PIN_CODE, pin)
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, blackout)
             .putBoolean(KEY_SMART_FOCUS_ENABLED, focus)
             .putBoolean(KEY_IS_DARK_THEME, dark)
@@ -387,8 +416,6 @@ class ShieldPreferences(private val context: Context) {
         _lastSlipReason.value = slipReason
         _urgesDefeatedCount.value = urges
         _personalPledge.value = pledge
-        _isBiometricLockEnabled.value = bio
-        _securityPinCode.value = pin
         _isBlackoutPrivacyShieldEnabled.value = blackout
         _isSmartFocusEnabled.value = focus
         _isDarkTheme.value = dark
@@ -694,28 +721,129 @@ class ShieldPreferences(private val context: Context) {
         return nowMs < whitelistUntil
     }
 
-    // Biometric Lodge Methods
-    fun getIsBiometricLockEnabled(): Boolean {
-        return prefs.getBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-    }
+    // ---- PIN Gate (#7: mandatory PIN, salted-hash storage only) ----
 
-    fun setBiometricLockEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, enabled).apply()
-        _isBiometricLockEnabled.value = enabled
-    }
+    /** True once a PIN exists. An unset PIN means "setup required". */
+    fun isPinSet(): Boolean =
+        !PinSecurity.requiresPinSetup(prefs.getString(KEY_PIN_HASH_V2, null))
 
-    fun getSecurityPinCode(): String {
-        return prefs.getString(KEY_SECURITY_PIN_CODE, "0000") ?: "0000"
-    }
+    /** True once a security question AND its (hashed) answer are stored. */
+    fun hasSecurityQuestion(): Boolean =
+        !prefs.getString(KEY_SECURITY_QUESTION, null).isNullOrBlank() &&
+            !prefs.getString(KEY_SECURITY_ANSWER_HASH, null).isNullOrBlank()
 
-    fun setSecurityPinCode(pin: String) {
-        val clean = pin.filter { it.isDigit() }.take(6).ifEmpty { "0000" }
-        prefs.edit().putString(KEY_SECURITY_PIN_CODE, clean).apply()
-        _securityPinCode.value = clean
-    }
+    fun getSecurityQuestion(): String =
+        prefs.getString(KEY_SECURITY_QUESTION, "") ?: ""
 
+    /** Constant-time verification of an entered PIN against the stored hash. */
     fun verifySecurityPin(inputPin: String): Boolean {
-        return inputPin.trim() == getSecurityPinCode()
+        val storedHash = prefs.getString(KEY_PIN_HASH_V2, null) ?: return false
+        val salt = prefs.getString(KEY_PIN_SALT_V2, null) ?: return false
+        return PinSecurity.hashesEqual(
+            PinSecurity.hashPin(inputPin.trim(), salt),
+            storedHash
+        )
+    }
+
+    /**
+     * First-run setup: stores the new PIN (hashed) together with the
+     * security question and its (normalized, hashed) answer.
+     */
+    fun completePinSetup(pin: String, question: String, answer: String): Boolean {
+        if (!PinSecurity.isValidPin(pin)) return false
+        if (question.isBlank() || PinSecurity.normalizeSecurityAnswer(answer).isEmpty()) return false
+        storePinHash(pin)
+        storeSecurityQuestion(question, answer)
+        clearPinFailures()
+        _isPinSet.value = true
+        return true
+    }
+
+    /** Settings flow: change the PIN after proving the current one. */
+    fun changeSecurityPin(currentPin: String, newPin: String): Boolean {
+        if (!verifySecurityPin(currentPin)) return false
+        if (!PinSecurity.isValidPin(newPin)) return false
+        storePinHash(newPin)
+        clearPinFailures()
+        return true
+    }
+
+    /**
+     * Stores/replaces the security question + answer. Callers are
+     * responsible for authorization: the setup flow, the post-unlock
+     * catch-up for migrated installs, or the PIN-verified settings flow.
+     */
+    fun setSecurityQuestionAndAnswer(question: String, answer: String): Boolean {
+        if (question.isBlank() || PinSecurity.normalizeSecurityAnswer(answer).isEmpty()) return false
+        storeSecurityQuestion(question, answer)
+        return true
+    }
+
+    /** Verifies a recovery answer (normalization-insensitive compare). */
+    fun verifySecurityAnswer(inputAnswer: String): Boolean {
+        val storedHash = prefs.getString(KEY_SECURITY_ANSWER_HASH, null) ?: return false
+        val salt = prefs.getString(KEY_SECURITY_ANSWER_SALT, null) ?: return false
+        return PinSecurity.hashesEqual(
+            PinSecurity.hashSecurityAnswer(inputAnswer, salt),
+            storedHash
+        )
+    }
+
+    /** "Forgot PIN" flow: a correct security answer authorizes a new PIN. */
+    fun resetPinWithSecurityAnswer(answer: String, newPin: String): Boolean {
+        if (!PinSecurity.isValidPin(newPin)) return false
+        if (!verifySecurityAnswer(answer)) return false
+        storePinHash(newPin)
+        clearPinFailures()
+        _isPinSet.value = true
+        return true
+    }
+
+    private fun storePinHash(pin: String) {
+        val salt = PinSecurity.generateSalt()
+        prefs.edit()
+            .putString(KEY_PIN_SALT_V2, salt)
+            .putString(KEY_PIN_HASH_V2, PinSecurity.hashPin(pin, salt))
+            .apply()
+    }
+
+    private fun storeSecurityQuestion(question: String, answer: String) {
+        val salt = PinSecurity.generateSalt()
+        val cleanQuestion = question.trim()
+        prefs.edit()
+            .putString(KEY_SECURITY_QUESTION, cleanQuestion)
+            .putString(KEY_SECURITY_ANSWER_SALT, salt)
+            .putString(KEY_SECURITY_ANSWER_HASH, PinSecurity.hashSecurityAnswer(answer, salt))
+            .apply()
+        _securityQuestion.value = cleanQuestion
+    }
+
+    // ---- PIN brute-force backoff ----
+
+    fun getPinLockoutUntilMs(): Long =
+        prefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+
+    /**
+     * Records one wrong PIN entry and returns the lockout deadline
+     * (epoch ms) now in force — 0 when the failure count is still below
+     * the backoff threshold.
+     */
+    fun recordFailedPinAttempt(nowMs: Long = System.currentTimeMillis()): Long {
+        val failures = prefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+        val backoff = PinSecurity.backoffMillis(failures)
+        val until = if (backoff > 0L) nowMs + backoff else 0L
+        prefs.edit()
+            .putInt(KEY_PIN_FAILED_ATTEMPTS, failures)
+            .putLong(KEY_PIN_LOCKOUT_UNTIL, until)
+            .apply()
+        return until
+    }
+
+    fun clearPinFailures() {
+        prefs.edit()
+            .putInt(KEY_PIN_FAILED_ATTEMPTS, 0)
+            .putLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+            .apply()
     }
 
     // Anti-Agent Blackout Shield (FLAG_SECURE)
@@ -1270,8 +1398,6 @@ class ShieldPreferences(private val context: Context) {
             .putString(KEY_LAST_SLIP_REASON, "")
             .putInt(KEY_URGES_DEFEATED_COUNT, 0)
             .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
-            .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-            .putString(KEY_SECURITY_PIN_CODE, "0000")
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
             .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
             .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
@@ -1298,8 +1424,8 @@ class ShieldPreferences(private val context: Context) {
         _lastSlipReason.value = ""
         _urgesDefeatedCount.value = 0
         _personalPledge.value = defaultPledge
-        _isBiometricLockEnabled.value = false
-        _securityPinCode.value = "0000"
+        _isPinSet.value = false
+        _securityQuestion.value = ""
         _isBlackoutPrivacyShieldEnabled.value = false
         _screenshotTemporaryUnlockUntil.value = 0L
         _isSmartFocusEnabled.value = false
@@ -1348,8 +1474,21 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_LAST_SLIP_REASON = "key_last_slip_reason"
         private const val KEY_URGES_DEFEATED_COUNT = "key_urges_defeated_count"
         private const val KEY_PERSONAL_PLEDGE = "key_personal_pledge"
-        private const val KEY_BIOMETRIC_LOCK_ENABLED = "key_biometric_lock_enabled"
+
+        // Legacy plaintext PIN key — read ONLY by the one-time hash
+        // migration above, then removed. Never write to it again.
         private const val KEY_SECURITY_PIN_CODE = "key_security_pin_code"
+        private const val LEGACY_DEFAULT_PIN = "0000"
+
+        // PIN gate v2 (#7): salted hashes only, never the PIN itself.
+        private const val KEY_PIN_HASH_V2 = "key_pin_hash_v2"
+        private const val KEY_PIN_SALT_V2 = "key_pin_salt_v2"
+        private const val KEY_PIN_V2_MIGRATED = "key_pin_v2_migrated"
+        private const val KEY_SECURITY_QUESTION = "key_security_question"
+        private const val KEY_SECURITY_ANSWER_HASH = "key_security_answer_hash"
+        private const val KEY_SECURITY_ANSWER_SALT = "key_security_answer_salt"
+        private const val KEY_PIN_FAILED_ATTEMPTS = "key_pin_failed_attempts"
+        private const val KEY_PIN_LOCKOUT_UNTIL = "key_pin_lockout_until"
         private const val KEY_BLACKOUT_PRIVACY_SHIELD = "key_blackout_privacy_shield_v2"
         private const val KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL = "key_screenshot_temp_unlock_until"
         private const val KEY_SMART_FOCUS_ENABLED = "key_smart_focus_enabled"
