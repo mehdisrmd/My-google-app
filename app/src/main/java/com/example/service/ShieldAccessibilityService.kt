@@ -627,7 +627,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                     // daily "Time's Up" variant, and BlockLogPolicy maps
                     // it to its own reason. The stats query is too heavy
                     // for the 1-second tick, so it runs ~4x a minute.
-                    if (preferences.isProtectionEnabled() &&
+                    if (preferences.getIsProtectionEnabled() &&
                         !preferences.isCurrentlyLocked() &&
                         now - lastDataUsageCheckMs >= 15_000L
                     ) {

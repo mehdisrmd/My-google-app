@@ -530,7 +530,6 @@ fun AppLimitsAndSectionsScreen(
     }
 }
 
-@Composable
 /**
  * #43 (batch 2): daily data-usage caps — one budget for Wi-Fi, one for
  * mobile data. Usage is read live from [DataUsageMeter] whenever the
