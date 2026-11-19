@@ -212,4 +212,55 @@ class TamperAttemptClassifierTest {
             )
         )
     }
+
+    // ---- VPN_CONFIG (#42, batch 2) ----
+
+    @Test
+    fun settingsVpnProfileEditor_isVpnConfig() {
+        // The VPN editor never mentions X Blocker — it must still classify.
+        val texts = listOf("Edit VPN profile", "Name", "Type", "Server address", "Save")
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun settingsAddVpn_isVpnConfig() {
+        val texts = listOf("Add VPN", "Always-on VPN", "Block connections without VPN")
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun vpnConsentDialog_isVpnConfig() {
+        val texts = listOf(
+            "Connection request",
+            "Some App wants to set up a VPN connection so it can monitor network traffic."
+        )
+        assertEquals(
+            TamperAction.VPN_CONFIG,
+            TamperAttemptClassifier.classify(texts, "com.android.vpndialogs", own)
+        )
+    }
+
+    @Test
+    fun networkSettingsPageWithVpnRow_isNotClassified() {
+        // The Network & internet page merely LISTS a VPN row among the
+        // other radios — no configuration surface is open yet.
+        val texts = listOf(
+            "Network & internet", "Wi-Fi", "Mobile", "Airplane mode", "VPN", "Private DNS"
+        )
+        assertNull(TamperAttemptClassifier.classify(texts, settings, own))
+    }
+
+    @Test
+    fun vpnEditorInBrowserPackage_isNotClassified() {
+        val texts = listOf("Edit VPN profile", "Name", "Save")
+        assertNull(
+            TamperAttemptClassifier.classify(texts, "com.android.chrome", own)
+        )
+    }
 }

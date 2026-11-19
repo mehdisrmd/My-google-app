@@ -30,7 +30,8 @@ object DeviceOwnerPolicy {
     /** The DPM restrictions this feature manages — the full list. */
     enum class Restriction {
         BLOCK_OWN_UNINSTALL,
-        DISALLOW_DEBUGGING
+        DISALLOW_DEBUGGING,
+        DISALLOW_CONFIG_VPN
     }
 
     /** What the system currently says about this app's admin standing. */
@@ -64,21 +65,33 @@ object DeviceOwnerPolicy {
     }
 
     /**
-     * The restrictions that should be in force right now. Both conditions
-     * are required: without Device Owner the DPM calls would throw, and
-     * with the toggle OFF the user has explicitly stood the protection
-     * down — so every other combination yields the empty set, which the
-     * manager treats as "clear exactly the managed restrictions".
+     * The restrictions that should be in force right now. The uninstall /
+     * debugging pair requires BOTH conditions: without Device Owner the
+     * DPM calls would throw, and with the toggle OFF the user has
+     * explicitly stood the protection down — so every other combination
+     * yields the empty set, which the manager treats as "clear exactly
+     * the managed restrictions".
+     *
+     * The VPN restriction (#42, batch 2) follows its OWN toggle,
+     * independent of the Device Owner protection toggle: it applies
+     * whenever the app is Device Owner and the VPN block is ON.
      */
     fun desiredRestrictions(
         isDeviceOwner: Boolean,
-        toggleEnabled: Boolean
-    ): Set<Restriction> =
-        if (isDeviceOwner && toggleEnabled) {
-            setOf(Restriction.BLOCK_OWN_UNINSTALL, Restriction.DISALLOW_DEBUGGING)
-        } else {
-            emptySet()
+        toggleEnabled: Boolean,
+        vpnBlockEnabled: Boolean = false
+    ): Set<Restriction> {
+        if (!isDeviceOwner) return emptySet()
+        val desired = mutableSetOf<Restriction>()
+        if (toggleEnabled) {
+            desired.add(Restriction.BLOCK_OWN_UNINSTALL)
+            desired.add(Restriction.DISALLOW_DEBUGGING)
         }
+        if (vpnBlockEnabled) {
+            desired.add(Restriction.DISALLOW_CONFIG_VPN)
+        }
+        return desired
+    }
 
     /** The flattened component name `dpm set-device-owner` expects. */
     fun provisioningComponent(applicationId: String, receiverClassName: String): String =

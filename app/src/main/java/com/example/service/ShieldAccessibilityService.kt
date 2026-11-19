@@ -376,12 +376,14 @@ class ShieldAccessibilityService : AccessibilityService() {
 
                     // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
-                    //     screens that target X Blocker while the guard is armed.
+                    //     screens that target X Blocker while a guard applies.
                     //     #6: the classifier also covers Clear Data on our
                     //     App-info page and switching our accessibility
                     //     service off — same intervention for all three.
+                    //     Batch 2: each action follows its own guard toggle
+                    //     (#35/#36/#42), independent of master protection.
                     val tamperAction = if (rootNode != null && activePkg.isNotBlank() &&
-                        isUninstallGuardArmed()
+                        anyTamperGuardEnabled()
                     ) {
                         TextContentScanner.findTamperAttempt(
                             rootNode,
@@ -391,7 +393,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                     } else {
                         null
                     }
-                    if (tamperAction != null) {
+                    if (tamperAction != null && isTamperGuardApplicable(tamperAction)) {
                         triggerLockdown(
 
                             triggerWord = tamperTriggerWord(tamperAction),
@@ -652,14 +654,16 @@ class ShieldAccessibilityService : AccessibilityService() {
         if (activeWindowPkg == packageName) return
 
         // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
-        //    #6): armed while the standalone toggle is ON or master
-        //    protection is ON — but never after the 5-hour uninstall wait
-        //    has elapsed, which is the owner's deliberate escape hatch.
-        //    Covers uninstall, Clear Data on our App-info page, and
-        //    switching our accessibility service off.
-        if (isUninstallGuardArmed()) {
+        //    #6): covers uninstall, Clear Data on our App-info page, and
+        //    switching our accessibility service off. Batch 2 decoupled
+        //    the guards (#35/#36/#42): each action is governed by its OWN
+        //    toggle, independent of the master switch — so this block
+        //    runs even while master protection is OFF. The uninstall
+        //    guard still disarms after the uninstall wait has elapsed,
+        //    which is the owner's deliberate escape hatch.
+        if (anyTamperGuardEnabled()) {
             val tamperAction = TextContentScanner.findTamperAttempt(rootNode, pkgName, packageName)
-            if (tamperAction != null) {
+            if (tamperAction != null && isTamperGuardApplicable(tamperAction)) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 triggerLockdown(
@@ -1129,13 +1133,14 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Incident-log wording per tamper action (#6). */
+    /** Incident-log wording per tamper action (#6, VPN added by #42). */
     private fun tamperTriggerWord(action: TamperAttemptClassifier.TamperAction): String {
         return when (action) {
             TamperAttemptClassifier.TamperAction.UNINSTALL -> "Prevent Uninstall Guard"
             TamperAttemptClassifier.TamperAction.CLEAR_DATA -> "Prevent Clear Data Guard"
             TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
                 "Prevent Accessibility Disable Guard"
+            TamperAttemptClassifier.TamperAction.VPN_CONFIG -> "Prevent VPN Setup Guard"
         }
     }
 
@@ -1195,13 +1200,45 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The Settings / package-uninstaller block is armed while the standalone
-     * Prevent Uninstall toggle is ON or master protection is ON — and disarms
-     * for everyone once the owner has completed the 5-hour uninstall wait.
+     * #35 (batch 2): the uninstall guard is armed by its OWN toggle only.
+     * It no longer depends on master protection — so it keeps working
+     * while the master switch is OFF, and turning the master switch off
+     * no longer needs the guard's permission. It still disarms once the
+     * owner has completed the uninstall wait, which remains the
+     * deliberate escape hatch.
      */
     private fun isUninstallGuardArmed(): Boolean {
         if (preferences.isUninstallUnlocked()) return false
-        return preferences.getIsPreventUninstallEnabled() || preferences.getIsProtectionEnabled()
+        return preferences.getIsPreventUninstallEnabled()
+    }
+
+    /**
+     * Batch 2 guard independence (#35/#36/#42): the tamper classifier is
+     * worth running when ANY of the independent guards is on — each
+     * action then applies only under its own guard (see
+     * [isTamperGuardApplicable]).
+     */
+    private fun anyTamperGuardEnabled(): Boolean {
+        return isUninstallGuardArmed() ||
+            preferences.getIsClearDataGuardEnabled() ||
+            preferences.getIsVpnConfigBlockEnabled() ||
+            preferences.getIsProtectionEnabled()
+    }
+
+    /** Which guard governs each tamper action (batch 2 decoupling). */
+    private fun isTamperGuardApplicable(action: TamperAttemptClassifier.TamperAction): Boolean {
+        return when (action) {
+            TamperAttemptClassifier.TamperAction.UNINSTALL -> isUninstallGuardArmed()
+            TamperAttemptClassifier.TamperAction.CLEAR_DATA ->
+                preferences.getIsClearDataGuardEnabled()
+            // Switching our accessibility service off kills every guard,
+            // so it stays protected by the uninstall guard OR by master
+            // protection, exactly as before the decoupling.
+            TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
+                isUninstallGuardArmed() || preferences.getIsProtectionEnabled()
+            TamperAttemptClassifier.TamperAction.VPN_CONFIG ->
+                preferences.getIsVpnConfigBlockEnabled()
+        }
     }
 
     private fun isIgnoredSystemUiPackage(pkgName: String): Boolean {

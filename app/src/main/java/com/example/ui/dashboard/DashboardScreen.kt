@@ -48,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Emergency
@@ -142,6 +143,7 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.util.JalaliCalendar
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
@@ -149,6 +151,23 @@ private enum class PendingAntiTamperAction {
     DISABLE_MASTER_SHIELD,
     DISABLE_STRICT_MODE,
     DISABLE_PREVENT_UNINSTALL
+}
+
+/**
+ * Bilingual duration phrase for the uninstall wait (#40/#41): the length
+ * the user picked during first setup (default 1 hour), e.g. "1 hour" /
+ * "۱ ساعت", "30 minutes" / "۳۰ دقیقه".
+ */
+private fun uninstallWaitLabel(minutes: Int): String = when {
+    minutes == 60 -> tr("1 hour", "۱ ساعت")
+    minutes % 60 == 0 -> tr(
+        "${minutes / 60} hours",
+        "${JalaliCalendar.toPersianDigits((minutes / 60).toString())} ساعت"
+    )
+    else -> tr(
+        "$minutes minutes",
+        "${JalaliCalendar.toPersianDigits(minutes.toString())} دقیقه"
+    )
 }
 
 @Composable
@@ -194,6 +213,11 @@ fun DashboardScreen(
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
     val isInstallGuardEnabled by effectivePrefs.isInstallGuardEnabled.collectAsStateWithLifecycle()
+    // Batch 2: the Clear Data guard (#36) and the VPN setup block (#42)
+    // have their own toggles, independent of the other guards.
+    val isClearDataGuardEnabled by effectivePrefs.isClearDataGuardEnabled.collectAsStateWithLifecycle()
+    val isVpnConfigBlockEnabled by effectivePrefs.isVpnConfigBlockEnabled.collectAsStateWithLifecycle()
+    val uninstallWaitMinutes by effectivePrefs.uninstallWaitMinutes.collectAsStateWithLifecycle()
     val isDeviceOwnerProtectionEnabled by effectivePrefs.isDeviceOwnerProtectionEnabled.collectAsStateWithLifecycle()
     // Device Owner standing (#11) is system state, not a preference: read
     // it live and refresh on every ON_RESUME (see checkPermissions), so
@@ -224,12 +248,11 @@ fun DashboardScreen(
     val allPermissionsGranted = isAccessibilityEnabled && isBatteryOptExempt && hasNotificationPermission
     var showPermissionsNeededHint by remember { mutableStateOf(false) }
 
-    // Uninstall Guard (5-hour wait): the master switch cannot be turned OFF
-    // until an uninstall request's deadline has passed. The deadline is a
-    // persisted wall-clock timestamp; a 1s ticker keeps the countdown text
-    // fresh while this screen is open.
+    // Uninstall Guard: a persisted wall-clock deadline; a 1s ticker keeps
+    // the countdown text fresh while this screen is open. Since batch 2
+    // (#35) the master switch no longer consults this deadline — it only
+    // drives the Prevent Uninstall section's own countdown below.
     val uninstallUnlockDeadline by effectivePrefs.uninstallUnlockDeadline.collectAsStateWithLifecycle()
-    var showUninstallWaitHint by remember { mutableStateOf(false) }
     var uninstallNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -382,18 +405,10 @@ fun DashboardScreen(
                                     // section so the user can grant what's missing.
                                     showPermissionsNeededHint = true
                                     expandSecurityAndPermissionsDropdown = true
-                                } else if (!targetEnabled && !uninstallUnlockedNow) {
-                                    // Uninstall Guard: protection can only be
-                                    // switched off after the 5-hour uninstall
-                                    // wait has elapsed. Point at the countdown
-                                    // in the Prevent Uninstall section below.
-                                    showUninstallWaitHint = true
-                                    expandUninstallAndLockDropdown = true
                                 } else if (!targetEnabled && (strictModeEnabled || isPreventUninstallEnabled)) {
                                     pendingAntiTamperAction = PendingAntiTamperAction.DISABLE_MASTER_SHIELD
                                 } else {
                                     showPermissionsNeededHint = false
-                                    showUninstallWaitHint = false
                                     onToggleProtection(targetEnabled)
                                 }
                             },
@@ -421,41 +436,6 @@ fun DashboardScreen(
                                     "Protection can't turn on yet — grant all permissions in System Setup below first (Accessibility, Overlay, Battery, Notifications).",
                                     "محافظ هنوز فعال نمی‌شود — ابتدا همه دسترسی‌ها را در بخش تنظیمات سیستم در پایین بدهید (دسترسی‌پذیری، نمایش روی برنامه‌ها، باتری و اعلان‌ها)."
                                 ),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = AmberWarning,
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-                    }
-
-                    if (showUninstallWaitHint && !uninstallUnlockedNow) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = AmberWarning.copy(alpha = 0.15f),
-                            border = BorderStroke(1.dp, AmberWarning),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("uninstall_wait_hint")
-                        ) {
-                            Text(
-                                text = if (UninstallGuard.isRequested(uninstallUnlockDeadline)) {
-                                    tr(
-                                        "Protection can't turn off yet — the 5-hour uninstall wait is still running: " +
-                                            UninstallGuard.formatRemainingHms(
-                                                UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
-                                            ) + " left. See the countdown in 'Prevent Uninstall & Lock Timer' below.",
-                                        "محافظ هنوز خاموش نمی‌شود — انتظار ۵ ساعته حذف نصب در حال انجام است: " +
-                                            UninstallGuard.formatRemainingHms(
-                                                UninstallGuard.remainingMillis(uninstallUnlockDeadline, uninstallNowMs)
-                                            ) + " باقی مانده. شمارش معکوس در بخش «محافظ ضدحذف برنامه» در پایین است."
-                                    )
-                                } else {
-                                    tr(
-                                        "Protection can't turn off yet — first tap 'Request Uninstall' in 'Prevent Uninstall & Lock Timer' below and wait 5 hours.",
-                                        "محافظ هنوز خاموش نمی‌شود — ابتدا در بخش «محافظ ضدحذف برنامه» در پایین روی «درخواست حذف نصب» بزنید و ۵ ساعت صبر کنید."
-                                    )
-                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = AmberWarning,
@@ -945,6 +925,159 @@ fun DashboardScreen(
                     }
                 }
 
+                // Clear Data Guard Card (#36, batch 2): its OWN switch —
+                // independent of Prevent Uninstall and of the master
+                // switch — intercepting "Clear data" on this app's
+                // App-info page so the app cannot be wiped from Settings.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isClearDataGuardEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Prevent Clear Data", "محافظ جلوگیری از پاک کردن داده‌ها"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Blocks 'Clear data' on X Blocker's App info page, so the app cannot be wiped from Settings. Its own switch — works even while the master switch is off.",
+                                        "«پاک کردن داده‌ها» در صفحه اطلاعات ایکس بلاکر را مسدود می‌کند تا برنامه از تنظیمات پاک نشود. کلید جدا دارد — حتی وقتی محافظ اصلی خاموش است هم کار می‌کند."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isClearDataGuardEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                effectivePrefs.setClearDataGuardEnabled(targetEnabled)
+                            },
+                            modifier = Modifier.testTag("clear_data_guard_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
+                // VPN Setup Block Card (#42, batch 2): a VPN would bypass
+                // the blocker, so configuring one is prevented. With
+                // Device Owner this is a hard system restriction
+                // (DISALLOW_CONFIG_VPN); without it, VPN settings screens
+                // and consent dialogs are interrupted by the block screen.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isVpnConfigBlockEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Block VPN Setup", "مسدود کردن تنظیم VPN"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Prevents setting up a VPN on this phone, since a VPN can bypass the blocker. Hard system block with Device Owner; otherwise VPN settings pages are interrupted.",
+                                        "از تنظیم VPN روی این گوشی جلوگیری می‌کند، چون VPN می‌تواند مسدودساز را دور بزند. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه‌های تنظیم VPN قطع می‌شوند."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isVpnConfigBlockEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                effectivePrefs.setVpnConfigBlockEnabled(targetEnabled)
+                                // Apply (or clear) the Device Owner
+                                // restriction right away; a no-op when
+                                // the app is not Device Owner.
+                                DeviceOwnerManager.reconcile(context)
+                            },
+                            modifier = Modifier.testTag("vpn_config_block_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
                 // Device Owner Card (#11): the DEFINITIVE block against
                 // ADB/computer uninstall. An app cannot make itself Device
                 // Owner, so until one-time provisioning has happened this
@@ -1091,7 +1224,8 @@ fun DashboardScreen(
                     }
                 }
 
-                // Uninstall Request Card — 5-Hour Wait (Uninstall Guard feature)
+                // Uninstall Request Card — user-chosen wait (#41; the
+                // built-in default is 1 hour since #40, previously 5).
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = ObsidianCard),
@@ -1125,15 +1259,18 @@ fun DashboardScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = tr("Uninstall X Blocker (5-Hour Wait)", "حذف نصب ایکس بلاکر (انتظار ۵ ساعته)"),
+                                    text = tr(
+                                        "Uninstall X Blocker (Wait: ${uninstallWaitLabel(uninstallWaitMinutes)})",
+                                        "حذف نصب ایکس بلاکر (انتظار: ${uninstallWaitLabel(uninstallWaitMinutes)})"
+                                    ),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = ObsidianTextPrimary
                                 )
                                 Text(
                                     text = tr(
-                                        "Deleting the app is deliberately slow: request it here, wait 5 hours, then protection can be turned off and the app uninstalled normally.",
-                                        "حذف برنامه عمداً کند است: این‌جا درخواست بدهید، ۵ ساعت صبر کنید، بعد محافظ خاموش و برنامه به‌صورت عادی حذف می‌شود."
+                                        "Deleting the app is deliberately slow: request it here, wait ${uninstallWaitLabel(uninstallWaitMinutes)}, then the uninstall guard stands down and the app can be uninstalled normally.",
+                                        "حذف برنامه عمداً کند است: این‌جا درخواست بدهید، ${uninstallWaitLabel(uninstallWaitMinutes)} صبر کنید، بعد محافظ حذف کنار می‌رود و برنامه به‌صورت عادی حذف می‌شود."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1146,8 +1283,8 @@ fun DashboardScreen(
                             uninstallUnlockedNow -> {
                                 Text(
                                     text = tr(
-                                        "✓ Wait complete — you can now turn OFF the master switch at the top and uninstall X Blocker from system Settings.",
-                                        "✓ انتظار تمام شد — حالا می‌توانید محافظ اصلی را در بالای صفحه خاموش کنید و ایکس بلاکر را از تنظیمات سیستم حذف کنید."
+                                        "✓ Wait complete — the uninstall guard has stood down: you can now uninstall X Blocker from system Settings.",
+                                        "✓ انتظار تمام شد — محافظ حذف کنار رفت: حالا می‌توانید ایکس بلاکر را از تنظیمات سیستم حذف کنید."
                                     ),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
@@ -1190,7 +1327,10 @@ fun DashboardScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = tr("Request Uninstall — Start 5h Wait", "درخواست حذف نصب — شروع انتظار ۵ ساعته"),
+                                        text = tr(
+                                            "Request Uninstall — Start the ${uninstallWaitLabel(uninstallWaitMinutes)} Wait",
+                                            "درخواست حذف نصب — شروع انتظار ${uninstallWaitLabel(uninstallWaitMinutes)}"
+                                        ),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold
                                     )

@@ -196,6 +196,18 @@ class ShieldPreferences(private val context: Context) {
     private val _isInstallGuardEnabled = MutableStateFlow(getIsInstallGuardEnabled())
     val isInstallGuardEnabled: StateFlow<Boolean> = _isInstallGuardEnabled.asStateFlow()
 
+    // #36 (batch 2): the Clear Data guard's OWN toggle — independent of
+    // the uninstall guard and of the master switch. Defaults ON so the
+    // protection level existing users already have does not silently
+    // drop when the guard is decoupled.
+    private val _isClearDataGuardEnabled = MutableStateFlow(getIsClearDataGuardEnabled())
+    val isClearDataGuardEnabled: StateFlow<Boolean> = _isClearDataGuardEnabled.asStateFlow()
+
+    // #42 (batch 2): block VPN configuration (Device Owner restriction
+    // DISALLOW_CONFIG_VPN + accessibility intervention fallback).
+    private val _isVpnConfigBlockEnabled = MutableStateFlow(getIsVpnConfigBlockEnabled())
+    val isVpnConfigBlockEnabled: StateFlow<Boolean> = _isVpnConfigBlockEnabled.asStateFlow()
+
     private val _isDeviceOwnerProtectionEnabled = MutableStateFlow(getIsDeviceOwnerProtectionEnabled())
     val isDeviceOwnerProtectionEnabled: StateFlow<Boolean> = _isDeviceOwnerProtectionEnabled.asStateFlow()
 
@@ -525,7 +537,7 @@ class ShieldPreferences(private val context: Context) {
         val editor = prefs.edit().putBoolean(KEY_PROTECTION_ENABLED, enabled)
         if (enabled) {
             // Re-arming the shield consumes any pending/elapsed uninstall
-            // unlock: switching protection off again needs a fresh 5h wait.
+            // unlock: switching protection off again needs a fresh wait.
 
             editor.putLong(KEY_UNINSTALL_UNLOCK_DEADLINE, 0L)
             _uninstallUnlockDeadline.value = 0L
@@ -642,6 +654,34 @@ class ShieldPreferences(private val context: Context) {
         }
         editor.apply()
         _isInstallGuardEnabled.value = enabled
+    }
+
+    // Clear Data Guard (#36) — its own toggle: "Clear data" on this app's
+    // App-info page is intercepted while this is ON, regardless of the
+    // uninstall guard or the master switch.
+    fun getIsClearDataGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_CLEAR_DATA_GUARD_ENABLED, true)
+    }
+
+    fun setClearDataGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_CLEAR_DATA_GUARD_ENABLED, enabled).apply()
+        _isClearDataGuardEnabled.value = enabled
+    }
+
+    // VPN Config Block (#42) — its own toggle: while ON, setting up a
+    // VPN is prevented (hard DPM restriction under Device Owner,
+    // accessibility intervention otherwise).
+    fun getIsVpnConfigBlockEnabled(): Boolean {
+        return prefs.getBoolean(KEY_VPN_CONFIG_BLOCK_ENABLED, false)
+    }
+
+    fun setVpnConfigBlockEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_VPN_CONFIG_BLOCK_ENABLED, enabled).apply()
+        _isVpnConfigBlockEnabled.value = enabled
     }
 
     /**
@@ -1660,6 +1700,8 @@ class ShieldPreferences(private val context: Context) {
         _seasonalThemeName.value = preservedSeasonalTheme.name
         _uninstallUnlockDeadline.value = 0L
         _uninstallWaitMinutes.value = getUninstallWaitMinutes()
+        _isClearDataGuardEnabled.value = true
+        _isVpnConfigBlockEnabled.value = false
         _blocklistUpdatePending.value = false
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
@@ -1684,6 +1726,8 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
         private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
         private const val KEY_INSTALL_GUARD_ENABLED = "key_install_guard_enabled"
+        private const val KEY_CLEAR_DATA_GUARD_ENABLED = "key_clear_data_guard_enabled"
+        private const val KEY_VPN_CONFIG_BLOCK_ENABLED = "key_vpn_config_block_enabled"
         private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"

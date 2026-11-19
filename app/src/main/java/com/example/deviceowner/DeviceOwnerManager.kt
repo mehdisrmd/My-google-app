@@ -61,10 +61,14 @@ object DeviceOwnerManager {
             isAdminActive = isAdminActive(context)
         )
 
-    /** Reconcile using the toggle choice stored in preferences. */
+    /** Reconcile using the toggle choices stored in preferences. */
     fun reconcile(context: Context) {
-        val toggleEnabled = ShieldPreferences(context).getIsDeviceOwnerProtectionEnabled()
-        reconcile(context, toggleEnabled)
+        val prefs = ShieldPreferences(context)
+        reconcile(
+            context,
+            toggleEnabled = prefs.getIsDeviceOwnerProtectionEnabled(),
+            vpnBlockEnabled = prefs.getIsVpnConfigBlockEnabled()
+        )
     }
 
     /**
@@ -73,14 +77,15 @@ object DeviceOwnerManager {
      * to apply AND nothing of ours left to clear (Android drops an
      * ex-owner's restrictions itself), so the method returns quietly.
      */
-    fun reconcile(context: Context, toggleEnabled: Boolean) {
+    fun reconcile(context: Context, toggleEnabled: Boolean, vpnBlockEnabled: Boolean = false) {
         val manager = dpm(context) ?: return
         if (!isDeviceOwner(context)) return
 
         val admin = adminComponent(context)
         val desired = DeviceOwnerPolicy.desiredRestrictions(
             isDeviceOwner = true,
-            toggleEnabled = toggleEnabled
+            toggleEnabled = toggleEnabled,
+            vpnBlockEnabled = vpnBlockEnabled
         )
 
         // 1. Uninstall block for X Blocker's own package — covers both
@@ -105,6 +110,18 @@ object DeviceOwnerManager {
             }
         } catch (e: Exception) {
             Log.w(TAG, "debugging-features restriction reconcile failed", e)
+        }
+
+        // 3. VPN configuration off while its own toggle (#42) is on, so
+        //    no VPN can be set up to bypass the blocker.
+        try {
+            if (DeviceOwnerPolicy.Restriction.DISALLOW_CONFIG_VPN in desired) {
+                manager.addUserRestriction(admin, UserManager.DISALLOW_CONFIG_VPN)
+            } else {
+                manager.clearUserRestriction(admin, UserManager.DISALLOW_CONFIG_VPN)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "config-vpn restriction reconcile failed", e)
         }
     }
 }

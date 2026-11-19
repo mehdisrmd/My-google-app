@@ -19,6 +19,13 @@ package com.example.service
  *    service page (its detail page shows the service description, which
  *    the services LIST does not) or the "stop this service" dialog.
  *
+ * Plus one that does NOT target this app (#42, batch 2):
+ *  - [TamperAction.VPN_CONFIG] — a VPN setup surface (the Settings VPN
+ *    profile editor, or the system's VPN consent dialog): a VPN would
+ *    bypass the blocker, so configuring one is tamper-class. This is
+ *    the best-effort layer; under Device Owner the DISALLOW_CONFIG_VPN
+ *    restriction is the hard block.
+ *
  * Honest limits (same as the plan): this is a deterrent layer. Page
  * layouts and wording differ across Android versions and OEMs (AOSP vs
  * Samsung One UI vs MIUI), so the phrase sets are deliberately redundant
@@ -32,7 +39,8 @@ object TamperAttemptClassifier {
     enum class TamperAction {
         UNINSTALL,
         CLEAR_DATA,
-        DISABLE_ACCESSIBILITY
+        DISABLE_ACCESSIBILITY,
+        VPN_CONFIG
     }
 
     /**
@@ -56,9 +64,19 @@ object TamperAttemptClassifier {
         val isSettingsHost = pkgLower == "com.android.settings" ||
             pkgLower.contains("miui.securitycenter") ||
             pkgLower.contains("permissioncontroller")
-        if (!isInstaller && !isSettingsHost) return null
+        // #42: the system's VPN consent dialogs live in their own package.
+        val isVpnDialogHost = pkgLower == "com.android.vpndialogs"
+        if (!isInstaller && !isSettingsHost && !isVpnDialogHost) return null
 
         val combinedLower = screenTexts.joinToString(" | ").lowercase()
+
+        // #42 (batch 2): VPN setup surfaces are checked BEFORE the
+        // our-app gate below — a VPN settings page never mentions
+        // X Blocker, but configuring a VPN would bypass it entirely.
+        if ((isSettingsHost || isVpnDialogHost) && hasVpnConfigSignal(combinedLower)) {
+            return TamperAction.VPN_CONFIG
+        }
+
         val ownLower = ownPackage.trim().lowercase()
         val mentionsOurApp = combinedLower.contains("x blocker") ||
             combinedLower.contains("com.aistudio.shieldblock") ||
@@ -141,8 +159,7 @@ object TamperAttemptClassifier {
      * confirmation dialog, or our service's own detail page (recognised
      * by its description text / the "Use X Blocker" switch label).
      */
-    private fun hasAccessibilityOffSignal(combinedLower: String): Boolean {
-        val stopDialog = combinedLower.contains("stop this service") ||
+    private fun hasAccessibilityOffSignal(combinedLower: String): Boolean {        val stopDialog = combinedLower.contains("stop this service") ||
             combinedLower.contains("stop x blocker") ||
             combinedLower.contains("do you want to stop") ||
             combinedLower.contains("توقف")
@@ -151,5 +168,29 @@ object TamperAttemptClassifier {
         val serviceDetailPage = combinedLower.contains(SERVICE_DESCRIPTION_FRAGMENT) ||
             combinedLower.contains("use x blocker")
         return serviceDetailPage
+    }
+
+    /**
+     * VPN-setup signals (#42): the profile editor / add flow in Settings
+     * ("Edit VPN profile", "Add VPN", "Always-on VPN"…) and the system
+     * consent dialog an app raises to request a VPN connection ("…wants
+     * to set up a VPN connection…"). The bare VPN list page is
+     * deliberately NOT a signal — its wording is indistinguishable from
+     * the "VPN" row on the Network settings page, and the tap-through
+     * lands on the editor/consent surfaces covered here.
+     */
+    private fun hasVpnConfigSignal(combinedLower: String): Boolean {
+        return combinedLower.contains("add vpn") ||
+            combinedLower.contains("edit vpn") ||
+            combinedLower.contains("vpn profile") ||
+            combinedLower.contains("vpn configuration") ||
+            combinedLower.contains("configure vpn") ||
+            combinedLower.contains("always-on vpn") ||
+            combinedLower.contains("always on vpn") ||
+            combinedLower.contains("set up a vpn") ||
+            combinedLower.contains("vpn connection") ||
+            combinedLower.contains("تنظیمات vpn") ||
+            combinedLower.contains("افزودن vpn") ||
+            combinedLower.contains("پیکربندی vpn")
     }
 }

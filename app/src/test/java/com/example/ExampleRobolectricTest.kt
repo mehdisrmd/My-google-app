@@ -336,21 +336,27 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test uninstall guard 5 hour deadline math`() {
+    fun `test uninstall guard 1 hour deadline math`() {
+        // #40 (batch 2): the built-in default wait is 1 hour (was 5).
         val t0 = 1_700_000_000_000L
-        val fiveHoursMs = 5L * 60L * 60L * 1000L
+        val oneHourMs = 1L * 60L * 60L * 1000L
         val deadline = UninstallGuard.deadlineForRequest(t0)
-        assertEquals(t0 + fiveHoursMs, deadline)
+        assertEquals(t0 + oneHourMs, deadline)
+
+        // #41: a caller-chosen wait (picked during first setup) is honored.
+        val halfHourMs = 30L * 60L * 1000L
+        assertEquals(t0 + halfHourMs, UninstallGuard.deadlineForRequest(t0, halfHourMs))
+        assertEquals(t0, UninstallGuard.deadlineForRequest(t0, 0L))
 
         // No request yet: not requested, never unlocked, protection stays locked on
         assertFalse(UninstallGuard.isRequested(0L))
         assertTrue(UninstallGuard.isRequested(deadline))
-        assertFalse(UninstallGuard.isUnlocked(0L, t0 + fiveHoursMs + 1L))
-        assertFalse(UninstallGuard.canDisableProtection(0L, t0 + fiveHoursMs + 1L))
+        assertFalse(UninstallGuard.isUnlocked(0L, t0 + oneHourMs + 1L))
+        assertFalse(UninstallGuard.canDisableProtection(0L, t0 + oneHourMs + 1L))
         assertEquals(0L, UninstallGuard.remainingMillis(0L, t0))
 
         // During the wait: full remaining at start, still locked 1ms before the end
-        assertEquals(fiveHoursMs, UninstallGuard.remainingMillis(deadline, t0))
+        assertEquals(oneHourMs, UninstallGuard.remainingMillis(deadline, t0))
         assertFalse(UninstallGuard.isUnlocked(deadline, deadline - 1L))
         assertFalse(UninstallGuard.canDisableProtection(deadline, deadline - 1L))
         assertEquals(1L, UninstallGuard.remainingMillis(deadline, deadline - 1L))
@@ -361,7 +367,7 @@ class ExampleRobolectricTest {
         assertEquals(0L, UninstallGuard.remainingMillis(deadline, deadline + 60_000L))
 
         // Countdown formatting H:MM:SS
-        assertEquals("5:00:00", UninstallGuard.formatRemainingHms(fiveHoursMs))
+        assertEquals("1:00:00", UninstallGuard.formatRemainingHms(oneHourMs))
         assertEquals("4:59:32", UninstallGuard.formatRemainingHms(17_972_000L))
         assertEquals("0:00:00", UninstallGuard.formatRemainingHms(0L))
         assertEquals("0:00:00", UninstallGuard.formatRemainingHms(-5L))
