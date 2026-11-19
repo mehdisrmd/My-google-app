@@ -838,6 +838,52 @@ class ShieldPreferences(private val context: Context) {
         _dataLimitMobileMb.value = mb
     }
 
+    // #46 (batch 3): the data-cap WARNING state. The warning is its own
+    // state, NOT a lockdown: the set holds the transports ("WIFI" /
+    // "MOBILE") whose cap was reached and that are still on; the
+    // warning page covers exactly this set and releases per transport
+    // as each is observed off.
+    fun getDataCapWarningTransports(): Set<String> {
+        return prefs.getStringSet(KEY_DATA_CAP_WARNING_TRANSPORTS, emptySet())?.toSet() ?: emptySet()
+    }
+
+    fun setDataCapWarningTransports(transports: Set<String>) {
+        prefs.edit().putStringSet(KEY_DATA_CAP_WARNING_TRANSPORTS, transports).apply()
+    }
+
+    /** The local day number the current warning set was activated on. */
+    fun getDataCapWarningDay(): Long = prefs.getLong(KEY_DATA_CAP_WARNING_DAY, -1L)
+
+    fun setDataCapWarningDay(day: Long) {
+        prefs.edit().putLong(KEY_DATA_CAP_WARNING_DAY, day).apply()
+    }
+
+    // #46 (batch 3): the release latch — the local day number on which
+    // each transport's warning last released. A transport released
+    // today is never warned again today (no nag loop); the latch
+    // resets at midnight together with the usage counters.
+    fun getDataCapWifiResolvedDay(): Long = prefs.getLong(KEY_DATA_CAP_WIFI_RESOLVED_DAY, -1L)
+
+    fun setDataCapWifiResolvedDay(day: Long) {
+        prefs.edit().putLong(KEY_DATA_CAP_WIFI_RESOLVED_DAY, day).apply()
+    }
+
+    fun getDataCapMobileResolvedDay(): Long = prefs.getLong(KEY_DATA_CAP_MOBILE_RESOLVED_DAY, -1L)
+
+    fun setDataCapMobileResolvedDay(day: Long) {
+        prefs.edit().putLong(KEY_DATA_CAP_MOBILE_RESOLVED_DAY, day).apply()
+    }
+
+    // #46 (batch 3): while the user is on a deliberate trip from the
+    // warning page to the system Settings (to switch a transport off
+    // by hand), the warning page must not pull itself back to the
+    // front. The trip window is a deadline timestamp.
+    fun getDataCapSettingsTripUntil(): Long = prefs.getLong(KEY_DATA_CAP_SETTINGS_TRIP_UNTIL, 0L)
+
+    fun setDataCapSettingsTripUntil(untilMs: Long) {
+        prefs.edit().putLong(KEY_DATA_CAP_SETTINGS_TRIP_UNTIL, untilMs).apply()
+    }
+
     // #43 (batch 2): TrafficStats fallback baselines — the since-boot
     // counters captured at the first read of each local day, so the
     // fallback meter can report per-day usage. See DataUsageMeter.
@@ -1836,6 +1882,11 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
         private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
         private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
+        private const val KEY_DATA_CAP_WARNING_TRANSPORTS = "key_data_cap_warning_transports"
+        private const val KEY_DATA_CAP_WARNING_DAY = "key_data_cap_warning_day"
+        private const val KEY_DATA_CAP_WIFI_RESOLVED_DAY = "key_data_cap_wifi_resolved_day"
+        private const val KEY_DATA_CAP_MOBILE_RESOLVED_DAY = "key_data_cap_mobile_resolved_day"
+        private const val KEY_DATA_CAP_SETTINGS_TRIP_UNTIL = "key_data_cap_settings_trip_until"
         private const val KEY_DATA_BASELINE_DAY = "key_data_baseline_day"
         private const val KEY_DATA_BASELINE_WIFI = "key_data_baseline_wifi"
         private const val KEY_DATA_BASELINE_MOBILE = "key_data_baseline_mobile"

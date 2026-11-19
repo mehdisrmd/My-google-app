@@ -136,7 +136,13 @@ object BlockLogPolicy {
         // #45 (batch 2): force-stop attempts get their own reason instead
         // of the generic tamper label, so the log shows what was tried.
         triggerWord == "Prevent Force Stop Guard" -> "Force stop attempt blocked"
-        triggerWord.startsWith("Daily Limit: Data") -> "Daily data limit reached"
+        // #46 (batch 3): a data-cap warning releases per transport when
+        // the transport is observed off; the reason records who won the
+        // race — the app's background shutoff or the user by hand.
+        triggerWord == "Data Cap: Mobile Off By App" -> "Mobile data turned off by the app — daily cap reached"
+        triggerWord == "Data Cap: Mobile Off Manual" -> "Mobile data turned off manually — daily cap reached"
+        triggerWord == "Data Cap: Wi-Fi Off By App" -> "Wi-Fi turned off by the app — daily cap reached"
+        triggerWord == "Data Cap: Wi-Fi Off Manual" -> "Wi-Fi turned off manually — daily cap reached"
         triggerWord.startsWith("Daily Limit") -> "Daily app limit reached"
         triggerWord.startsWith("Section Blocked:") -> "Blocked app section"
         triggerWord.startsWith("Smart Focus:") -> "Scheduled focus session"
