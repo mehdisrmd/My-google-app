@@ -1,7 +1,12 @@
 package com.example
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -23,18 +28,25 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -52,9 +64,6 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -71,6 +80,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -94,18 +104,19 @@ import com.example.ui.limits.AppLimitsAndSectionsScreen
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.panic.PanicModeDialog
 import com.example.ui.quiz.ScientificAddictionQuizDialog
+import com.example.ui.report.ReportBugDialog
 import com.example.ui.security.PinLockOverlay
 import com.example.ui.security.BlackoutPrivacyCurtain
 import com.example.ui.streak.NoBeepStreakScreen
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.ui.theme.AmberWarning
-import com.example.ui.theme.AppThemeState
 import com.example.ui.theme.GlassGlowBackground
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.CyanTelemetry
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.liquidGlass
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.SeasonalTheme
 import com.example.ui.theme.ObsidianBg
@@ -114,6 +125,7 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.util.ShakeDetector
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -128,6 +140,38 @@ enum class ScreenTab {
 class MainActivity : ComponentActivity() {
 
     private var openPanicModeRequest by mutableStateOf(false)
+
+    // Shake-to-report (#22): MainContent consumes this flag and opens the
+    // report dialog. Set only by the hard-shake detector below.
+    private var shakeReportRequest by mutableStateOf(false)
+
+    private val shakeDetector = ShakeDetector()
+
+    private val sensorManager: SensorManager? by lazy {
+        getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    }
+
+    private val shakeSensorListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+            // Never fire while a lockdown is running (the LockdownActivity
+            // normally covers us and pauses this activity anyway — this is
+            // the belt-and-braces check for the moment of the shake).
+            val app = runCatching { ShieldApplication.instance }.getOrNull() ?: return
+            if (app.preferences.isCurrentlyLocked()) return
+            val fired = shakeDetector.onSample(
+                timestampMs = event.timestamp / 1_000_000L,
+                x = event.values[0],
+                y = event.values[1],
+                z = event.values[2]
+            )
+            if (fired) {
+                shakeReportRequest = true
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -156,6 +200,8 @@ class MainActivity : ComponentActivity() {
                 MainContent(
                     openPanicModeExternal = openPanicModeRequest,
                     onConsumePanicModeExternal = { openPanicModeRequest = false },
+                    shakeReportExternal = shakeReportRequest,
+                    onConsumeShakeReportExternal = { shakeReportRequest = false },
                     onSyncWindowSecureFlag = { syncWindowSecureFlag() },
                     onTriggerLockdown = { triggerWord, minutes ->
                         triggerLockdown(triggerWord, minutes)
@@ -222,6 +268,25 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         syncWindowSecureFlag()
         checkActiveLockdown()
+        registerShakeListener()
+    }
+
+    override fun onPause() {
+        // Shake-to-report is foreground-only: the accelerometer listener
+        // lives exactly between onResume and onPause.
+        sensorManager?.unregisterListener(shakeSensorListener)
+        super.onPause()
+    }
+
+    private fun registerShakeListener() {
+        val manager = sensorManager ?: return
+        val accelerometer = manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+        shakeDetector.reset()
+        manager.registerListener(
+            shakeSensorListener,
+            accelerometer,
+            SensorManager.SENSOR_DELAY_GAME
+        )
     }
 
     private fun checkActiveLockdown() {
@@ -265,6 +330,8 @@ class MainActivity : ComponentActivity() {
 fun MainContent(
     openPanicModeExternal: Boolean = false,
     onConsumePanicModeExternal: () -> Unit = {},
+    shakeReportExternal: Boolean = false,
+    onConsumeShakeReportExternal: () -> Unit = {},
     onSyncWindowSecureFlag: () -> Unit = {},
     onTriggerLockdown: (triggerWord: String, minutes: Int) -> Unit
 ) {
@@ -277,6 +344,7 @@ fun MainContent(
 
     var currentTab by remember { mutableStateOf(ScreenTab.DASHBOARD) }
     var showPanicModeDialog by remember { mutableStateOf(false) }
+    var showReportBugDialog by remember { mutableStateOf(false) }
 
     val hasCompletedQuiz by preferences.hasCompletedQuiz.collectAsStateWithLifecycle()
     var showAddictionQuizDialog by remember {
@@ -385,6 +453,19 @@ fun MainContent(
         }
     }
 
+    // Shake-to-report (#22): a hard shake (detected in MainActivity while
+    // resumed) opens the report box — unless the PIN gate or the
+    // first-launch blocklist gate is covering the app, in which case the
+    // request is simply dropped.
+    LaunchedEffect(shakeReportExternal) {
+        if (shakeReportExternal) {
+            if (!isPinSessionLocked && blocklistGatePassed) {
+                showReportBugDialog = true
+            }
+            onConsumeShakeReportExternal()
+        }
+    }
+
     val streakStartTimestamp by preferences.streakStartTimestamp.collectAsStateWithLifecycle()
     val longestStreakDays by preferences.longestStreakDays.collectAsStateWithLifecycle()
     val slipsCount by preferences.slipsCount.collectAsStateWithLifecycle()
@@ -450,178 +531,75 @@ fun MainContent(
                 )
             },
             bottomBar = {
-                // Liquid Glass floating tab bar: detached pill, translucent
-                // surface, hairline border — content scrolls beneath it.
+                // Minimal floating tab bar (#23): a slim Liquid Glass pill
+                // detached from the screen edges, replacing the stock
+                // Material3 NavigationBar. Only the selected destination
+                // shows its label, inside a soft accent pill; the other
+                // four are quiet icons. Same five destinations, same
+                // navigation logic — visuals/UX only.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                NavigationBar(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(32.dp))
-                        .border(
-                            BorderStroke(
-                                1.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.White.copy(alpha = if (AppThemeState.isDarkTheme) 0.38f else 0.7f),
-                                        ObsidianBorder.copy(alpha = 0.5f)
-                                    )
-                                )
-                            ),
-                            RoundedCornerShape(32.dp)
-                        ),
-                    containerColor = ObsidianSurface.copy(alpha = 0.62f),
-                    tonalElevation = 0.dp
-                ) {
-                    NavigationBarItem(
-                        selected = currentTab == ScreenTab.DASHBOARD,
-                        onClick = { currentTab = ScreenTab.DASHBOARD },
-                        icon = {
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.DASHBOARD) 1.15f else 1f,
-                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_shield_scale"
+                    Row(
+                        modifier = Modifier
+                            .shadow(
+                                elevation = 14.dp,
+                                shape = RoundedCornerShape(36.dp),
+                                clip = false
                             )
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = "Shield",
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .scale(iconScale)
+                            .liquidGlass(
+                                shape = RoundedCornerShape(36.dp),
+                                fillAlpha = 0.72f
                             )
-                        },
-                        label = {
-                            Text(
-                                text = tr("Shield", "محافظ"),
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        },
-                        colors = navigationBarColors(),
-                        modifier = Modifier.testTag("nav_tab_dashboard")
-                    )
-
-                    NavigationBarItem(
-                        selected = currentTab == ScreenTab.STREAK,
-                        onClick = { currentTab = ScreenTab.STREAK },
-                        icon = {
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.STREAK) 1.15f else 1f,
-                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_streak_scale"
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Whatshot,
-                                contentDescription = "Streak",
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .scale(iconScale)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = tr("Streak", "پاک‌زیستی"),
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        },
-                        colors = navigationBarColors(),
-                        modifier = Modifier.testTag("nav_tab_streak")
-                    )
-
-                    NavigationBarItem(
-                        selected = currentTab == ScreenTab.LIMITS,
-                        onClick = { currentTab = ScreenTab.LIMITS },
-                        icon = {
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.LIMITS) 1.15f else 1f,
-                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_limits_scale"
-                            )
-                            Icon(
-                                imageVector = Icons.Default.HourglassBottom,
-                                contentDescription = "Limits",
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .scale(iconScale)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = tr("Limits", "محدودیت"),
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        },
-                        colors = navigationBarColors(),
-                        modifier = Modifier.testTag("nav_tab_limits")
-                    )
-
-                    NavigationBarItem(
-                        selected = currentTab == ScreenTab.KEYWORDS,
-                        onClick = { currentTab = ScreenTab.KEYWORDS },
-                        icon = {
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.KEYWORDS) 1.15f else 1f,
-                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_rules_scale"
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Block,
-                                contentDescription = "Rules",
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .scale(iconScale)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = tr("Rules", "قوانین"),
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        },
-                        colors = navigationBarColors(),
-                        modifier = Modifier.testTag("nav_tab_keywords")
-                    )
-
-                    NavigationBarItem(
-                        selected = currentTab == ScreenTab.INFO,
-                        onClick = { currentTab = ScreenTab.INFO },
-                        icon = {
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (currentTab == ScreenTab.INFO) 1.18f else 1f,
-                                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                label = "nav_info_scale"
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = "Info & Backup",
-                                tint = if (currentTab == ScreenTab.INFO) EmeraldShield else ObsidianTextSecondary,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .scale(iconScale)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = tr("Info", "اطلاعات"),
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (currentTab == ScreenTab.INFO) ObsidianTextPrimary else ObsidianTextSecondary,
-                                fontSize = 10.sp,
-                                maxLines = 1
-                            )
-                        },
-                        colors = navigationBarColors(),
-                        modifier = Modifier.testTag("nav_tab_info")
-                    )
-                }
+                            .height(62.dp)
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        XBlockerNavItem(
+                            tab = ScreenTab.DASHBOARD,
+                            currentTab = currentTab,
+                            icon = Icons.Default.Shield,
+                            label = tr("Shield", "محافظ"),
+                            testTag = "nav_tab_dashboard",
+                            onSelect = { currentTab = it }
+                        )
+                        XBlockerNavItem(
+                            tab = ScreenTab.STREAK,
+                            currentTab = currentTab,
+                            icon = Icons.Default.Whatshot,
+                            label = tr("Streak", "پاک‌زیستی"),
+                            testTag = "nav_tab_streak",
+                            onSelect = { currentTab = it }
+                        )
+                        XBlockerNavItem(
+                            tab = ScreenTab.LIMITS,
+                            currentTab = currentTab,
+                            icon = Icons.Default.HourglassBottom,
+                            label = tr("Limits", "محدودیت"),
+                            testTag = "nav_tab_limits",
+                            onSelect = { currentTab = it }
+                        )
+                        XBlockerNavItem(
+                            tab = ScreenTab.KEYWORDS,
+                            currentTab = currentTab,
+                            icon = Icons.Default.Block,
+                            label = tr("Rules", "قوانین"),
+                            testTag = "nav_tab_keywords",
+                            onSelect = { currentTab = it }
+                        )
+                        XBlockerNavItem(
+                            tab = ScreenTab.INFO,
+                            currentTab = currentTab,
+                            icon = Icons.Default.Info,
+                            label = tr("Info", "اطلاعات"),
+                            testTag = "nav_tab_info",
+                            onSelect = { currentTab = it }
+                        )
+                    }
                 }
             }
         ) { innerPadding ->
@@ -871,6 +849,13 @@ fun MainContent(
                 )
             }
 
+            // Shake-to-report box (#22)
+            if (showReportBugDialog) {
+                ReportBugDialog(
+                    onDismiss = { showReportBugDialog = false }
+                )
+            }
+
             // NoBeep-Style Scientific Addiction Assessment Quiz (Item 16: First launch + Retake)
             if (showAddictionQuizDialog) {
                 ScientificAddictionQuizDialog(
@@ -1033,11 +1018,85 @@ private fun XBlockerCompactTopBar(
     }
 }
 
+/**
+ * One destination of the minimal floating bottom bar (#23).
+ *
+ * Unselected items are icon-only; the selected item expands — animated —
+ * into a soft accent pill (seasonal shield accent at low alpha, the same
+ * indicator color the old Material3 bar used) showing icon + label. The
+ * item's touch target stays 48dp tall even though the visible pill is
+ * smaller, and the label doubles as the icon's content description so
+ * screen readers announce every destination, selected or not.
+ */
 @Composable
-private fun navigationBarColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = EmeraldShield,
-    selectedTextColor = ObsidianTextPrimary,
-    indicatorColor = EmeraldShield.copy(alpha = 0.24f),
-    unselectedIconColor = ObsidianTextSecondary,
-    unselectedTextColor = ObsidianTextSecondary
-)
+private fun RowScope.XBlockerNavItem(
+    tab: ScreenTab,
+    currentTab: ScreenTab,
+    icon: ImageVector,
+    label: String,
+    testTag: String,
+    onSelect: (ScreenTab) -> Unit
+) {
+    val selected = currentTab == tab
+    val interactionSource = remember { MutableInteractionSource() }
+    val iconScale by animateFloatAsState(
+        targetValue = if (selected) 1.12f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "nav_icon_scale_$testTag"
+    )
+    val pillColor by animateColorAsState(
+        targetValue = if (selected) {
+            EmeraldShield.copy(alpha = 0.22f)
+        } else {
+            Color.Transparent
+        },
+        animationSpec = tween(250),
+        label = "nav_pill_color_$testTag"
+    )
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .height(48.dp)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = { onSelect(tab) }
+            )
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
+                .clip(RoundedCornerShape(24.dp))
+                .background(pillColor)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (selected) EmeraldShield else ObsidianTextSecondary,
+                modifier = Modifier
+                    .size(22.dp)
+                    .scale(iconScale)
+            )
+            if (selected) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = label,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    color = ObsidianTextPrimary
+                )
+            }
+        }
+    }
+}
