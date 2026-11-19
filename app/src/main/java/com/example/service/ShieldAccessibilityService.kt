@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -16,6 +17,8 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.example.ShieldApplication
+import com.example.data.blocklist.AdultBlocklistStore
+import com.example.data.blocklist.AdultDomainMatcher
 import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
 import com.example.data.model.BlockedKeyword
@@ -43,6 +46,7 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private lateinit var repository: ShieldRepository
     private lateinit var preferences: ShieldPreferences
+    private lateinit var adultBlocklistStore: AdultBlocklistStore
 
     private val powerManager: PowerManager? by lazy {
         getSystemService(PowerManager::class.java)
@@ -226,6 +230,7 @@ class ShieldAccessibilityService : AccessibilityService() {
         repository = app.repository
 
         preferences = app.preferences
+        adultBlocklistStore = app.adultBlocklistStore
 
         // #18: wake the deferred-overlay flush the moment the user unlocks.
         // ACTION_USER_PRESENT is a protected system broadcast; NOT_EXPORTED
@@ -725,7 +730,7 @@ class ShieldAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 5. Check Explicit Keywords & Adult Domains
+        // 5. Check Explicit Keywords & Custom Domains
         val screenTexts = mutableListOf<String>()
         event.text.forEach { charSeq ->
             charSeq?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { screenTexts.add(it) }
@@ -734,6 +739,28 @@ class ShieldAccessibilityService : AccessibilityService() {
             screenTexts.add(it)
         }
         screenTexts.addAll(TextContentScanner.extractScreenText(rootNode))
+
+        // 5a. Adult Site Blocking (#12): the single toggle that replaced
+        //     the Adult Preset. When the foreground window shows a URL /
+        //     host covered by the downloaded domain list (#13), the
+        //     browser is sent to the Google homepage and the standard
+        //     lockdown flow runs (which also records the block incident).
+        //     This runs before keyword matching so a listed domain always
+        //     wins over a coincidental keyword hit on the same page.
+        if (preferences.getIsAdultBlockEnabled()) {
+            val blocklistIndex = adultBlocklistStore.currentIndex()
+            val blockedHost = blocklistIndex?.let {
+                AdultDomainMatcher.findBlockedHost(screenTexts, it)
+            }
+            if (blockedHost != null) {
+                redirectBrowserToGoogleHome(activeRootPkg)
+                triggerLockdown(
+                    triggerWord = "Adult Site Blocked: $blockedHost",
+                    sourceApp = resolveReadableAppName(activeRootPkg)
+                )
+                return
+            }
+        }
 
         val matchedWord = TextContentScanner.findMatchingKeyword(screenTexts, cachedKeywords)
         if (matchedWord != null) {
@@ -888,6 +915,44 @@ class ShieldAccessibilityService : AccessibilityService() {
                 startActivity(lockIntent)
             } catch (e: Exception) {
                 Log.w(TAG, "Could not start LockdownActivity", e)
+            }
+        }
+    }
+
+    /**
+     * #12: sends the foreground browser to the Google homepage after an
+     * adult domain was blocked.
+     *
+     * NOTE on fidelity: replacing the current tab's URL in place is
+     * impossible through accessibility APIs — there is no way to rewrite
+     * another app's address bar. The ACTION_VIEW intent opens Google in
+     * the browser (targeted at the foreground package when possible),
+     * while the lockdown launched alongside covers the adult page; when
+     * the lock ends, the user lands on Google instead of the blocked
+     * page. Browsers whose URL is not accessibility-visible (Custom Tabs,
+     * in-app WebViews) cannot be domain-checked at all — the same
+     * coverage limit the keyword scanner has always had.
+     */
+    private fun redirectBrowserToGoogleHome(foregroundPackage: String) {
+        val googleHome = Uri.parse("https://www.google.com")
+        try {
+            val targeted = Intent(Intent.ACTION_VIEW, googleHome).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (foregroundPackage.isNotBlank()) {
+                    setPackage(foregroundPackage)
+                }
+            }
+            startActivity(targeted)
+        } catch (e: Exception) {
+            // The foreground app cannot handle VIEW intents (e.g. a chat
+            // app showing a link): fall back to the default browser.
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, googleHome)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (e2: Exception) {
+                Log.w(TAG, "Could not redirect browser to Google homepage", e2)
             }
         }
     }

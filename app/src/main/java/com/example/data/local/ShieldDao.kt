@@ -45,6 +45,9 @@ interface ShieldDao {
     @Query("DELETE FROM blocked_keywords WHERE id = :id")
     suspend fun deleteKeywordById(id: Long)
 
+    @Query("DELETE FROM blocked_keywords WHERE category IN (:categoryNames)")
+    suspend fun deleteKeywordsByCategoryNames(categoryNames: List<String>)
+
     @Query("SELECT * FROM block_incidents ORDER BY timestamp DESC")
     fun getAllIncidents(): Flow<List<BlockIncident>>
 

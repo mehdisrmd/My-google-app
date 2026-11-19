@@ -113,6 +113,9 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // WorkManager: the weekly adult-blocklist refresh (#13). The updater
+  // itself uses HttpURLConnection, so no new HTTP stack is pulled in.
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -33,6 +34,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -47,15 +49,12 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,12 +67,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.BlockedCategory
 import com.example.data.model.BlockedKeyword
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextSecondary
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun KeywordManagerScreen(
@@ -81,13 +83,18 @@ fun KeywordManagerScreen(
     onToggleKeyword: (BlockedKeyword) -> Unit,
     onDeleteKeyword: (Long) -> Unit,
     onAddKeyword: (text: String, isDomain: Boolean) -> Unit,
+    adultBlockEnabled: Boolean,
+    onToggleAdultBlock: (Boolean) -> Unit,
+    blocklistDomainCount: Int,
+    blocklistLastUpdatedMs: Long,
+    isBlocklistUpdating: Boolean,
+    onUpdateBlocklistNow: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
 
-    // Multi-select state for the Custom Blacklist tab (#15). Selection is a
+    // Multi-select state for the Custom Blacklist (#15). Selection is a
     // set of keyword ids; all transitions go through KeywordSelection so the
     // math stays unit-testable.
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -98,32 +105,25 @@ fun KeywordManagerScreen(
         selectedIds = emptySet()
     }
 
-    // Selection only exists on the Custom Blacklist tab; leaving the tab
-    // always cancels it.
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != 1) exitSelectionMode()
-    }
-
     // Drop ids whose rows disappeared (deleted elsewhere / list reloaded) so
     // the toolbar count never points at ghosts.
     LaunchedEffect(keywords) {
         selectedIds = KeywordSelection.retainExisting(selectedIds, keywords.map { it.id })
     }
 
-    val filteredList = remember(keywords, selectedTab, searchQuery) {
-        val tabFiltered = when (selectedTab) {
-            0 -> keywords.filter {
-                it.category == BlockedCategory.ADULT_EXPLICIT || it.category == BlockedCategory.ADULT_DOMAIN
-            }
-            else -> keywords.filter {
-                it.category == BlockedCategory.CUSTOM_KEYWORD || it.category == BlockedCategory.CUSTOM_DOMAIN
-            }
+    // #12: the Adult Preset tab is gone. Only the user's own custom rules
+    // live in this list now; adult sites are covered by the toggle card
+    // above and its downloadable domain list.
+    val filteredList = remember(keywords, searchQuery) {
+        val customOnly = keywords.filter {
+            it.category == BlockedCategory.CUSTOM_KEYWORD ||
+                it.category == BlockedCategory.CUSTOM_DOMAIN
         }
 
         if (searchQuery.isBlank()) {
-            tabFiltered
+            customOnly
         } else {
-            tabFiltered.filter { it.text.contains(searchQuery.trim(), ignoreCase = true) }
+            customOnly.filter { it.text.contains(searchQuery.trim(), ignoreCase = true) }
         }
     }
 
@@ -140,11 +140,26 @@ fun KeywordManagerScreen(
                 color = Color.White
             )
             Text(
-                text = "Manage words & porn website domains that trigger immediate screen lockdown",
+                text = "Manage your custom words & domains that trigger immediate screen lockdown",
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
             )
+
+            // Adult Site Blocking card (#12/#13): the single toggle that
+            // replaced the Adult Preset, with the downloadable list's
+            // status and a manual update action. The list also refreshes
+            // itself weekly in the background.
+            AdultBlockCard(
+                adultBlockEnabled = adultBlockEnabled,
+                onToggleAdultBlock = onToggleAdultBlock,
+                blocklistDomainCount = blocklistDomainCount,
+                blocklistLastUpdatedMs = blocklistLastUpdatedMs,
+                isBlocklistUpdating = isBlocklistUpdating,
+                onUpdateBlocklistNow = onUpdateBlocklistNow
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Search Field
             OutlinedTextField(
@@ -183,40 +198,8 @@ fun KeywordManagerScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Tabs: Adult Preset vs Custom Blacklist
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = ObsidianSurface,
-                contentColor = CrimsonPrimary
-            ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = {
-                        Text(
-                            text = "Adult Presets (${keywords.count { it.category == BlockedCategory.ADULT_EXPLICIT || it.category == BlockedCategory.ADULT_DOMAIN }})",
-                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 0) Color.White else ObsidianTextSecondary
-                        )
-                    }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = {
-                        Text(
-                            text = "Custom Blacklist (${keywords.count { it.category == BlockedCategory.CUSTOM_KEYWORD || it.category == BlockedCategory.CUSTOM_DOMAIN }})",
-                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 1) Color.White else ObsidianTextSecondary
-                        )
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Multi-select toolbar (#15): visible only while selecting custom
-            // rules. Delete applies to every selected id at once.
+            // Multi-select toolbar (#15): visible only while selecting
+            // custom rules. Delete applies to every selected id at once.
             if (isSelectionMode) {
                 Card(
                     modifier = Modifier
@@ -299,8 +282,7 @@ fun KeywordManagerScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = if (searchQuery.isNotEmpty()) "No matching rules found"
-                            else if (selectedTab == 1) "No custom rules added yet"
-                            else "No preset keywords",
+                            else "No custom rules added yet",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ObsidianTextSecondary
                         )
@@ -312,30 +294,22 @@ fun KeywordManagerScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredList, key = { it.id }) { item ->
-                        if (selectedTab == 1) {
-                            CustomKeywordRow(
-                                keyword = item,
-                                isSelectionMode = isSelectionMode,
-                                isSelected = item.id in selectedIds,
-                                onToggle = { onToggleKeyword(item) },
-                                onDelete = { onDeleteKeyword(item.id) },
-                                onRowClick = {
-                                    if (isSelectionMode) {
-                                        selectedIds = KeywordSelection.toggle(selectedIds, item.id)
-                                    }
-                                },
-                                onRowLongClick = {
-                                    if (!isSelectionMode) isSelectionMode = true
+                        CustomKeywordRow(
+                            keyword = item,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = item.id in selectedIds,
+                            onToggle = { onToggleKeyword(item) },
+                            onDelete = { onDeleteKeyword(item.id) },
+                            onRowClick = {
+                                if (isSelectionMode) {
                                     selectedIds = KeywordSelection.toggle(selectedIds, item.id)
                                 }
-                            )
-                        } else {
-                            KeywordItemCard(
-                                keyword = item,
-                                onToggle = { onToggleKeyword(item) },
-                                onDelete = null
-                            )
-                        }
+                            },
+                            onRowLongClick = {
+                                if (!isSelectionMode) isSelectionMode = true
+                                selectedIds = KeywordSelection.toggle(selectedIds, item.id)
+                            }
+                        )
                     }
                 }
             }
@@ -361,7 +335,6 @@ fun KeywordManagerScreen(
                 onAdd = { text, isDomain ->
                     onAddKeyword(text, isDomain)
                     showAddDialog = false
-                    selectedTab = 1
                 }
             )
         }
@@ -369,7 +342,168 @@ fun KeywordManagerScreen(
 }
 
 /**
- * One row of the Custom Blacklist tab (#15): the regular keyword card wrapped
+ * The "Block all adult sites" card (#12) with the blocklist status and
+ * manual update action (#13). It sits exactly where the Adult Preset tab
+ * used to live: one toggle instead of preset lists to manage.
+ */
+@Composable
+private fun AdultBlockCard(
+    adultBlockEnabled: Boolean,
+    onToggleAdultBlock: (Boolean) -> Unit,
+    blocklistDomainCount: Int,
+    blocklistLastUpdatedMs: Long,
+    isBlocklistUpdating: Boolean,
+    onUpdateBlocklistNow: () -> Unit
+) {
+    val lastUpdatedText = remember(blocklistLastUpdatedMs) {
+        if (blocklistLastUpdatedMs > 0L) {
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(blocklistLastUpdatedMs))
+        } else {
+            null
+        }
+    }
+
+    val statusText = when {
+        isBlocklistUpdating -> tr(
+            "Updating the site lists…",
+            "در حال به‌روزرسانی فهرست سایت‌ها…"
+        )
+        blocklistDomainCount <= 0 -> tr(
+            "The domain list has not been downloaded yet.",
+            "فهرست دامنه‌ها هنوز دانلود نشده است."
+        )
+        lastUpdatedText != null -> tr(
+            "$blocklistDomainCount domains · Updated $lastUpdatedText",
+            "$blocklistDomainCount دامنه · به‌روزرسانی: $lastUpdatedText"
+        )
+        else -> tr(
+            "$blocklistDomainCount domains (built-in starter list)",
+            "$blocklistDomainCount دامنه (فهرست اولیهٔ داخلی)"
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("adult_block_card"),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (adultBlockEnabled) CrimsonPrimary.copy(alpha = 0.55f) else ObsidianBorder
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(CrimsonPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = tr("Block All Adult Sites", "مسدود کردن همهٔ سایت‌های بزرگسال"),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = tr(
+                                "Any adult site is blocked and the browser is sent to the Google homepage.",
+                                "هر سایت بزرگسالی مسدود می‌شود و مرورگر به صفحهٔ اصلی گوگل فرستاده می‌شود."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = adultBlockEnabled,
+                    onCheckedChange = { onToggleAdultBlock(it) },
+                    modifier = Modifier.testTag("adult_block_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = CrimsonPrimary,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = ObsidianBorder
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                )
+                TextButton(
+                    onClick = onUpdateBlocklistNow,
+                    enabled = !isBlocklistUpdating,
+                    modifier = Modifier.testTag("adult_blocklist_update_button")
+                ) {
+                    if (isBlocklistUpdating) {
+                        CircularProgressIndicator(
+                            color = CrimsonPrimary,
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Update lists now", "به‌روزرسانی فهرست"),
+                        color = CrimsonPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One row of the Custom Blacklist (#15): the regular keyword card wrapped
  * in a swipe-to-dismiss shell. Swiping the row left or right deletes the rule
  * (red delete background is revealed behind the card). While multi-select
  * mode is active the swipe gesture is disabled so taps and long-presses

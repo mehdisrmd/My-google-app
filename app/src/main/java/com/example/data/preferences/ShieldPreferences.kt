@@ -168,6 +168,17 @@ class ShieldPreferences(private val context: Context) {
     private val _isInstallGuardEnabled = MutableStateFlow(getIsInstallGuardEnabled())
     val isInstallGuardEnabled: StateFlow<Boolean> = _isInstallGuardEnabled.asStateFlow()
 
+    // Adult Site Blocking (#12/#13): the single toggle that replaced the
+    // Adult Preset, plus the status of the downloadable domain list.
+    private val _isAdultBlockEnabled = MutableStateFlow(getIsAdultBlockEnabled())
+    val isAdultBlockEnabled: StateFlow<Boolean> = _isAdultBlockEnabled.asStateFlow()
+
+    private val _adultBlocklistLastUpdatedMs = MutableStateFlow(getAdultBlocklistLastUpdatedMs())
+    val adultBlocklistLastUpdatedMs: StateFlow<Long> = _adultBlocklistLastUpdatedMs.asStateFlow()
+
+    private val _adultBlocklistDomainCount = MutableStateFlow(getAdultBlocklistDomainCount())
+    val adultBlocklistDomainCount: StateFlow<Int> = _adultBlocklistDomainCount.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -328,6 +339,7 @@ class ShieldPreferences(private val context: Context) {
             // field ignored on import, so a backup can never restore a bypass.
             put("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
             put("isSmartFocusEnabled", getIsSmartFocusEnabled())
+            put("isAdultBlockEnabled", getIsAdultBlockEnabled())
 
             put("isDarkTheme", getIsDarkTheme())
             put("isPersianLanguage", getIsPersianLanguage())
@@ -372,6 +384,7 @@ class ShieldPreferences(private val context: Context) {
         // and its credentials never travel through backups (#7).
         val blackout = json.optBoolean("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
         val focus = json.optBoolean("isSmartFocusEnabled", getIsSmartFocusEnabled())
+        val adultBlock = json.optBoolean("isAdultBlockEnabled", getIsAdultBlockEnabled())
         val dark = json.optBoolean("isDarkTheme", getIsDarkTheme())
         val persian = json.optBoolean("isPersianLanguage", getIsPersianLanguage())
         val seasonalTheme = SeasonalTheme.fromName(
@@ -399,6 +412,7 @@ class ShieldPreferences(private val context: Context) {
             .putString(KEY_PERSONAL_PLEDGE, pledge)
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, blackout)
             .putBoolean(KEY_SMART_FOCUS_ENABLED, focus)
+            .putBoolean(KEY_ADULT_BLOCK_ENABLED, adultBlock)
             .putBoolean(KEY_IS_DARK_THEME, dark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian)
             .putString(KEY_SEASONAL_THEME, seasonalTheme.name)
@@ -422,6 +436,7 @@ class ShieldPreferences(private val context: Context) {
         _personalPledge.value = pledge
         _isBlackoutPrivacyShieldEnabled.value = blackout
         _isSmartFocusEnabled.value = focus
+        _isAdultBlockEnabled.value = adultBlock
         _isDarkTheme.value = dark
         _isPersianLanguage.value = persian
 
@@ -573,6 +588,46 @@ class ShieldPreferences(private val context: Context) {
             .putLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, state.allowanceUntilMs)
             .putBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, state.allowanceEngaged)
             .apply()
+    }
+
+    // Adult Site Blocking (#12) — the single "block all adult sites"
+    // toggle that replaced the Adult Preset. It defaults ON, exactly like
+    // the preset rows used to be enabled by default: the moment master
+    // protection is on, adult domains from the #13 list are blocked.
+    fun getIsAdultBlockEnabled(): Boolean {
+        return prefs.getBoolean(KEY_ADULT_BLOCK_ENABLED, true)
+    }
+
+    fun setAdultBlockEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_ADULT_BLOCK_ENABLED, enabled).apply()
+        _isAdultBlockEnabled.value = enabled
+    }
+
+    // Adult blocklist status (#13): when the merged list was last fetched
+    // from the internet (0 = never) and how many domains it currently holds
+    // (the fallback seed also records its count, with timestamp 0).
+    fun getAdultBlocklistLastUpdatedMs(): Long {
+        return prefs.getLong(KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS, 0L)
+    }
+
+    fun getAdultBlocklistDomainCount(): Int {
+        return prefs.getInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, 0)
+    }
+
+    fun saveAdultBlocklistUpdate(lastUpdatedMs: Long, domainCount: Int) {
+        prefs.edit()
+            .putLong(KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS, lastUpdatedMs)
+            .putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount)
+            .apply()
+        _adultBlocklistLastUpdatedMs.value = lastUpdatedMs
+        _adultBlocklistDomainCount.value = domainCount
+    }
+
+    fun setAdultBlocklistDomainCount(domainCount: Int) {
+        prefs.edit().putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount).apply()
+        _adultBlocklistDomainCount.value = domainCount
     }
 
     /**
@@ -1471,6 +1526,9 @@ class ShieldPreferences(private val context: Context) {
         _personalPledge.value = defaultPledge
         _isPinSet.value = false
         _securityQuestion.value = ""
+        _isAdultBlockEnabled.value = true
+        _adultBlocklistLastUpdatedMs.value = 0L
+        _adultBlocklistDomainCount.value = 0
         _isBlackoutPrivacyShieldEnabled.value = false
         _screenshotTemporaryUnlockUntil.value = 0L
         _isSmartFocusEnabled.value = false
@@ -1504,6 +1562,9 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
         private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"
+        private const val KEY_ADULT_BLOCK_ENABLED = "key_adult_block_enabled"
+        private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
+        private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"

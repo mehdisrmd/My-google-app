@@ -1,6 +1,5 @@
 package com.example.data.repository
 
-import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
 import com.example.data.local.ShieldDao
 import com.example.data.model.AppUsageLimit
@@ -41,7 +40,7 @@ class ShieldRepository(
 
     init {
         CoroutineScope(Dispatchers.IO).launch {
-            seedDefaultKeywordsIfNeeded()
+            removeAdultPresetKeywords()
             seedDefaultSectionRulesIfNeeded()
             removePredefinedExampleLimitsIfAny()
         }
@@ -56,15 +55,22 @@ class ShieldRepository(
         }
     }
 
-    suspend fun seedDefaultKeywordsIfNeeded() {
-        val existingPairs = dao.getAllKeywordsSync()
-            .map { it.text to it.category }
-            .toSet()
-        val missing = DefaultKeywords.getPreloadedKeywords()
-            .filter { (it.text to it.category) !in existingPairs }
-        if (missing.isNotEmpty()) {
-            dao.insertKeywords(missing)
-        }
+    /**
+     * #12 upgrade cleanup: the Adult Preset is gone, replaced by the single
+     * "block all adult sites" toggle backed by the downloadable #13 domain
+     * list. Every row the preset ever seeded (ADULT_EXPLICIT words and
+     * ADULT_DOMAIN domains) is deleted, so stale preset entries can never
+     * keep matching in the scanner. Custom rows are never touched: the
+     * delete is scoped by category, not by text, so a custom rule that
+     * happens to share a string with an old preset entry survives.
+     */
+    suspend fun removeAdultPresetKeywords() {
+        dao.deleteKeywordsByCategoryNames(
+            listOf(
+                BlockedCategory.ADULT_EXPLICIT.name,
+                BlockedCategory.ADULT_DOMAIN.name
+            )
+        )
     }
 
     suspend fun seedDefaultSectionRulesIfNeeded() {
@@ -89,7 +95,6 @@ class ShieldRepository(
         dao.clearAllSectionRules()
         dao.clearAllFocusSlots()
 
-        seedDefaultKeywordsIfNeeded()
         seedDefaultSectionRulesIfNeeded()
     }
 
@@ -186,6 +191,15 @@ class ShieldRepository(
                     val catName = item.optString("category", BlockedCategory.CUSTOM_KEYWORD.name)
                     val category = runCatching { BlockedCategory.valueOf(catName) }
                         .getOrDefault(BlockedCategory.CUSTOM_KEYWORD)
+                    // #12: old backups can carry Adult Preset rows. Those
+                    // categories no longer exist as rules — the domains are
+                    // covered by the downloadable blocklist — so they are
+                    // skipped instead of resurrecting the deleted preset.
+                    if (category == BlockedCategory.ADULT_EXPLICIT ||
+                        category == BlockedCategory.ADULT_DOMAIN
+                    ) {
+                        continue
+                    }
                     restoredKeywords.add(
                         BlockedKeyword(
                             text = text,

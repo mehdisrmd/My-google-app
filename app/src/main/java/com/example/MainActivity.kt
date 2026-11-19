@@ -88,6 +88,7 @@ import com.example.ui.focus.SmartFocusEngine
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.info.AppInfo
 import com.example.ui.info.InfoAndUpdateScreen
+import com.example.ui.keywords.BlocklistWaitScreen
 import com.example.ui.keywords.KeywordManagerScreen
 import com.example.ui.limits.AppLimitsAndSectionsScreen
 import com.example.ui.lockdown.LockdownActivity
@@ -316,6 +317,39 @@ fun MainContent(
     var isPinSessionLocked by remember {
         mutableStateOf(true)
     }
+
+    // #13 first-launch gate: while no adult domain list exists on disk,
+    // a wait screen covers the app and the first download runs. A failed
+    // download is not a lockout — the wait screen offers Retry, or
+    // continuing with the built-in starter list (see BlocklistWaitScreen).
+    var blocklistGatePassed by remember {
+        mutableStateOf(app.adultBlocklistStore.hasList())
+    }
+    var blocklistDownloadFailed by remember { mutableStateOf(false) }
+
+    fun startBlocklistDownload() {
+        coroutineScope.launch {
+            blocklistDownloadFailed = false
+            val result = app.adultBlocklistUpdater.updateNow()
+            if (result.success || app.adultBlocklistStore.hasList()) {
+                blocklistGatePassed = true
+            } else {
+                blocklistDownloadFailed = true
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!blocklistGatePassed) {
+            startBlocklistDownload()
+        }
+    }
+
+    // #12/#13 adult blocking state for the Rules tab card.
+    val isAdultBlockEnabled by preferences.isAdultBlockEnabled.collectAsStateWithLifecycle()
+    val blocklistLastUpdatedMs by preferences.adultBlocklistLastUpdatedMs.collectAsStateWithLifecycle()
+    val blocklistDomainCount by preferences.adultBlocklistDomainCount.collectAsStateWithLifecycle()
+    var isBlocklistUpdating by remember { mutableStateOf(false) }
     var isAppInBackgroundCurtain by remember { mutableStateOf(false) }
 
     LaunchedEffect(isBlackoutPrivacyShieldEnabled, screenshotTempUnlockUntil) {
@@ -759,6 +793,25 @@ fun MainContent(
                         onAddKeyword = { text, isDomain ->
                             coroutineScope.launch { repository.addCustomKeywordsBatch(text, isDomain) }
                         },
+                        adultBlockEnabled = isAdultBlockEnabled,
+                        onToggleAdultBlock = { enabled ->
+                            preferences.setAdultBlockEnabled(enabled)
+                        },
+                        blocklistDomainCount = blocklistDomainCount,
+                        blocklistLastUpdatedMs = blocklistLastUpdatedMs,
+                        isBlocklistUpdating = isBlocklistUpdating,
+                        onUpdateBlocklistNow = {
+                            if (!isBlocklistUpdating) {
+                                isBlocklistUpdating = true
+                                coroutineScope.launch {
+                                    try {
+                                        app.adultBlocklistUpdater.updateNow()
+                                    } finally {
+                                        isBlocklistUpdating = false
+                                    }
+                                }
+                            }
+                        },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -828,6 +881,23 @@ fun MainContent(
             PinLockOverlay(
                 preferences = preferences,
                 onUnlocked = { isPinSessionLocked = false }
+            )
+        }
+
+        // First-launch blocklist gate (#13): drawn last so it covers
+        // everything — including the PIN gate — until the first domain
+        // list exists. The download keeps running behind the PIN gate on
+        // later launches; this only appears when there is no list at all.
+        if (!blocklistGatePassed) {
+            BlocklistWaitScreen(
+                isFailed = blocklistDownloadFailed,
+                onRetry = { startBlocklistDownload() },
+                onContinueWithSeed = {
+                    coroutineScope.launch {
+                        app.adultBlocklistUpdater.writeFallbackSeed()
+                        blocklistGatePassed = true
+                    }
+                }
             )
         }
 

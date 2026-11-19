@@ -1,9 +1,10 @@
 package com.example
 
-import com.example.data.local.DefaultKeywords
 import com.example.data.local.DefaultSectionRules
 import com.example.data.model.AppLimitBudget
 import com.example.data.model.AppUsageLimit
+import com.example.data.model.BlockedCategory
+import com.example.data.model.BlockedKeyword
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.preferences.UninstallGuard
 import com.example.notification.LockdownNotificationManager
@@ -33,9 +34,16 @@ import org.junit.Test
 
 class ExampleRobolectricTest {
 
+    // #12: the Adult Preset (DefaultKeywords) is deleted — adult sites are
+    // covered by the downloadable domain list now. These tests keep
+    // covering the same scanner mechanics with equivalent CUSTOM rules,
+    // which is what user-managed words/domains run on.
+
     @Test
     fun `test porn website detection`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "pornhub.com", category = BlockedCategory.CUSTOM_DOMAIN)
+        )
         val match = TextContentScanner.findFirstMatch(
             "Visiting https://pornhub.com/view_video.php on browser",
             keywords
@@ -46,7 +54,9 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test explicit keyword detection`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "xxx", category = BlockedCategory.CUSTOM_KEYWORD)
+        )
         val match = TextContentScanner.findFirstMatch(
             "Searching for free xxx video streaming",
             keywords
@@ -57,7 +67,10 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test Persian adult keyword detection`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "فیلم سوپر", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "پورن", category = BlockedCategory.CUSTOM_KEYWORD)
+        )
         val match = TextContentScanner.findFirstMatch(
             "جستجوی فیلم سوپر و دانلود پورن در وب",
             keywords
@@ -68,7 +81,9 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test Persian text normalization with diacritics`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "سکسی", category = BlockedCategory.CUSTOM_KEYWORD)
+        )
         val match = TextContentScanner.findFirstMatch(
             "متن تستی سِکْسِی آنلاین",
             keywords
@@ -79,7 +94,12 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test short Persian words do not false-positive inside innocent Persian text`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "کس", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "گی", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "سکس", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "پورن", category = BlockedCategory.CUSTOM_KEYWORD)
+        )
         val safeSentence = "زندگی سالم و کسب و کار موفق در اکنون و گفتگو"
         val matchSafe = TextContentScanner.findFirstMatch(safeSentence, keywords)
         assertNull("Expected no false positive on innocent Persian words, got: ${matchSafe?.matchedKeyword}", matchSafe)
@@ -132,7 +152,9 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test leetspeak evasion detection`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "porn", category = BlockedCategory.CUSTOM_KEYWORD)
+        )
         val match = TextContentScanner.findFirstMatch(
             "trying to bypass with p0rn video",
             keywords
@@ -143,7 +165,11 @@ class ExampleRobolectricTest {
 
     @Test
     fun `test innocent content is not blocked`() {
-        val keywords = DefaultKeywords.getPreloadedKeywords()
+        val keywords = listOf(
+            BlockedKeyword(text = "porn", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "xxx", category = BlockedCategory.CUSTOM_KEYWORD),
+            BlockedKeyword(text = "pornhub.com", category = BlockedCategory.CUSTOM_DOMAIN)
+        )
         val match = TextContentScanner.findFirstMatch(
             "Reading tutorial about Kotlin programming and Jetpack Compose layouts",
             keywords
