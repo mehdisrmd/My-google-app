@@ -2,9 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+        Play Protect hygiene (#25): this list is deliberately minimal —
+        every permission below is exercised by a named feature (see
+        PLAY-PROTECT-NOTES.md at the repo root for the per-permission
+        audit). SYSTEM_ALERT_WINDOW was removed in v0.5: nothing in the
+        app draws overlay windows (the block screen is a normal Activity),
+        so the permission was attack surface with no function. Do not add
+        permissions back without a feature that actually calls their APIs.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

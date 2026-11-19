@@ -105,7 +105,7 @@ import kotlinx.coroutines.withContext
  * this screen is a plain outbound link to the repository, nothing more.
  */
 object AppInfo {
-    const val CURRENT_APP_VERSION = "0.4"
+    const val CURRENT_APP_VERSION = "0.5"
     const val TELEGRAM_HANDLE = "@mehdisrmd"
     const val TELEGRAM_URL = "https://t.me/mehdisrmd"
     const val GITHUB_REPO_URL = "https://github.com/mehdisrmd/My-google-app"

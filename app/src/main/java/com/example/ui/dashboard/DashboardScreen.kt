@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -129,6 +128,7 @@ import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
 import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.security.PinAndPrivacyDashboardSection
+import com.example.ui.security.RestrictedSettingsGuideDialog
 import com.example.ui.streak.NoBeepYoutubeResetStreakDialog
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonDark
@@ -209,9 +209,6 @@ fun DashboardScreen(
     var isAccessibilityEnabled by remember {
         mutableStateOf(ShieldPreferences.isAccessibilityServiceEnabled(context))
     }
-    var hasOverlayPermission by remember {
-        mutableStateOf(ShieldPreferences.hasOverlayPermission(context))
-    }
     var isBatteryOptExempt by remember {
         mutableStateOf(ShieldPreferences.isIgnoringBatteryOptimizations(context))
     }
@@ -220,8 +217,11 @@ fun DashboardScreen(
     }
 
     // The master shield can only be enabled after ALL required system
-    // permissions are granted (Accessibility, Overlay, Battery, Notifications).
-    val allPermissionsGranted = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
+    // permissions are granted (Accessibility, Battery, Notifications).
+    // "Display over other apps" is NOT required (#25): the block screen
+    // is a normal Activity, nothing draws overlay windows, and the app
+    // no longer declares SYSTEM_ALERT_WINDOW.
+    val allPermissionsGranted = isAccessibilityEnabled && isBatteryOptExempt && hasNotificationPermission
     var showPermissionsNeededHint by remember { mutableStateOf(false) }
 
     // Uninstall Guard (5-hour wait): the master switch cannot be turned OFF
@@ -247,7 +247,7 @@ fun DashboardScreen(
     var expandUninstallAndLockDropdown by remember { mutableStateOf(false) }
     var expandSmartFocusDropdown by remember { mutableStateOf(false) }
     var expandSecurityAndPermissionsDropdown by remember {
-        mutableStateOf(!isAccessibilityEnabled || !hasOverlayPermission)
+        mutableStateOf(!isAccessibilityEnabled)
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -258,7 +258,6 @@ fun DashboardScreen(
 
     val checkPermissions = {
         isAccessibilityEnabled = ShieldPreferences.isAccessibilityServiceEnabled(context)
-        hasOverlayPermission = ShieldPreferences.hasOverlayPermission(context)
         isBatteryOptExempt = ShieldPreferences.isIgnoringBatteryOptimizations(context)
         hasNotificationPermission = checkNotificationPermission(context)
         deviceOwnerStatus = DeviceOwnerManager.status(context)
@@ -1337,15 +1336,10 @@ fun DashboardScreen(
                 if (!allPermsReady) {
                     PermissionRequiredCard(
                         isAccessibilityEnabled = isAccessibilityEnabled,
-                        hasOverlayPermission = hasOverlayPermission,
                         isBatteryOptExempt = isBatteryOptExempt,
                         hasNotificationPermission = hasNotificationPermission,
                         onEnableAccessibility = {
                             openAccessibilitySettings(context)
-                            checkPermissions()
-                        },
-                        onEnableOverlay = {
-                            openOverlaySettings(context)
                             checkPermissions()
                         },
                         onDisableBatteryOpt = {
@@ -2068,14 +2062,20 @@ fun LockDurationCard(
 @Composable
 fun PermissionRequiredCard(
     isAccessibilityEnabled: Boolean,
-    hasOverlayPermission: Boolean,
     isBatteryOptExempt: Boolean,
     hasNotificationPermission: Boolean,
     onEnableAccessibility: () -> Unit,
-    onEnableOverlay: () -> Unit,
     onDisableBatteryOpt: () -> Unit,
     onEnableNotifications: () -> Unit
 ) {
+    // #25: on Android 13+ a sideloaded app cannot enable its accessibility
+    // service until the user allows "restricted settings" in App info.
+    // The app cannot bypass that system step — it can only explain it.
+    var showRestrictedSettingsGuide by remember { mutableStateOf(false) }
+    if (showRestrictedSettingsGuide) {
+        RestrictedSettingsGuideDialog(onDismiss = { showRestrictedSettingsGuide = false })
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = ObsidianCard),
@@ -2145,49 +2145,22 @@ fun PermissionRequiredCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Overlay permission item
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+            // #25 guide entry: only relevant while the service is still
+            // off — that is exactly when Android 13+'s restricted-settings
+            // wall blocks sideloaded apps from enabling accessibility.
+            if (!isAccessibilityEnabled) {
+                TextButton(
+                    onClick = { showRestrictedSettingsGuide = true },
+                    modifier = Modifier.testTag("restricted_settings_guide_button")
+                ) {
                     Text(
-                        text = tr("2. Display Over Other Apps", "۲. نمایش روی سایر برنامه‌ها"),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ObsidianTextPrimary
-                    )
-                    Text(
-                        text = if (hasOverlayPermission) tr("Active", "فعال") else tr("Required for Block Screen", "لازم برای نمایش صفحه قفل"),
+                        text = tr(
+                            "Can't turn it on? Android may be blocking it — see the fix",
+                            "روشن نمی‌شود؟ شاید اندروید جلوی آن را گرفته — راه‌حل را ببینید"
+                        ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (hasOverlayPermission) EmeraldShield else ObsidianTextSecondary
+                        color = AmberWarning
                     )
-                }
-
-                if (hasOverlayPermission) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Enabled",
-                        tint = EmeraldShield,
-                        modifier = Modifier.size(22.dp)
-                    )
-                } else {
-                    Button(
-                        onClick = onEnableOverlay,
-                        colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("enable_overlay_button")
-                    ) {
-                        Text(
-                            text = tr("Grant", "اعطا"),
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
                 }
             }
 
@@ -2201,7 +2174,7 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tr("3. Unrestricted Battery", "۳. لغو بهینه‌سازی باتری"),
+                        text = tr("2. Unrestricted Battery", "۲. لغو بهینه‌سازی باتری"),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = ObsidianTextPrimary
@@ -2241,7 +2214,7 @@ fun PermissionRequiredCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = tr("4. Notifications", "۴. اعلان‌ها"),
+                            text = tr("3. Notifications", "۳. اعلان‌ها"),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = ObsidianTextPrimary
@@ -2383,15 +2356,6 @@ private fun openAccessibilitySettings(context: Context) {
     }
 }
 
-private fun openOverlaySettings(context: Context) {
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${context.packageName}")
-            )
-            context.startActivity(intent)
-        }
-    } catch (_: Exception) {
-    }
-}
+// No openOverlaySettings() anymore (#25): the app declares no
+// SYSTEM_ALERT_WINDOW permission and never asks for it — the block
+// screen is a normal Activity, not an overlay window.

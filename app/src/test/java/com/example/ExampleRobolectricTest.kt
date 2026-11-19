@@ -205,7 +205,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test v0_4 version, My-google-app GitHub repo, 32 daily quotes, 8 milestone badges, and NoBeep YouTube reset lessons`() {
+    fun `test v0_5 version, My-google-app GitHub repo, 32 daily quotes, 8 milestone badges, and NoBeep YouTube reset lessons`() {
         // Theme toggle (Dark vs White)
         AppThemeState.isDarkTheme = true
         val darkBg = ObsidianBg
@@ -224,9 +224,9 @@ class ExampleRobolectricTest {
         AppThemeState.isPersianLanguage = false
         assertEquals("X Blocker", AppStrings.tr("X Blocker", "ایکس بلاکر"))
 
-        // Item 9 & App Info: static identity — app version 0.4, developer Telegram,
+        // Item 9 & App Info: static identity — app version 0.5, developer Telegram,
         // GitHub repo as a plain link (the in-app update checker was removed).
-        assertEquals("0.4", AppInfo.CURRENT_APP_VERSION)
+        assertEquals("0.5", AppInfo.CURRENT_APP_VERSION)
         assertEquals("@mehdisrmd", AppInfo.TELEGRAM_HANDLE)
         assertEquals("https://t.me/mehdisrmd", AppInfo.TELEGRAM_URL)
         assertEquals("https://github.com/mehdisrmd/My-google-app", AppInfo.GITHUB_REPO_URL)

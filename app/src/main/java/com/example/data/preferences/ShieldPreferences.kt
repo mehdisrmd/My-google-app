@@ -1682,14 +1682,10 @@ class ShieldPreferences(private val context: Context) {
             return false
         }
 
-        fun hasOverlayPermission(context: Context): Boolean {
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Settings.canDrawOverlays(context)
-
-            } else {
-                true
-            }
-        }
+        // No hasOverlayPermission() check exists anymore (#25): the app
+        // never draws overlay windows — the block screen is a normal
+        // Activity — so SYSTEM_ALERT_WINDOW is not declared and no UI
+        // asks for it. See PLAY-PROTECT-NOTES.md.
 
         fun isIgnoringBatteryOptimizations(context: Context): Boolean {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true

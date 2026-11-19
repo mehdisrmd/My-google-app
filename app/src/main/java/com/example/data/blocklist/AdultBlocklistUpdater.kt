@@ -22,6 +22,11 @@ import java.net.URL
  * job is not justified — the updater needs nothing beyond redirects,
  * timeouts and a body read.
  *
+ * Play Protect hygiene (#25): this updater downloads DATA only — plain
+ * text domain lists that are parsed as strings. Nothing it fetches is
+ * ever executed, loaded as code, or written anywhere code could run
+ * from. Keep it that way.
+ *
  * All entry points are serialized on one shared [Mutex] so the first-launch
  * download, the manual "update now" button and the weekly worker can never
  * interleave writes.
