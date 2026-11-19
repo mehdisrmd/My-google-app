@@ -24,6 +24,7 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.ui.lockdown.LockdownActivity
+import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -72,6 +73,18 @@ class ShieldAccessibilityService : AccessibilityService() {
      */
     @Volatile
     private var graceRecheckAbsentScans = 0
+
+    /**
+     * #27 ticker bookkeeping: whether a watched install UI (installer
+     * confirmation / Play progress page) was visible on the previous
+     * tick. Used to edge-trigger the Play backstop and to consume an
+     * engaged one-shot allowance when the install UI closes.
+     */
+    @Volatile
+    private var installUiWasVisible = false
+
+    @Volatile
+    private var playInstallUiWasVisible = false
 
     /** #18: fires the parked overlay launch as soon as the user unlocks. */
     private val userPresentReceiver = object : BroadcastReceiver() {
@@ -321,22 +334,76 @@ class ShieldAccessibilityService : AccessibilityService() {
                         continue
                     }
 
-                    // 2b. Uninstall Guard (ticker path): even between accessibility
+                    // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
                     //     screens that target X Blocker while the guard is armed.
-                    if (rootNode != null && activePkg.isNotBlank() && isUninstallGuardArmed() &&
-                        TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(
+                    //     #6: the classifier also covers Clear Data on our
+                    //     App-info page and switching our accessibility
+                    //     service off — same intervention for all three.
+                    val tamperAction = if (rootNode != null && activePkg.isNotBlank() &&
+                        isUninstallGuardArmed()
+                    ) {
+                        TextContentScanner.findTamperAttempt(
                             rootNode,
                             activePkg,
                             packageName
                         )
-                    ) {
+                    } else {
+                        null
+                    }
+                    if (tamperAction != null) {
                         triggerLockdown(
 
-                            triggerWord = "Prevent Uninstall Guard",
+                            triggerWord = tamperTriggerWord(tamperAction),
                             sourceApp = "System Settings"
                         )
                         continue
+                    }
+
+                    // 2d. Install Guard (#27, ticker path): watch the
+                    //     classic installer's confirmation UI and, as a
+                    //     backstop, Play's install-in-progress page. The
+                    //     guard has its own toggle and does NOT depend on
+                    //     master protection being on.
+                    if (preferences.getIsInstallGuardEnabled() && rootNode != null &&
+                        activePkg.isNotBlank() && activePkg != packageName
+                    ) {
+                        val installTexts = TextContentScanner.extractScreenText(rootNode)
+                        val isPlay = InstallGuardLogic.isPlayStorePackage(activePkg)
+                        val installUiVisible = when {
+                            InstallGuardLogic.isInstallerPackage(activePkg) ->
+                                InstallGuardLogic.looksLikeInstallConfirmation(
+                                    installTexts,
+                                    packageName
+                                )
+                            isPlay ->
+                                InstallGuardLogic.looksLikePlayInstallInProgress(installTexts)
+                            else -> false
+                        }
+                        if (installUiVisible) {
+                            // The Play backstop is edge-triggered: its
+                            // progress page can sit on screen for minutes,
+                            // only its APPEARANCE is a new attempt. The
+                            // installer dialog, once dismissed by our
+                            // BACK, is gone — no edge needed there.
+                            if (!isPlay || !playInstallUiWasVisible) {
+                                handleInstallAttempt()
+                            }
+                            installUiWasVisible = true
+                            if (isPlay) playInstallUiWasVisible = true
+                        } else {
+                            if (installUiWasVisible) {
+                                // The watched install UI closed: consume
+                                // a one-shot allowance it had engaged.
+                                preferences.saveInstallGuardState(
+                                    InstallGuardLogic.onInstallUiHidden(
+                                        preferences.getInstallGuardState()
+                                    )
+                                )
+                            }
+                            installUiWasVisible = false
+                            playInstallUiWasVisible = false
+                        }
                     }
 
                     if (!preferences.getIsProtectionEnabled()) continue
@@ -544,19 +611,50 @@ class ShieldAccessibilityService : AccessibilityService() {
         val activeWindowPkg = rootNode?.packageName?.toString().orEmpty()
         if (activeWindowPkg == packageName) return
 
-        // 2. Prevent Uninstall Guard (Item 7 + Uninstall Delay feature):
-        //    armed while the standalone toggle is ON or master protection is
-        //    ON — but never after the 5-hour uninstall wait has elapsed,
-
-        //    which is the owner's deliberate escape hatch.
+        // 2. Tamper Guard (Item 7 + Uninstall Delay feature, extended by
+        //    #6): armed while the standalone toggle is ON or master
+        //    protection is ON — but never after the 5-hour uninstall wait
+        //    has elapsed, which is the owner's deliberate escape hatch.
+        //    Covers uninstall, Clear Data on our App-info page, and
+        //    switching our accessibility service off.
         if (isUninstallGuardArmed()) {
-            if (TextContentScanner.isAttemptingToUninstallOrDisableXBlocker(rootNode, pkgName, packageName)) {
+            val tamperAction = TextContentScanner.findTamperAttempt(rootNode, pkgName, packageName)
+            if (tamperAction != null) {
                 performGlobalAction(GLOBAL_ACTION_BACK)
                 performGlobalAction(GLOBAL_ACTION_HOME)
                 triggerLockdown(
-                    triggerWord = "Prevent Uninstall Guard",
+                    triggerWord = tamperTriggerWord(tamperAction),
                     sourceApp = "System Settings"
                 )
+                return
+            }
+        }
+
+        // 2e. Install Guard (#27, event path): gated by its own toggle,
+        //     independent of master protection.
+        if (preferences.getIsInstallGuardEnabled()) {
+            // Google Play starts the download the moment "Install" is
+            // tapped, so the tap itself is the attempt to intercept.
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED &&
+                InstallGuardLogic.isPlayStorePackage(pkgName)
+            ) {
+                val clickedLabel = event.source?.text?.toString()
+                    ?: event.source?.contentDescription?.toString()
+                    ?: event.text.firstOrNull()?.toString()
+                if (InstallGuardLogic.isInstallButtonLabel(clickedLabel)) {
+                    handleInstallAttempt()
+                    return
+                }
+            }
+            // The classic installer waits on its confirmation dialog, so
+            // watching its window content is a complete gate.
+            if (rootNode != null && InstallGuardLogic.isInstallerPackage(pkgName) &&
+                InstallGuardLogic.looksLikeInstallConfirmation(
+                    TextContentScanner.extractScreenText(rootNode),
+                    packageName
+                )
+            ) {
+                handleInstallAttempt()
                 return
             }
         }
@@ -790,6 +888,71 @@ class ShieldAccessibilityService : AccessibilityService() {
                 startActivity(lockIntent)
             } catch (e: Exception) {
                 Log.w(TAG, "Could not start LockdownActivity", e)
+            }
+        }
+    }
+
+    /** Incident-log wording per tamper action (#6). */
+    private fun tamperTriggerWord(action: TamperAttemptClassifier.TamperAction): String {
+        return when (action) {
+            TamperAttemptClassifier.TamperAction.UNINSTALL -> "Prevent Uninstall Guard"
+            TamperAttemptClassifier.TamperAction.CLEAR_DATA -> "Prevent Clear Data Guard"
+            TamperAttemptClassifier.TamperAction.DISABLE_ACCESSIBILITY ->
+                "Prevent Accessibility Disable Guard"
+        }
+    }
+
+    /**
+     * #27: an install attempt was detected (installer dialog, Play
+     * Install tap, or Play progress page). Runs the pure state machine
+     * against the persisted guard state: an active one-shot allowance
+     * lets the install proceed; an already-running prompt just keeps the
+     * user out of the installer; otherwise the attempt is interrupted
+     * (BACK + HOME) and the 10-second PIN prompt is launched.
+     */
+    private fun handleInstallAttempt() {
+        val now = System.currentTimeMillis()
+        val state = preferences.getInstallGuardState()
+        val (newState, action) = InstallGuardLogic.onInstallAttempt(state, now)
+        if (newState != state) {
+            preferences.saveInstallGuardState(newState)
+        }
+        when (action) {
+            InstallGuardLogic.AttemptAction.ALLOW -> Unit
+            InstallGuardLogic.AttemptAction.ALREADY_PROMPTING -> {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }
+            InstallGuardLogic.AttemptAction.PROMPT -> {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                launchInstallGuardPrompt()
+            }
+        }
+    }
+
+    /**
+     * Launches the install-guard PIN pad — unless the G6 display gate
+     * says a call or the lock screen owns the display right now. In that
+     * case the prompt is simply not shown: the install was already
+     * interrupted and, with no way to confirm, stays blocked (the prompt
+     * state expires on its own).
+     */
+    private fun launchInstallGuardPrompt() {
+        if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return
+        mainHandler.post {
+            if (overlayGateDecision() != OverlayDisplayGate.Decision.SHOW) return@post
+            val promptIntent = Intent(this, InstallGuardActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                )
+            }
+            try {
+                startActivity(promptIntent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not start InstallGuardActivity", e)
             }
         }
     }

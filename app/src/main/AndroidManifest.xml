@@ -72,6 +72,15 @@
             android:excludeFromRecents="false"
             android:theme="@style/Theme.MyApplication" />
 
+        <!-- Install Guard (#27): the 10-second PIN-confirm prompt shown
+             when a new app install is attempted while the guard is ON. -->
+        <activity
+            android:name=".ui.security.InstallGuardActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.MyApplication" />
+
         <service
             android:name=".service.ShieldAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

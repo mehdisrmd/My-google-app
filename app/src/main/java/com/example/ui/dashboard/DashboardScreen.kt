@@ -49,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.ExpandLess
@@ -188,6 +189,7 @@ fun DashboardScreen(
     }
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
+    val isInstallGuardEnabled by effectivePrefs.isInstallGuardEnabled.collectAsStateWithLifecycle()
     val bestChainDays by effectivePrefs.longestStreakDays.collectAsStateWithLifecycle()
     val quizScorePercent by effectivePrefs.quizScorePercent.collectAsStateWithLifecycle()
     val quizSeverityEn by effectivePrefs.quizSeverityEn.collectAsStateWithLifecycle()
@@ -852,6 +854,78 @@ fun DashboardScreen(
                                 }
                             },
                             modifier = Modifier.testTag("prevent_uninstall_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
+                // Install Guard Card (#27): new app installs need a PIN
+                // confirmation within 10 seconds, even from Google Play.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isInstallGuardEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Install Guard", "محافظ نصب برنامه"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Installing a new app (Play Store or APK) asks for your PIN. No PIN within 10 seconds = install blocked.",
+                                        "نصب برنامهٔ جدید (پلی‌استور یا APK) پین می‌خواهد. بدون پین ظرف ۱۰ ثانیه = نصب مسدود است."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isInstallGuardEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                effectivePrefs.setInstallGuardEnabled(targetEnabled)
+                            },
+                            modifier = Modifier.testTag("install_guard_switch"),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.Black,
                                 checkedTrackColor = EmeraldShield

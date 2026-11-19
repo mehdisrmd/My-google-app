@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityManager
+import com.example.service.InstallGuardLogic
 import com.example.service.KeywordGraceEpisode
 import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
@@ -163,6 +164,9 @@ class ShieldPreferences(private val context: Context) {
 
     private val _isPreventUninstallEnabled = MutableStateFlow(getIsPreventUninstallEnabled())
     val isPreventUninstallEnabled: StateFlow<Boolean> = _isPreventUninstallEnabled.asStateFlow()
+
+    private val _isInstallGuardEnabled = MutableStateFlow(getIsInstallGuardEnabled())
+    val isInstallGuardEnabled: StateFlow<Boolean> = _isInstallGuardEnabled.asStateFlow()
 
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
@@ -528,6 +532,47 @@ class ShieldPreferences(private val context: Context) {
 
     fun getUninstallWaitRemainingMillis(nowMs: Long = System.currentTimeMillis()): Long {
         return UninstallGuard.remainingMillis(getUninstallUnlockDeadline(), nowMs)
+    }
+
+    // Install Guard (#27) — when ON, installing a new app requires a PIN
+    // confirmation within 10 seconds (see InstallGuardLogic).
+    fun getIsInstallGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_INSTALL_GUARD_ENABLED, false)
+    }
+
+    fun setInstallGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        val editor = prefs.edit().putBoolean(KEY_INSTALL_GUARD_ENABLED, enabled)
+        if (!enabled) {
+            // Turning the guard off abandons any pending prompt/allowance.
+            editor.putLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, 0L)
+            editor.putLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, 0L)
+            editor.putBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, false)
+        }
+        editor.apply()
+        _isInstallGuardEnabled.value = enabled
+    }
+
+    /**
+     * The install-guard session (pending prompt / one-shot allowance) is
+     * persisted so the accessibility service, its ticker and the PIN
+     * activity all act on the same state even across process death.
+     */
+    fun getInstallGuardState(): InstallGuardLogic.State {
+        return InstallGuardLogic.State(
+            promptDeadlineMs = prefs.getLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, 0L),
+            allowanceUntilMs = prefs.getLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, 0L),
+            allowanceEngaged = prefs.getBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, false)
+        )
+    }
+
+    fun saveInstallGuardState(state: InstallGuardLogic.State) {
+        prefs.edit()
+            .putLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, state.promptDeadlineMs)
+            .putLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, state.allowanceUntilMs)
+            .putBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, state.allowanceEngaged)
+            .apply()
     }
 
     /**
@@ -1455,6 +1500,10 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_LOCK_DURATION_MINUTES = "key_lock_duration_minutes"
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
         private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
+        private const val KEY_INSTALL_GUARD_ENABLED = "key_install_guard_enabled"
+        private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
+        private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
+        private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"

@@ -81,43 +81,28 @@ object TextContentScanner {
         currentPackage: String,
         ownPackage: String = ""
     ): Boolean {
-        if (root == null) return false
-        val pkgLower = currentPackage.lowercase()
-        val isInstallerOrSettings = pkgLower.contains("packageinstaller") ||
-            pkgLower == "com.android.settings" ||
-            pkgLower.contains("miui.securitycenter") ||
-            pkgLower.contains("permissioncontroller")
+        return findTamperAttempt(root, currentPackage, ownPackage) ==
+            TamperAttemptClassifier.TamperAction.UNINSTALL
+    }
 
-        if (!isInstallerOrSettings) return false
-
-        val texts = extractScreenText(root)
-        val combinedLower = texts.joinToString(" | ").lowercase()
-        val ownLower = ownPackage.trim().lowercase()
-        val mentionsOurApp = combinedLower.contains("x blocker") ||
-            combinedLower.contains("com.aistudio.shieldblock") ||
-            combinedLower.contains("shieldaccessibilityservice") ||
-
-            (ownLower.isNotEmpty() && combinedLower.contains(ownLower))
-
-        if (!mentionsOurApp) return false
-
-        if (pkgLower.contains("packageinstaller")) {
-            // The package installer also hosts INSTALL / UPDATE dialogs for
-            // this app (e.g. sideloading a newer X Blocker APK). Those must
-            // stay usable — only the UNINSTALL confirmation counts.
-            return combinedLower.contains("uninstall") ||
-                combinedLower.contains("حذف نصب") ||
-                combinedLower.contains("حذف شود")
-        }
-
-        val hasDangerAction = combinedLower.contains("do you want to uninstall") ||
-            combinedLower.contains("uninstall this app") ||
-            combinedLower.contains("disable this app") ||
-            combinedLower.contains("if you disable this app") ||
-            combinedLower.contains("آیا می‌خواهید این برنامه را حذف کنید") ||
-            combinedLower.contains("حذف نصب شود") ||
-            combinedLower.contains("غیرفعال کردن این برنامه")
-        return hasDangerAction
+    /**
+     * #6: full tamper classification for the current Settings / installer
+     * window — uninstall, Clear Data on this app's App-info page, or
+     * switching this app's accessibility service off. The phrase logic
+     * lives in the pure [TamperAttemptClassifier] so it is unit-testable;
+     * this wrapper only extracts the window's texts.
+     */
+    fun findTamperAttempt(
+        root: AccessibilityNodeInfo?,
+        currentPackage: String,
+        ownPackage: String = ""
+    ): TamperAttemptClassifier.TamperAction? {
+        if (root == null) return null
+        return TamperAttemptClassifier.classify(
+            screenTexts = extractScreenText(root),
+            currentPackage = currentPackage,
+            ownPackage = ownPackage
+        )
     }
 
     /**
