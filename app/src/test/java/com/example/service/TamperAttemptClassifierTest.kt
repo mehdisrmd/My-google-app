@@ -66,6 +66,49 @@ class TamperAttemptClassifierTest {
         )
     }
 
+    // ---- #54: after the rename, Settings shows the NEW label
+    // ("usafe"); the guards must recognize our pages by it too. ----
+
+    @Test
+    fun settingsUninstallConfirmationWithNewName_isUninstall() {
+        val texts = listOf(
+            "usafe",
+            "Do you want to uninstall this app?",
+            "Cancel", "OK"
+        )
+        assertEquals(
+            TamperAction.UNINSTALL,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun stopServiceDialogWithNewName_isAccessibilityOff() {
+        val texts = listOf(
+            "Stop usafe?",
+            "If you stop this service, it may stop working correctly.",
+            "Cancel", "Stop"
+        )
+        assertEquals(
+            TamperAction.DISABLE_ACCESSIBILITY,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
+    @Test
+    fun ownServiceDetailPageWithNewName_isAccessibilityOff() {
+        val texts = listOf(
+            "usafe",
+            "On",
+            "Use usafe",
+            "Accessibility shortcut"
+        )
+        assertEquals(
+            TamperAction.DISABLE_ACCESSIBILITY,
+            TamperAttemptClassifier.classify(texts, settings, own)
+        )
+    }
+
     // ---- CLEAR_DATA (#6a) ----
 
     @Test
@@ -267,6 +310,70 @@ class TamperAttemptClassifierTest {
         val texts = listOf("Edit VPN profile", "Name", "Save")
         assertNull(
             TamperAttemptClassifier.classify(texts, "com.android.chrome", own)
+        )
+    }
+
+    // ---- VPN SECTION PAGE (#51, batch 4): instant ejection ----
+
+    @Test
+    fun vpnListPage_isSectionPage() {
+        val texts = listOf("VPN", "None", "Add VPN profile")
+        assertEquals(
+            true,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(texts, settings)
+        )
+    }
+
+    @Test
+    fun vpnProfilePageWithAlwaysOn_isSectionPage() {
+        // The per-profile page is where the Always-on switch lives —
+        // exactly what the ejection exists to keep unreachable.
+        val texts = listOf(
+            "HomeVPN", "Always-on VPN", "Block connections without VPN", "Forget VPN"
+        )
+        assertEquals(
+            true,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(texts, settings)
+        )
+    }
+
+    @Test
+    fun vpnEditorPage_isNotSectionPage() {
+        // The editor keeps the #42 lockdown intervention instead.
+        val texts = listOf("Edit VPN profile", "Name", "Type", "Server address", "Save")
+        assertEquals(
+            false,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(texts, settings)
+        )
+    }
+
+    @Test
+    fun networkHubPage_isNotSectionPage() {
+        // The hub page has a bare "VPN" row too — its Wi-Fi / airplane
+        // companions veto the match so the hub stays usable.
+        val texts = listOf(
+            "Network & internet", "Wi-Fi", "Mobile", "Airplane mode", "VPN", "Private DNS"
+        )
+        assertEquals(
+            false,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(texts, settings)
+        )
+    }
+
+    @Test
+    fun vpnTitleOutsideSettings_isNotSectionPage() {
+        val texts = listOf("VPN")
+        assertEquals(
+            false,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(texts, "com.android.chrome")
+        )
+    }
+
+    @Test
+    fun emptyTexts_isNotSectionPage() {
+        assertEquals(
+            false,
+            TamperAttemptClassifier.isVpnSettingsSectionPage(emptyList(), settings)
         )
     }
 

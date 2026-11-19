@@ -65,8 +65,14 @@ class AdultBlocklistStore(context: Context) {
     }
 
     /**
-     * Replaces the stored list with [sortedDomains] in one atomic rename and
-     * invalidates the cached index so the next lookup sees the new list.
+     * Replaces the stored list with [sortedDomains] in one atomic rename.
+     *
+     * #53 (batch 4): the lookup index is rebuilt HERE, from the bytes
+     * just serialized, instead of invalidating the cache — previously
+     * the first accessibility event after every update re-read and
+     * re-parsed the whole file (hundreds of thousands of domains) on
+     * the main thread. The stamp is taken after the write, so a later
+     * external change still triggers a reload in [currentIndex].
      */
     fun writeDomainsAtomically(sortedDomains: List<String>) {        directory.mkdirs()
         val serialized = AdultBlocklistParser.serializeDomains(sortedDomains)
@@ -78,8 +84,8 @@ class AdultBlocklistStore(context: Context) {
             tempFile.delete()
         }
         synchronized(this) {
-            cachedIndex = null
-            cachedStamp = Long.MIN_VALUE
+            cachedIndex = SortedDomainIndex.fromBytes(serialized.toByteArray(Charsets.UTF_8))
+            cachedStamp = stampOf()
         }
     }
 

@@ -215,12 +215,12 @@ fun PinLockOverlay(
     }
     val subtitle = when (step) {
         PinGateStep.ENTER_PIN -> tr(
-            "X Blocker asks for your PIN every time it opens.",
-            "ایکس بلاکر هر بار موقع باز شدن پین شما را می‌خواهد."
+            "usafe asks for your PIN every time it opens.",
+            "usafe هر بار موقع باز شدن پین شما را می‌خواهد."
         )
         PinGateStep.SETUP_NEW_PIN -> tr(
-            "First, set a 4 to 6 digit PIN. You will need it every time you open X Blocker.",
-            "اول یک پین ۴ تا ۶ رقمی تعیین کنید. هر بار موقع باز کردن ایکس بلاکر به آن نیاز دارید."
+            "First, set a 4 to 6 digit PIN. You will need it every time you open usafe.",
+            "اول یک پین ۴ تا ۶ رقمی تعیین کنید. هر بار موقع باز کردن usafe به آن نیاز دارید."
         )
         PinGateStep.SETUP_CONFIRM_PIN, PinGateStep.FORGOT_CONFIRM_PIN -> tr(
             "Type the same PIN once more to confirm it.",
@@ -946,8 +946,8 @@ fun PinAndPrivacyDashboardSection(
                         )
                         Text(
                             text = tr(
-                                "A PIN is required every time X Blocker opens. Fingerprint unlock is not available.",
-                                "هر بار برای ورود به ایکس بلاکر پین لازم است. بازگشایی با اثر انگشت وجود ندارد."
+                                "A PIN is required every time usafe opens. Fingerprint unlock is not available.",
+                                "هر بار برای ورود به usafe پین لازم است. بازگشایی با اثر انگشت وجود ندارد."
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = ObsidianTextSecondary

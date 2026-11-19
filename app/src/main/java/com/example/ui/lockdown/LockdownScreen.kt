@@ -249,7 +249,7 @@ fun LockdownScreen(
                         isFinished -> tr("Focus Period Complete", "پایان زمان قفل محافظتی")
                         isDailyLimitLock -> tr("Time's Up for Today", "زمان امروزت تموم شد")
                         isPanicLock -> tr("Emergency Panic Shield Active", "قفل اضطراری پنیک فعال است")
-                        else -> tr("Screen Locked by X Blocker", "صفحه توسط ایکس بلاکر قفل شد")
+                        else -> tr("Screen Locked by usafe", "صفحه توسط usafe قفل شد")
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
@@ -722,7 +722,7 @@ fun LockdownScreen(
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text(
-                            text = tr("Return to X Blocker", "بازگشت به ایکس بلاکر"),
+                            text = tr("Return to usafe", "بازگشت به usafe"),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Black
                         )

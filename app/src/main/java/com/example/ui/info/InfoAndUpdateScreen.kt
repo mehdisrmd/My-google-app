@@ -237,7 +237,7 @@ fun InfoAndUpdateScreen(
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                                contentDescription = "X Blocker Minimal White Icon",
+                                contentDescription = "usafe Minimal White Icon",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(56.dp)
@@ -251,7 +251,7 @@ fun InfoAndUpdateScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = tr("X Blocker", "ایکس بلاکر"),
+                                        text = tr("usafe", "usafe"),
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.Black,
                                         color = ObsidianTextPrimary,
@@ -830,7 +830,7 @@ fun InfoAndUpdateScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         text = tr(
-                            "Paste your exported X Blocker backup JSON below to restore all rules, limits, and clean streak:",
+                            "Paste your exported usafe backup JSON below to restore all rules, limits, and clean streak:",
                             "متن JSON پشتیبان قبلی خود را در کادر زیر قرار دهید تا تمام اطلاعات بازیابی شوند:"
                         ),
                         style = MaterialTheme.typography.bodySmall,

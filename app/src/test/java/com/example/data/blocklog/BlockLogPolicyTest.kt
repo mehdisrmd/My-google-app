@@ -187,6 +187,10 @@ class BlockLogPolicyTest {
         // #45 (batch 2): the force-stop guard's trigger word gets its own
         // reason, ahead of the generic "Prevent … Guard" tamper branch.
         assertEquals("Force stop attempt blocked", BlockLogPolicy.reasonFor("Prevent Force Stop Guard"))
+        // #51 (batch 4): the VPN knockdown and the Settings VPN section
+        // ejection get their own reasons.
+        assertEquals("Foreign VPN disconnected", BlockLogPolicy.reasonFor("Foreign VPN Disconnected"))
+        assertEquals("VPN settings blocked", BlockLogPolicy.reasonFor("VPN Settings Page Blocked"))
         assertEquals("Manual panic lock", BlockLogPolicy.reasonFor("Emergency Panic Shield (15m Voluntary Lock)"))
         assertEquals("Blocked keyword", BlockLogPolicy.reasonFor("some custom word"))
     }

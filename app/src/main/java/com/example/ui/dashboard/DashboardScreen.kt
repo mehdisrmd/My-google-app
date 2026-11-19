@@ -1,9 +1,11 @@
 package com.example.ui.dashboard
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -124,6 +126,7 @@ import com.example.data.preferences.UninstallGuard
 import com.example.deviceowner.DeviceOwnerManager
 import com.example.deviceowner.DeviceOwnerPolicy
 import com.example.deviceowner.ShieldDeviceAdminReceiver
+import com.example.notification.LockdownNotificationManager
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
@@ -280,6 +283,31 @@ fun DashboardScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasNotificationPermission = granted
+        if (granted) {
+            // #52 (batch 4): granting from inside the app arms the
+            // daily streak alarm chain right away (it is also
+            // (re)scheduled at every app start and boot regardless —
+            // posting itself checks the permission and skips silently
+            // while it is not granted).
+            LockdownNotificationManager.scheduleDailyStreakAlarm(context)
+        }
+    }
+
+    // #51 (batch 4): the Block VPN toggle's knockdown needs the system
+    // VPN consent for X Blocker itself. It is requested the first time
+    // the toggle is turned on; a denial keeps the toggle OFF and shows
+    // the note on the VPN card.
+    var vpnConsentDenied by remember { mutableStateOf(false) }
+    val vpnConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            vpnConsentDenied = false
+            effectivePrefs.setVpnConfigBlockEnabled(true)
+            DeviceOwnerManager.reconcile(context)
+        } else {
+            vpnConsentDenied = true
+        }
     }
 
     val checkPermissions = {
@@ -349,7 +377,7 @@ fun DashboardScreen(
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.ic_stop_sign_x_blocker_1794123976741),
-                                contentDescription = "X Blocker Minimal Icon",
+                                contentDescription = "usafe Minimal Icon",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(50.dp)
@@ -366,7 +394,7 @@ fun DashboardScreen(
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = tr("X Blocker", "ایکس بلاکر"),
+                                        text = tr("usafe", "usafe"),
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.Black,
                                         color = ObsidianTextPrimary
@@ -828,8 +856,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Blocks uninstalling X Blocker. Turning off requires typing a long motivational sentence.",
-                                        "مانع از حذف ایکس بلاکر می‌شود. خاموش کردن نیازمند نوشتن جمله انگیزشی طولانی است."
+                                        "Blocks uninstalling usafe. Turning off requires typing a long motivational sentence.",
+                                        "مانع از حذف usafe می‌شود. خاموش کردن نیازمند نوشتن جمله انگیزشی طولانی است."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -978,8 +1006,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Blocks 'Clear data' on X Blocker's App info page, so the app cannot be wiped from Settings. Its own switch — works even while the master switch is off.",
-                                        "«پاک کردن داده‌ها» در صفحه اطلاعات ایکس بلاکر را مسدود می‌کند تا برنامه از تنظیمات پاک نشود. کلید جدا دارد — حتی وقتی محافظ اصلی خاموش است هم کار می‌کند."
+                                        "Blocks 'Clear data' on usafe's App info page, so the app cannot be wiped from Settings. Its own switch — works even while the master switch is off.",
+                                        "«پاک کردن داده‌ها» در صفحه اطلاعات usafe را مسدود می‌کند تا برنامه از تنظیمات پاک نشود. کلید جدا دارد — حتی وقتی محافظ اصلی خاموش است هم کار می‌کند."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1016,6 +1044,7 @@ fun DashboardScreen(
                         if (isVpnConfigBlockEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
                     )
                 ) {
+                    Column {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1066,11 +1095,35 @@ fun DashboardScreen(
                         Switch(
                             checked = isVpnConfigBlockEnabled,
                             onCheckedChange = { targetEnabled ->
-                                effectivePrefs.setVpnConfigBlockEnabled(targetEnabled)
-                                // Apply (or clear) the Device Owner
-                                // restriction right away; a no-op when
-                                // the app is not Device Owner.
-                                DeviceOwnerManager.reconcile(context)
+                                if (targetEnabled) {
+                                    // #51 (batch 4): ask for the system
+                                    // VPN consent the FIRST time the
+                                    // toggle is enabled (the knockdown
+                                    // cannot work without it). Once
+                                    // granted, prepare() returns null and
+                                    // enabling is silent forever after.
+                                    // Denied → the toggle stays OFF and
+                                    // the card shows why.
+                                    val consentIntent = try {
+                                        VpnService.prepare(context)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    if (consentIntent == null) {
+                                        vpnConsentDenied = false
+                                        effectivePrefs.setVpnConfigBlockEnabled(true)
+                                        // Apply the Device Owner
+                                        // restriction right away; a
+                                        // no-op when not Device Owner.
+                                        DeviceOwnerManager.reconcile(context)
+                                    } else {
+                                        vpnConsentLauncher.launch(consentIntent)
+                                    }
+                                } else {
+                                    vpnConsentDenied = false
+                                    effectivePrefs.setVpnConfigBlockEnabled(false)
+                                    DeviceOwnerManager.reconcile(context)
+                                }
                             },
                             modifier = Modifier.testTag("vpn_config_block_switch"),
                             colors = SwitchDefaults.colors(
@@ -1078,6 +1131,21 @@ fun DashboardScreen(
                                 checkedTrackColor = EmeraldShield
                             )
                         )
+                    }
+                    // #51 (batch 4): shown when the one-time VPN consent
+                    // was denied — the toggle stayed OFF, and this is why.
+                    if (vpnConsentDenied) {
+                        Text(
+                            text = tr(
+                                "VPN permission is required: without it, foreign VPNs cannot be disconnected.",
+                                "اجازه‌ی VPN لازمه: بدون اون نمی‌شه VPNهای خارجی رو قطع کرد."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = AmberWarning,
+                            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)
+                        )
+                    }
                     }
                 }
 
@@ -1133,8 +1201,8 @@ fun DashboardScreen(
                                 )
                                 Text(
                                     text = tr(
-                                        "Prevents force-stopping X Blocker from Settings, which would kill every guard at once. Hard system block with Device Owner; otherwise X Blocker's App info page is interrupted.",
-                                        "از توقف اجباری ایکس بلاکر از تنظیمات جلوگیری می‌کند؛ توقفی که همه محافظ‌ها را یکجا از کار می‌اندازد. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه اطلاعات ایکس بلاکر قطع می‌شود."
+                                        "Prevents force-stopping usafe from Settings, which would kill every guard at once. Hard system block with Device Owner; otherwise usafe's App info page is interrupted.",
+                                        "از توقف اجباری usafe از تنظیمات جلوگیری می‌کند؛ توقفی که همه محافظ‌ها را یکجا از کار می‌اندازد. با مالک دستگاه (Device Owner) مسدودسازی سیستمی و قطعی است؛ در غیر این صورت صفحه اطلاعات usafe قطع می‌شود."
                                     ),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontSize = 11.sp,
@@ -1225,8 +1293,8 @@ fun DashboardScreen(
                                     )
                                     Text(
                                         text = tr(
-                                            "The hard block, enforced by Android itself: X Blocker cannot be uninstalled (not even via ADB) and USB debugging stays off.",
-                                            "مسدودسازی قطعی با اجرای خود اندروید: ایکس بلاکر حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
+                                            "The hard block, enforced by Android itself: usafe cannot be uninstalled (not even via ADB) and USB debugging stays off.",
+                                            "مسدودسازی قطعی با اجرای خود اندروید: usafe حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
                                         ),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontSize = 11.sp,
@@ -1253,8 +1321,8 @@ fun DashboardScreen(
                         when (deviceOwnerStatus) {
                             DeviceOwnerPolicy.Status.DEVICE_OWNER -> Text(
                                 text = tr(
-                                    "Status: ACTIVE — X Blocker is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
-                                    "وضعیت: فعال — ایکس بلاکر مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
+                                    "Status: ACTIVE — usafe is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
+                                    "وضعیت: فعال — usafe مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
@@ -1263,8 +1331,8 @@ fun DashboardScreen(
 
                             DeviceOwnerPolicy.Status.PROFILE_OWNER_ONLY -> Text(
                                 text = tr(
-                                    "Status: X Blocker only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
-                                    "وضعیت: ایکس بلاکر فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
+                                    "Status: usafe only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
+                                    "وضعیت: usafe فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 11.sp,
@@ -1343,8 +1411,8 @@ fun DashboardScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = tr(
-                                        "Uninstall X Blocker (Wait: ${uninstallWaitLabel(uninstallWaitMinutes)})",
-                                        "حذف نصب ایکس بلاکر (انتظار: ${uninstallWaitLabel(uninstallWaitMinutes)})"
+                                        "Uninstall usafe (Wait: ${uninstallWaitLabel(uninstallWaitMinutes)})",
+                                        "حذف نصب usafe (انتظار: ${uninstallWaitLabel(uninstallWaitMinutes)})"
                                     ),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
@@ -1366,8 +1434,8 @@ fun DashboardScreen(
                             uninstallUnlockedNow -> {
                                 Text(
                                     text = tr(
-                                        "✓ Wait complete — the uninstall guard has stood down: you can now uninstall X Blocker from system Settings.",
-                                        "✓ انتظار تمام شد — محافظ حذف کنار رفت: حالا می‌توانید ایکس بلاکر را از تنظیمات سیستم حذف کنید."
+                                        "✓ Wait complete — the uninstall guard has stood down: you can now uninstall usafe from system Settings.",
+                                        "✓ انتظار تمام شد — محافظ حذف کنار رفت: حالا می‌توانید usafe را از تنظیمات سیستم حذف کنید."
                                     ),
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
@@ -1870,7 +1938,7 @@ fun MiddleSectionBlockerCard(
                         )
                         Text(
                             text = tr(
-                                "DMs & Feed work normally; entering Reels opens the X Blocker Lock Page.",
+                                "DMs & Feed work normally; entering Reels opens the usafe Lock Page.",
                                 "چت و فید عادی کار می‌کند؛ با ورود به Reels صفحه قفل کامل باز می‌شود."
                             ),
                             style = MaterialTheme.typography.bodySmall,
@@ -2428,22 +2496,40 @@ fun PermissionRequiredCard(
                 }
             }
 
-            if (!hasNotificationPermission) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = tr("3. Notifications", "۳. اعلان‌ها"),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ObsidianTextPrimary
-                        )
-                    }
+            // #52 (batch 4): the Notifications row is where the
+            // POST_NOTIFICATIONS permission lives now — it is never
+            // requested at app launch anymore. The row always renders
+            // and shows its state like the rows above: granted (always
+            // the case before Android 13) shows Active; otherwise the
+            // Allow button fires the runtime request.
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tr("3. Notifications", "۳. اعلان‌ها"),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = if (hasNotificationPermission) tr("Active", "فعال") else tr("For the daily streak reminder", "برای یادآور روزانه زنجیره"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasNotificationPermission) EmeraldShield else ObsidianTextSecondary
+                    )
+                }
 
+                if (hasNotificationPermission) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Enabled",
+                        tint = EmeraldShield,
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
                     Button(
                         onClick = onEnableNotifications,
                         colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),

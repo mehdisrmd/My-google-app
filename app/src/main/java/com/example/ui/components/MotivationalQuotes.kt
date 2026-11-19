@@ -96,8 +96,8 @@ object MotivationalQuotesRepository {
             id = 4,
             quoteEn = "Don't break the chain! A 5-minute dopamine trap is never worth trading weeks of hard-earned freedom.",
             quoteFa = "زنجیره را نشکن! یک وسوسه ۵ دقیقه‌ای هرگز ارزش از دست دادن روزها تلاش و آزادی را ندارد.",
-            authorEn = "X Blocker Iron Rule",
-            authorFa = "قانون آهنین ایکس بلاکر",
+            authorEn = "usafe Iron Rule",
+            authorFa = "قانون آهنین usafe",
             categoryBadgeEn = "DON'T BREAK THE CHAIN",
             categoryBadgeFa = "زنجیره را نشکن",
             isChainMotto = true
@@ -336,8 +336,8 @@ object MotivationalQuotesRepository {
             id = 30,
             quoteEn = "Don't break the chain! Respect the version of yourself who fought through yesterday to give you today's streak.",
             quoteFa = "زنجیره را نشکن! به تلاشِ دیروزِ خودت احترام بگذار که جنگید تا امروز این زنجیره پاک را داشته باشی.",
-            authorEn = "X Blocker Daily Creed",
-            authorFa = "منشور روزانه ایکس بلاکر",
+            authorEn = "usafe Daily Creed",
+            authorFa = "منشور روزانه usafe",
             categoryBadgeEn = "DON'T BREAK THE CHAIN",
             categoryBadgeFa = "زنجیره را نشکن",
             isChainMotto = true

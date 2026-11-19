@@ -64,17 +64,27 @@ class SortedDomainIndex private constructor(
         /**
          * Builds an index over serialized list bytes (one domain per line).
          * A trailing newline does not create a phantom empty entry.
+         *
+         * #53 (batch 4): two passes over the bytes fill a primitive
+         * IntArray directly — the old ArrayList<Int> boxed every one of
+         * the ~223k line offsets into its own Integer object during the
+         * parse. Same result, no boxing and no growth copies.
          */
         fun fromBytes(bytes: ByteArray): SortedDomainIndex {
             if (bytes.isEmpty()) return SortedDomainIndex(bytes, IntArray(0))
-            val starts = ArrayList<Int>()
-            starts.add(0)
+            var lineCount = 1
+            for (i in bytes.indices) {
+                if (bytes[i] == NEWLINE && i + 1 < bytes.size) lineCount++
+            }
+            val starts = IntArray(lineCount)
+            var next = 0
+            starts[next++] = 0
             for (i in bytes.indices) {
                 if (bytes[i] == NEWLINE && i + 1 < bytes.size) {
-                    starts.add(i + 1)
+                    starts[next++] = i + 1
                 }
             }
-            return SortedDomainIndex(bytes, starts.toIntArray())
+            return SortedDomainIndex(bytes, starts)
         }
 
         /** Builds an index directly from an already-sorted domain list. */

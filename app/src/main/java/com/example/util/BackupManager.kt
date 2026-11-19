@@ -48,7 +48,7 @@ object BackupManager {
         return try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 ?: return false
-            cm.setPrimaryClip(ClipData.newPlainText("X Blocker Backup JSON", jsonContent))
+            cm.setPrimaryClip(ClipData.newPlainText("usafe Backup JSON", jsonContent))
             true
         } catch (_: Exception) {
             false
@@ -79,11 +79,11 @@ object BackupManager {
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/json"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "X Blocker Backup")
+                putExtra(Intent.EXTRA_SUBJECT, "usafe Backup")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(
-                Intent.createChooser(shareIntent, "Export X Blocker Backup").apply {
+                Intent.createChooser(shareIntent, "Export usafe Backup").apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             )
