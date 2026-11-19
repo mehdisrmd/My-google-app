@@ -1,22 +1,18 @@
 package com.example
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -357,23 +353,12 @@ fun MainContent(
         mutableStateOf(!preferences.hasCompletedOnboardingQuiz())
     }
 
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            LockdownNotificationManager.scheduleDailyStreakAlarm(context)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            !LockdownNotificationManager.hasNotificationPermission(context)
-        ) {
-            runCatching {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-    }
+    // #52 (batch 4): POST_NOTIFICATIONS is NEVER requested at launch.
+    // The permission is asked for only from inside the app — the
+    // Notifications row of the dashboard's Permission Setup card (see
+    // DashboardScreen) — and every posting path already checks
+    // LockdownNotificationManager.hasNotificationPermission and skips
+    // silently when it is not granted.
 
     val isProtectionEnabled by preferences.isProtectionEnabled.collectAsStateWithLifecycle()
     val lockDurationMinutes by preferences.lockDurationMinutes.collectAsStateWithLifecycle()

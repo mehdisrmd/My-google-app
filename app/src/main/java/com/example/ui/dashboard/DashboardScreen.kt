@@ -126,6 +126,7 @@ import com.example.data.preferences.UninstallGuard
 import com.example.deviceowner.DeviceOwnerManager
 import com.example.deviceowner.DeviceOwnerPolicy
 import com.example.deviceowner.ShieldDeviceAdminReceiver
+import com.example.notification.LockdownNotificationManager
 import com.example.ui.components.MotivationalQuoteBannerCard
 import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
@@ -282,6 +283,14 @@ fun DashboardScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasNotificationPermission = granted
+        if (granted) {
+            // #52 (batch 4): granting from inside the app arms the
+            // daily streak alarm chain right away (it is also
+            // (re)scheduled at every app start and boot regardless —
+            // posting itself checks the permission and skips silently
+            // while it is not granted).
+            LockdownNotificationManager.scheduleDailyStreakAlarm(context)
+        }
     }
 
     // #51 (batch 4): the Block VPN toggle's knockdown needs the system
@@ -2487,22 +2496,40 @@ fun PermissionRequiredCard(
                 }
             }
 
-            if (!hasNotificationPermission) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = tr("3. Notifications", "۳. اعلان‌ها"),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ObsidianTextPrimary
-                        )
-                    }
+            // #52 (batch 4): the Notifications row is where the
+            // POST_NOTIFICATIONS permission lives now — it is never
+            // requested at app launch anymore. The row always renders
+            // and shows its state like the rows above: granted (always
+            // the case before Android 13) shows Active; otherwise the
+            // Allow button fires the runtime request.
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tr("3. Notifications", "۳. اعلان‌ها"),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = if (hasNotificationPermission) tr("Active", "فعال") else tr("For the daily streak reminder", "برای یادآور روزانه زنجیره"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasNotificationPermission) EmeraldShield else ObsidianTextSecondary
+                    )
+                }
 
+                if (hasNotificationPermission) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Enabled",
+                        tint = EmeraldShield,
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
                     Button(
                         onClick = onEnableNotifications,
                         colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
