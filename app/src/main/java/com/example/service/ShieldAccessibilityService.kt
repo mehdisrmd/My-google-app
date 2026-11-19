@@ -696,8 +696,11 @@ class ShieldAccessibilityService : AccessibilityService() {
         if (anyTamperGuardEnabled()) {
             val tamperAction = TextContentScanner.findTamperAttempt(rootNode, pkgName, packageName)
             if (tamperAction != null && isTamperGuardApplicable(tamperAction)) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                performGlobalAction(GLOBAL_ACTION_HOME)
+                // #37 (batch 2): NO BACK/HOME here — triggerLockdown
+                // initiates the block-log screenshot FIRST and only then
+                // navigates away; leaving the Settings page before the
+                // capture would record the launcher instead of the
+                // tamper screen.
                 triggerLockdown(
                     triggerWord = tamperTriggerWord(tamperAction),
                     sourceApp = "System Settings",
@@ -831,13 +834,25 @@ class ShieldAccessibilityService : AccessibilityService() {
                 AdultDomainMatcher.findBlockedHost(screenTexts, it)
             }
             if (blockedHost != null) {
+                // #37 (batch 2): record + capture BEFORE the redirect —
+                // the redirect replaces the blocked page with the Google
+                // homepage, so a capture started inside triggerLockdown
+                // (after the redirect) would only ever show Google.
+                recordIncidentWithScreenshot(
+                    triggerWord = "Adult Site Blocked: $blockedHost",
+                    sourceApp = resolveReadableAppName(activeRootPkg),
+                    durationMinutes = preferences.getLockDurationMinutes(),
+                    blockReason = "Adult site",
+                    blockedUrl = blockedHost
+                )
                 redirectBrowserToGoogleHome(activeRootPkg)
                 triggerLockdown(
                     triggerWord = "Adult Site Blocked: $blockedHost",
                     sourceApp = resolveReadableAppName(activeRootPkg),
                     blockReason = "Adult site",
                     blockedUrl = blockedHost,
-                    lockPackage = activeRootPkg
+                    lockPackage = activeRootPkg,
+                    incidentAlreadyRecorded = true
                 )
                 return
             }
@@ -885,7 +900,8 @@ class ShieldAccessibilityService : AccessibilityService() {
         graceAvailable: Boolean = false,
         blockReason: String? = null,
         blockedUrl: String? = null,
-        lockPackage: String? = null
+        lockPackage: String? = null,
+        incidentAlreadyRecorded: Boolean = false
     ) {
         val durationMinutes = customDurationMinutes ?: preferences.getLockDurationMinutes()
         // Check-then-start must be one atomic step: the 1-second ticker (IO
@@ -908,13 +924,18 @@ class ShieldAccessibilityService : AccessibilityService() {
         // incident. The capture is INITIATED here — before the overlay
         // launch below — so the display still shows the offending page;
         // the incident row itself is written when the capture resolves.
-        recordIncidentWithScreenshot(
-            triggerWord = triggerWord,
-            sourceApp = sourceApp,
-            durationMinutes = durationMinutes,
-            blockReason = blockReason,
-            blockedUrl = blockedUrl
-        )
+        // (#37: callers that had to act on the page first — the adult
+        // redirect — pre-record the incident themselves and pass
+        // incidentAlreadyRecorded so it is not written twice.)
+        if (!incidentAlreadyRecorded) {
+            recordIncidentWithScreenshot(
+                triggerWord = triggerWord,
+                sourceApp = sourceApp,
+                durationMinutes = durationMinutes,
+                blockReason = blockReason,
+                blockedUrl = blockedUrl
+            )
+        }
 
         // #17: while a call is ringing / in progress, do not yank the
         // user around with BACK/HOME — on some OEMs that buries the call
@@ -943,6 +964,11 @@ class ShieldAccessibilityService : AccessibilityService() {
      * - Uses AccessibilityService.takeScreenshot, which exists only on
      *   API 30+; on older devices the incident is recorded without an
      *   image, exactly as before this feature.
+     * - #37 (batch 2): takeScreenshot ALSO requires the service config
+     *   to declare android:canTakeScreenshot="true"
+     *   (res/xml/accessibility_service_config.xml). Without that
+     *   capability every call fails and every record silently degrades
+     *   to "no screenshot" — which is exactly what shipped in v0.5.
      * - The capture is fire-and-forget: this function returns immediately
      *   and NEVER delays the lockdown that called it. The incident row is
      *   inserted from the capture callback (or right away when no capture
