@@ -386,8 +386,20 @@ object TextContentScanner {
         screenTexts: List<String>,
         keywords: List<BlockedKeyword>
     ): String? {
+        return findMatchingKeywordMatch(screenTexts, keywords)?.matchedKeyword
+    }
+
+    /**
+     * #47 (batch 3): like [findMatchingKeyword] but keeps the matched
+     * keyword's category — the block-escalation policy needs it to tell
+     * preset keyword blocks from the user's Custom Block entries.
+     */
+    fun findMatchingKeywordMatch(
+        screenTexts: List<String>,
+        keywords: List<BlockedKeyword>
+    ): ScanMatchResult? {
         if (screenTexts.isEmpty() || keywords.isEmpty()) return null
         val combined = screenTexts.joinToString(separator = " \n ")
-        return findFirstMatch(combined, keywords)?.matchedKeyword
+        return findFirstMatch(combined, keywords)
     }
 }
