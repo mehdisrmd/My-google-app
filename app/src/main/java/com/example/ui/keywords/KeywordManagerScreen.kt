@@ -1,6 +1,9 @@
 package com.example.ui.keywords
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,11 +20,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -29,6 +36,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,15 +49,16 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,14 +69,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.AppUsageLimit
+import com.example.data.model.BlockIncident
 import com.example.data.model.BlockedCategory
 import com.example.data.model.BlockedKeyword
+import com.example.data.preferences.ShieldPreferences
+import com.example.ui.history.IncidentHistoryScreen
+import com.example.ui.i18n.AppStrings.tr
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.theme.EmeraldShield
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextSecondary
+import java.text.DateFormat
+import java.util.Date
 
 @Composable
 fun KeywordManagerScreen(
@@ -72,27 +91,77 @@ fun KeywordManagerScreen(
     onToggleKeyword: (BlockedKeyword) -> Unit,
     onDeleteKeyword: (Long) -> Unit,
     onAddKeyword: (text: String, isDomain: Boolean) -> Unit,
+    adultBlockEnabled: Boolean,
+    onToggleAdultBlock: (Boolean) -> Unit,
+    blocklistDomainCount: Int,
+    blocklistLastUpdatedMs: Long,
+    isBlocklistUpdating: Boolean,
+    onUpdateBlocklistNow: () -> Unit,
+    incidents: List<BlockIncident> = emptyList(),
+    incidentStreakDays: Int = 0,
+    incidentAppLimits: List<AppUsageLimit> = emptyList(),
+    incidentPreferences: ShieldPreferences? = null,
+    incidentUsageRefreshTrigger: Long = 0L,
+    onDeleteIncidents: (List<BlockIncident>) -> Unit = {},
+    onClearIncidentHistory: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
 
-    val filteredList = remember(keywords, selectedTab, searchQuery) {
-        val tabFiltered = when (selectedTab) {
-            0 -> keywords.filter {
-                it.category == BlockedCategory.ADULT_EXPLICIT || it.category == BlockedCategory.ADULT_DOMAIN
-            }
-            else -> keywords.filter {
-                it.category == BlockedCategory.CUSTOM_KEYWORD || it.category == BlockedCategory.CUSTOM_DOMAIN
-            }
+    // #14: the Block Log lives in the slot the Adult Preset used to own —
+    // its entry card sits directly under the adult-block card below, and
+    // tapping it swaps this screen's content for the log itself.
+    var showBlockLog by remember { mutableStateOf(false) }
+
+    // Multi-select state for the Custom Blacklist (#15). Selection is a
+    // set of keyword ids; all transitions go through KeywordSelection so the
+    // math stays unit-testable.
+    var isSelectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+
+    fun exitSelectionMode() {
+        isSelectionMode = false
+        selectedIds = emptySet()
+    }
+
+    // Drop ids whose rows disappeared (deleted elsewhere / list reloaded) so
+    // the toolbar count never points at ghosts.
+    LaunchedEffect(keywords) {
+        selectedIds = KeywordSelection.retainExisting(selectedIds, keywords.map { it.id })
+    }
+
+    // #12: the Adult Preset tab is gone. Only the user's own custom rules
+    // live in this list now; adult sites are covered by the toggle card
+    // above and its downloadable domain list.
+    val filteredList = remember(keywords, searchQuery) {
+        val customOnly = keywords.filter {
+            it.category == BlockedCategory.CUSTOM_KEYWORD ||
+                it.category == BlockedCategory.CUSTOM_DOMAIN
         }
 
         if (searchQuery.isBlank()) {
-            tabFiltered
+            customOnly
         } else {
-            tabFiltered.filter { it.text.contains(searchQuery.trim(), ignoreCase = true) }
+            customOnly.filter { it.text.contains(searchQuery.trim(), ignoreCase = true) }
         }
+    }
+
+    // #14: while the Block Log is open it replaces this screen's content
+    // (same tab, no extra navigation destination).
+    if (showBlockLog) {
+        BlockLogView(
+            incidents = incidents,
+            streakDays = incidentStreakDays,
+            appLimits = incidentAppLimits,
+            preferences = incidentPreferences,
+            usageRefreshTrigger = incidentUsageRefreshTrigger,
+            onBack = { showBlockLog = false },
+            onDeleteIncidents = onDeleteIncidents,
+            onClearHistory = onClearIncidentHistory,
+            modifier = modifier
+        )
+        return
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -108,11 +177,35 @@ fun KeywordManagerScreen(
                 color = Color.White
             )
             Text(
-                text = "Manage words & porn website domains that trigger immediate screen lockdown",
+                text = "Manage your custom words & domains that trigger immediate screen lockdown",
                 style = MaterialTheme.typography.bodySmall,
                 color = ObsidianTextSecondary,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
             )
+
+            // Adult Site Blocking card (#12/#13): the single toggle that
+            // replaced the Adult Preset, with the downloadable list's
+            // status and a manual update action. The list also refreshes
+            // itself weekly in the background.
+            AdultBlockCard(
+                adultBlockEnabled = adultBlockEnabled,
+                onToggleAdultBlock = onToggleAdultBlock,
+                blocklistDomainCount = blocklistDomainCount,
+                blocklistLastUpdatedMs = blocklistLastUpdatedMs,
+                isBlocklistUpdating = isBlocklistUpdating,
+                onUpdateBlocklistNow = onUpdateBlocklistNow
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Block Log entry (#14): every blocked page with its
+            // screenshot and reason, in the freed Adult Preset slot.
+            BlockLogCard(
+                incidentCount = incidents.size,
+                onOpen = { showBlockLog = true }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Search Field
             OutlinedTextField(
@@ -151,37 +244,72 @@ fun KeywordManagerScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Tabs: Adult Preset vs Custom Blacklist
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = ObsidianSurface,
-                contentColor = CrimsonPrimary
-            ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = {
+            // Multi-select toolbar (#15): visible only while selecting
+            // custom rules. Delete applies to every selected id at once.
+            if (isSelectionMode) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("custom_selection_toolbar"),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonPrimary)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { exitSelectionMode() },
+                            modifier = Modifier.testTag("custom_selection_cancel_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel selection",
+                                tint = ObsidianTextSecondary
+                            )
+                        }
                         Text(
-                            text = "Adult Presets (${keywords.count { it.category == BlockedCategory.ADULT_EXPLICIT || it.category == BlockedCategory.ADULT_DOMAIN }})",
-                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 0) Color.White else ObsidianTextSecondary
+                            text = "${selectedIds.size} selected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
                         )
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(
+                            onClick = {
+                                selectedIds = KeywordSelection.selectAll(
+                                    selectedIds,
+                                    filteredList.map { it.id }
+                                )
+                            },
+                            modifier = Modifier.testTag("custom_selection_select_all_button")
+                        ) {
+                            Text(text = "Select all", color = CrimsonPrimary)
+                        }
+                        IconButton(
+                            onClick = {
+                                val idsToDelete = selectedIds
+                                exitSelectionMode()
+                                idsToDelete.forEach { id -> onDeleteKeyword(id) }
+                            },
+                            enabled = selectedIds.isNotEmpty(),
+                            modifier = Modifier.testTag("custom_selection_delete_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete selected",
+                                tint = if (selectedIds.isNotEmpty()) CrimsonPrimary
+                                else ObsidianTextSecondary
+                            )
+                        }
                     }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = {
-                        Text(
-                            text = "Custom Blacklist (${keywords.count { it.category == BlockedCategory.CUSTOM_KEYWORD || it.category == BlockedCategory.CUSTOM_DOMAIN }})",
-                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 1) Color.White else ObsidianTextSecondary
-                        )
-                    }
-                )
-            }
+                }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             if (filteredList.isEmpty()) {
                 Box(
@@ -200,8 +328,7 @@ fun KeywordManagerScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = if (searchQuery.isNotEmpty()) "No matching rules found"
-                            else if (selectedTab == 1) "No custom rules added yet"
-                            else "No preset keywords",
+                            else "No custom rules added yet",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ObsidianTextSecondary
                         )
@@ -213,12 +340,21 @@ fun KeywordManagerScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredList, key = { it.id }) { item ->
-                        KeywordItemCard(
+                        CustomKeywordRow(
                             keyword = item,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = item.id in selectedIds,
                             onToggle = { onToggleKeyword(item) },
-                            onDelete = if (selectedTab == 1) {
-                                { onDeleteKeyword(item.id) }
-                            } else null
+                            onDelete = { onDeleteKeyword(item.id) },
+                            onRowClick = {
+                                if (isSelectionMode) {
+                                    selectedIds = KeywordSelection.toggle(selectedIds, item.id)
+                                }
+                            },
+                            onRowLongClick = {
+                                if (!isSelectionMode) isSelectionMode = true
+                                selectedIds = KeywordSelection.toggle(selectedIds, item.id)
+                            }
                         )
                     }
                 }
@@ -245,27 +381,412 @@ fun KeywordManagerScreen(
                 onAdd = { text, isDomain ->
                     onAddKeyword(text, isDomain)
                     showAddDialog = false
-                    selectedTab = 1
                 }
             )
         }
     }
 }
 
+/**
+ * The "Block all adult sites" card (#12) with the blocklist status and
+ * manual update action (#13). It sits exactly where the Adult Preset tab
+ * used to live: one toggle instead of preset lists to manage.
+ */
+@Composable
+private fun AdultBlockCard(
+    adultBlockEnabled: Boolean,
+    onToggleAdultBlock: (Boolean) -> Unit,
+    blocklistDomainCount: Int,
+    blocklistLastUpdatedMs: Long,
+    isBlocklistUpdating: Boolean,
+    onUpdateBlocklistNow: () -> Unit
+) {
+    val lastUpdatedText = remember(blocklistLastUpdatedMs) {
+        if (blocklistLastUpdatedMs > 0L) {
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                .format(Date(blocklistLastUpdatedMs))
+        } else {
+            null
+        }
+    }
+
+    val statusText = when {
+        isBlocklistUpdating -> tr(
+            "Updating the site lists…",
+            "در حال به‌روزرسانی فهرست سایت‌ها…"
+        )
+        blocklistDomainCount <= 0 -> tr(
+            "The domain list has not been downloaded yet.",
+            "فهرست دامنه‌ها هنوز دانلود نشده است."
+        )
+        lastUpdatedText != null -> tr(
+            "$blocklistDomainCount domains · Updated $lastUpdatedText",
+            "$blocklistDomainCount دامنه · به‌روزرسانی: $lastUpdatedText"
+        )
+        else -> tr(
+            "$blocklistDomainCount domains (built-in starter list)",
+            "$blocklistDomainCount دامنه (فهرست اولیهٔ داخلی)"
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("adult_block_card"),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (adultBlockEnabled) CrimsonPrimary.copy(alpha = 0.55f) else ObsidianBorder
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(CrimsonPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Language,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = tr("Block All Adult Sites", "مسدود کردن همهٔ سایت‌های بزرگسال"),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = tr(
+                                "Any adult site is blocked and the browser is sent to the Google homepage.",
+                                "هر سایت بزرگسالی مسدود می‌شود و مرورگر به صفحهٔ اصلی گوگل فرستاده می‌شود."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = adultBlockEnabled,
+                    onCheckedChange = { onToggleAdultBlock(it) },
+                    modifier = Modifier.testTag("adult_block_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = CrimsonPrimary,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = ObsidianBorder
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                )
+                TextButton(
+                    onClick = onUpdateBlocklistNow,
+                    enabled = !isBlocklistUpdating,
+                    modifier = Modifier.testTag("adult_blocklist_update_button")
+                ) {
+                    if (isBlocklistUpdating) {
+                        CircularProgressIndicator(
+                            color = CrimsonPrimary,
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = CrimsonPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Update lists now", "به‌روزرسانی فهرست"),
+                        color = CrimsonPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Block Log entry card (#14). Sits directly under the adult-block card —
+ * the slot the Adult Preset used to own — and opens the log of blocked
+ * pages (screenshot + reason + full details per record).
+ */
+@Composable
+private fun BlockLogCard(
+    incidentCount: Int,
+    onOpen: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("block_log_card")
+            .clickable { onOpen() },
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CrimsonPrimary.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = CrimsonPrimary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tr("Block Log", "گزارش مسدودی‌ها"),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = tr(
+                        "Every blocked page, with its screenshot and the reason it was blocked.",
+                        "همهٔ صفحه‌های مسدودشده، همراه با اسکرین‌شات و دلیل مسدود شدن."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary
+                )
+            }
+            if (incidentCount > 0) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CrimsonPrimary.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = incidentCount.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = com.example.ui.theme.JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = CrimsonPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = ObsidianTextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * The Block Log itself (#14): a back row over the incident history, whose
+ * rows carry the block screenshots and open full per-record details.
+ */
+@Composable
+private fun BlockLogView(
+    incidents: List<BlockIncident>,
+    streakDays: Int,
+    appLimits: List<AppUsageLimit>,
+    preferences: ShieldPreferences?,
+    usageRefreshTrigger: Long,
+    onBack: () -> Unit,
+    onDeleteIncidents: (List<BlockIncident>) -> Unit,
+    onClearHistory: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 20.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier.testTag("block_log_back_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
+                )
+            }
+            Text(
+                text = tr("Block Log", "گزارش مسدودی‌ها"),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+        IncidentHistoryScreen(
+            incidents = incidents,
+            streakDays = streakDays,
+            appLimits = appLimits,
+            preferences = preferences,
+            usageRefreshTrigger = usageRefreshTrigger,
+            onClearHistory = onClearHistory,
+            onDeleteIncidents = onDeleteIncidents,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/**
+ * One row of the Custom Blacklist (#15): the regular keyword card wrapped
+ * in a swipe-to-dismiss shell. Swiping the row left or right deletes the rule
+ * (red delete background is revealed behind the card). While multi-select
+ * mode is active the swipe gesture is disabled so taps and long-presses
+ * drive selection instead.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomKeywordRow(
+    keyword: BlockedKeyword,
+    isSelectionMode: Boolean,
+    isSelected: Boolean,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+    onRowClick: () -> Unit,
+    onRowLongClick: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value -> value != SwipeToDismissBoxValue.Settled }
+    )
+
+    // The dismiss only "settles" visually here; the actual removal happens
+    // through onDelete, which takes the row out of the list entirely.
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
+            onDelete()
+        }
+    }
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = !isSelectionMode,
+        enableDismissFromEndToStart = !isSelectionMode,
+        modifier = Modifier.testTag("custom_keyword_row_${keyword.id}"),
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(CrimsonPrimary)
+                    .padding(horizontal = 20.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
+        }
+    ) {
+        KeywordItemCard(
+            keyword = keyword,
+            onToggle = onToggle,
+            onDelete = onDelete,
+            isSelectionMode = isSelectionMode,
+            isSelected = isSelected,
+            onRowClick = onRowClick,
+            onRowLongClick = onRowLongClick
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun KeywordItemCard(
     keyword: BlockedKeyword,
     onToggle: () -> Unit,
-    onDelete: (() -> Unit)?
+    onDelete: (() -> Unit)?,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onRowClick: (() -> Unit)? = null,
+    onRowLongClick: (() -> Unit)? = null
 ) {
     val isDomain = keyword.category == BlockedCategory.ADULT_DOMAIN ||
             keyword.category == BlockedCategory.CUSTOM_DOMAIN
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onRowClick != null || onRowLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = { onRowClick?.invoke() },
+                        onLongClick = { onRowLongClick?.invoke() }
+                    )
+                } else Modifier
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) CrimsonPrimary.copy(alpha = 0.18f) else ObsidianSurface
+        ),
         shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+        border = if (isSelected) {
+            androidx.compose.foundation.BorderStroke(2.dp, CrimsonPrimary)
+        } else {
+            androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder)
+        }
     ) {
         Row(
             modifier = Modifier
@@ -278,6 +799,19 @@ fun KeywordItemCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onRowClick?.invoke() },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = CrimsonPrimary,
+                            uncheckedColor = ObsidianTextSecondary,
+                            checkmarkColor = Color.White
+                        ),
+                        modifier = Modifier.testTag("keyword_select_checkbox_${keyword.id}")
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .size(36.dp)
@@ -318,29 +852,33 @@ fun KeywordItemCard(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onDelete != null) {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete",
-                            tint = CrimsonPrimary.copy(alpha = 0.8f),
-                            modifier = Modifier.size(20.dp)
-                        )
+            // In selection mode the per-item actions step aside: the toolbar
+            // owns deletion and row taps toggle selection (#15).
+            if (!isSelectionMode) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete",
+                                tint = CrimsonPrimary.copy(alpha = 0.8f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
-                }
 
-                Switch(
-                    checked = keyword.isEnabled,
-                    onCheckedChange = { onToggle() },
-                    modifier = Modifier.testTag("toggle_${keyword.id}"),
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = CrimsonPrimary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = ObsidianBorder
+                    Switch(
+                        checked = keyword.isEnabled,
+                        onCheckedChange = { onToggle() },
+                        modifier = Modifier.testTag("toggle_${keyword.id}"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = CrimsonPrimary,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = ObsidianBorder
+                        )
                     )
-                )
+                }
             }
         }
     }

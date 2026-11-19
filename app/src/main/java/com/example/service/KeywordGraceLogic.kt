@@ -135,4 +135,49 @@ object KeywordGraceLogic {
     ): KeywordGraceEpisode {
         return episode.copy(graceUntilMs = 0L)
     }
+
+    /**
+     * How many consecutive "word not found" re-check scans the ticker may
+     * see before it stops retrying and consumes the pending re-check
+     * anyway (see [shouldConsumeGraceRecheck]). The retries exist because
+     * ONE scan can miss a word that is actually still on screen: the
+     * re-check scans only the extracted window tree (a capped traversal),
+     * while the match that opened the episode may have come from an
+     * accessibility event's own text payload, and a tree caught
+     * mid-recomposition can be momentarily partial. Consuming + clearing
+     * on the first miss was the #1 bug: the free window ended, the word
+     * was still there, and the block screen never came back.
+     */
+    const val MAX_RECHECK_ABSENT_SCANS: Int = 10
+
+    /**
+     * True while a used grace window has ended but its one-time re-check
+     * has not been consumed yet — exactly the state in which the ticker
+     * owes the screen a re-check scan.
+     */
+    fun isGraceRecheckPending(
+        episode: KeywordGraceEpisode,
+        nowMs: Long
+    ): Boolean {
+        return episode.word.isNotBlank() &&
+            episode.graceUsed &&
+            episode.graceUntilMs > 0L &&
+            episode.graceUntilMs <= nowMs
+    }
+
+    /**
+     * The ticker calls this with its count of consecutive absent re-check
+     * scans. Below the cap the pending re-check stays armed and the
+     * episode is left completely untouched (NOT consumed, NOT cleared):
+     * the next tick scans again, and if the word really is gone the
+     * accessibility-event path — which scans real content changes
+     * continuously — is what closes the episode via [onKeywordAbsent].
+     * At the cap the ticker gives up retrying and consumes the window via
+     * [onGraceRecheckConsumed]; the episode still remembers the word and
+     * the used grace, so a later genuine match re-blocks WITHOUT the
+     * button, and a later genuine absence still closes the episode.
+     */
+    fun shouldConsumeGraceRecheck(absentScans: Int): Boolean {
+        return absentScans >= MAX_RECHECK_ABSENT_SCANS
+    }
 }

@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">X Blocker</string>
-    <string name="accessibility_service_description">X Blocker monitors on-screen text, website URLs, Instagram Reels, and Telegram Search to protect against unwanted content and trigger focus lockouts.</string>
+    <string name="accessibility_service_description">X Blocker uses its accessibility service to read on-screen text and website addresses so it can block the adult sites and trigger words you chose, enforce your daily app time limits, and guard Instagram Reels and Telegram Search. It shows its block screen only when blocked content appears.</string>
+    <string name="device_admin_description">Device admin for the optional Device Owner protection: while that protection is on, Android itself blocks uninstalling X Blocker and switches off ADB/USB debugging. X Blocker never manages passwords, encryption or cameras and never wipes the device.</string>
 </resources>

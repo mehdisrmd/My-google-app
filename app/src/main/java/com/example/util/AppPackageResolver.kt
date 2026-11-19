@@ -146,10 +146,61 @@ object AppPackageResolver {
         return false
     }
 
+    // Installed-app enumeration is a pair of PackageManager IPC sweeps plus
+    // a label load per app — with ~250 apps installed that is far too heavy
+    // to run on the main thread or to repeat per UI card (the "Add App to
+    // Daily Limitations" ANR). The result is therefore cached briefly and
+    // shared by every caller; callers that compose UI must still fetch it
+    // off the main thread (see AddAppLimitDialog).
+    @Volatile
+    private var cachedInstalledApps: List<ResolvedAppInfo>? = null
+
+    @Volatile
+    private var cachedInstalledAppsAtMs: Long = 0L
+
+    private val installedAppsLock = Any()
+
+    private const val INSTALLED_APPS_CACHE_TTL_MS: Long = 60_000L
+
+    fun invalidateInstalledAppsCache() {
+        synchronized(installedAppsLock) {
+            cachedInstalledApps = null
+            cachedInstalledAppsAtMs = 0L
+        }
+    }
+
     /**
      * Queries all launchable & browsable apps currently installed on the device.
+     * Returns the short-lived cached result when it is still fresh.
      */
     fun queryInstalledApps(context: Context): List<ResolvedAppInfo> {
+        val cached = cachedInstalledApps
+        if (cached != null &&
+            System.currentTimeMillis() - cachedInstalledAppsAtMs < INSTALLED_APPS_CACHE_TTL_MS
+        ) {
+            return cached
+        }
+        synchronized(installedAppsLock) {
+            val rechecked = cachedInstalledApps
+            if (rechecked != null &&
+                System.currentTimeMillis() - cachedInstalledAppsAtMs < INSTALLED_APPS_CACHE_TTL_MS
+            ) {
+                return rechecked
+            }
+            val fresh = queryInstalledAppsUncached(context)
+            if (fresh != null) {
+                cachedInstalledApps = fresh
+                cachedInstalledAppsAtMs = System.currentTimeMillis()
+                return fresh
+            }
+            // Query failed: serve any stale cache rather than an empty list,
+            // and leave the timestamp old so the next caller retries.
+            return cachedInstalledApps ?: emptyList()
+        }
+    }
+
+    /** The raw PackageManager sweep; null when the query itself failed. */
+    private fun queryInstalledAppsUncached(context: Context): List<ResolvedAppInfo>? {
         return try {
             val pm = context.packageManager
             val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
@@ -176,7 +227,7 @@ object AppPackageResolver {
                 .distinctBy { it.packageName }
                 .sortedBy { it.appName.lowercase(Locale.ROOT) }
         } catch (_: Exception) {
-            emptyList()
+            null
         }
     }
 

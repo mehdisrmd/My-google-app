@@ -236,10 +236,18 @@ fun LockdownScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 val isPanicLock = triggerWord.contains("Panic", ignoreCase = true)
+                // Daily-limit locks (#26) carry a "Daily Limit (<n>m): <app>"
+                // trigger from the accessibility service and run until the
+                // midnight reset. They get their own wording: the moment the
+                // budget ends this page says "time's up — come back tomorrow",
+                // and every later re-open lands on the same page with the
+                // live countdown to midnight still running.
+                val isDailyLimitLock = triggerWord.startsWith("Daily Limit", ignoreCase = true)
 
                 Text(
                     text = when {
                         isFinished -> tr("Focus Period Complete", "پایان زمان قفل محافظتی")
+                        isDailyLimitLock -> tr("Time's Up for Today", "زمان امروزت تموم شد")
                         isPanicLock -> tr("Emergency Panic Shield Active", "قفل اضطراری پنیک فعال است")
                         else -> tr("Screen Locked by X Blocker", "صفحه توسط ایکس بلاکر قفل شد")
                     },
@@ -254,6 +262,10 @@ fun LockdownScreen(
                         isFinished -> tr(
                             "You successfully resisted the impulse. Don't break the chain!",
                             "شما با موفقیت بر وسوسه غلبه کردید. زنجیره را نشکن!"
+                        )
+                        isDailyLimitLock -> tr(
+                            "Your daily time for $sourceText is over. Come back tomorrow!",
+                            "زمان روزانه‌ت برای $sourceText تموم شده. فردا برگرد!"
                         )
                         isPanicLock -> tr(
                             "Voluntary Panic Mode lock active. Only Calls & Texts are allowed.",
@@ -305,8 +317,15 @@ fun LockdownScreen(
                             )
                         } else {
                             // Rounded UP to the next whole second, so "00:00"
-                            // only ever means the block is over.
-                            val timeStr = LockdownTimeLogic.formatCountdown(remainingMillis)
+                            // only ever means the block is over. Daily-limit
+                            // blocks count down to midnight, so they use the
+                            // hours-aware format instead of hundreds of
+                            // "minutes" (#26c).
+                            val timeStr = if (isDailyLimitLock) {
+                                LockdownTimeLogic.formatCountdownHhMmSs(remainingMillis)
+                            } else {
+                                LockdownTimeLogic.formatCountdown(remainingMillis)
+                            }
 
                             Text(
                                 text = timeStr,
@@ -317,7 +336,11 @@ fun LockdownScreen(
                             )
 
                             Text(
-                                text = tr("LOCKED", "در حال شمارش"),
+                                text = if (isDailyLimitLock) {
+                                    tr("UNTIL MIDNIGHT", "تا نیمه‌شب")
+                                } else {
+                                    tr("LOCKED", "در حال شمارش")
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 letterSpacing = 2.sp,
                                 color = ObsidianTextSecondary,

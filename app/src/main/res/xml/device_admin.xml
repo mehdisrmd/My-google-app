@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Device-admin declaration for the Device Owner protection (item #11).
+
+    The protections themselves — setUninstallBlocked for our own package
+    and the DISALLOW_DEBUGGING_FEATURES user restriction — are Device
+    Owner APIs, not classic device-admin policies, so NO <uses-policies>
+    entries are requested: X Blocker never manages passwords, encryption
+    or cameras and never wipes the device, and it must not ask for powers
+    it does not use.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

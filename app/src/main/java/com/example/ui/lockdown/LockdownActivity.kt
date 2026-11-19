@@ -1,10 +1,14 @@
 package com.example.ui.lockdown
 
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
@@ -18,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ShieldApplication
+import com.example.service.OverlayDisplayGate
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.SeasonalTheme
 
@@ -28,6 +33,41 @@ class LockdownActivity : ComponentActivity() {
     private var lockTriggerState by mutableStateOf("Protected Content")
     private var lockSourceAppState by mutableStateOf("System")
     private var lockGraceAvailableState by mutableStateOf(false)
+
+    // #17/#18 yield check (armed in onResume): polls once a second while
+    // this screen is resumed and finishes it if a call takes over or the
+    // phone locks, so neither surface is ever buried under the block
+    // screen. The lock stays in preferences throughout; the accessibility
+    // service re-shows this screen after the call / unlock if the lock is
+    // still running.
+    private val yieldCheckHandler = Handler(Looper.getMainLooper())
+    private val yieldCheckRunnable = object : Runnable {
+        override fun run() {
+            if (shouldYieldToSystemSurface()) {
+                finish()
+                return
+            }
+            yieldCheckHandler.postDelayed(this, YIELD_CHECK_INTERVAL_MS)
+        }
+    }
+
+    private fun shouldYieldToSystemSurface(): Boolean {
+        val keyguardLocked = try {
+            (getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)?.isKeyguardLocked == true
+        } catch (_: Exception) {
+            false
+        }
+        val audioMode = try {
+            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
+                ?: AudioManager.MODE_NORMAL
+        } catch (_: Exception) {
+            AudioManager.MODE_NORMAL
+        }
+        return OverlayDisplayGate.decide(
+            keyguardLocked = keyguardLocked,
+            callActive = OverlayDisplayGate.isCallAudioMode(audioMode)
+        ) != OverlayDisplayGate.Decision.SHOW
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
 
@@ -136,10 +176,18 @@ class LockdownActivity : ComponentActivity() {
         refreshStateFromPrefsAndIntent(intent)
         if (!prefs.isCurrentlyLocked()) {
             finish()
+            return
         }
+        // #17/#18: while this screen is up, stand down the moment a call
+        // rings / connects or the phone gets locked. The lock itself
+        // stays in preferences; the accessibility service re-shows this
+        // screen after the call / unlock if the lock is still running.
+        yieldCheckHandler.removeCallbacks(yieldCheckRunnable)
+        yieldCheckHandler.postDelayed(yieldCheckRunnable, YIELD_CHECK_INTERVAL_MS)
     }
 
     override fun onPause() {
+        yieldCheckHandler.removeCallbacks(yieldCheckRunnable)
         super.onPause()
         val prefs = ShieldApplication.instance.preferences
         // If user did not tap Phone Call / SMS and tries to leave while timer is counting down, pull back!
@@ -182,13 +230,16 @@ class LockdownActivity : ComponentActivity() {
         val applySecure = prefs?.isFlagSecureCurrentlyActive() == true
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
+            // #18: the block screen must NOT draw over the lock screen.
+            // It waits behind the keyguard; the accessibility service
+            // (re)launches it once the user has unlocked and the lock
+            // still applies.
+            setShowWhenLocked(false)
             setTurnScreenOn(true)
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
 
@@ -207,6 +258,7 @@ class LockdownActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "LockdownActivity"
+        private const val YIELD_CHECK_INTERVAL_MS = 1000L
 
         const val EXTRA_STRICT_MODE = "extra_strict_mode"
         const val EXTRA_TRIGGER_WORD = "extra_trigger_word"

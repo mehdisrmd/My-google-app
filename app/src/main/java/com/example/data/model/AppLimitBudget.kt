@@ -42,6 +42,49 @@ object AppLimitBudget {
         return (dailyLimitMinutes - usedMinutesToday).coerceAtLeast(0)
     }
 
+    /** Seconds of budget left today; 0 once the limit is reached. */
+    fun remainingSeconds(
+        usedSecondsToday: Int,
+        dailyLimitMinutes: Int
+    ): Int {
+        if (dailyLimitMinutes <= 0) return 0
+        return (dailyLimitMinutes * 60 - usedSecondsToday).coerceAtLeast(0)
+    }
+
+    /**
+     * True while the user is inside the final minute of today's budget:
+     * at least one second left, but no more than [WARNING_WINDOW_SECONDS].
+     * This is the window in which the one-minute-left warning (#26) shows.
+     */
+    fun isInFinalMinuteWarningWindow(
+        usedSecondsToday: Int,
+        dailyLimitMinutes: Int,
+        isEnabled: Boolean
+    ): Boolean {
+        if (!isEnabled) return false
+        if (dailyLimitMinutes <= 0) return false
+        val remaining = remainingSeconds(usedSecondsToday, dailyLimitMinutes)
+        return remaining in 1..WARNING_WINDOW_SECONDS
+    }
+
+    /**
+     * The one-minute-left warning fires exactly once per app per day: only
+     * inside the final-minute window and only if it has not already been
+     * shown today (the caller persists that flag day-keyed, next to the
+     * usage counters, so it resets at the same local midnight).
+     */
+    fun shouldShowOneMinuteWarning(
+        usedSecondsToday: Int,
+        dailyLimitMinutes: Int,
+        isEnabled: Boolean,
+        alreadyWarnedToday: Boolean
+    ): Boolean {
+        if (alreadyWarnedToday) return false
+        return isInFinalMinuteWarningWindow(usedSecondsToday, dailyLimitMinutes, isEnabled)
+    }
+
+    const val WARNING_WINDOW_SECONDS: Int = 60
+
     /**
      * Milliseconds from [nowMs] until the next local midnight, given the
      * local zone offset ([zoneOffsetMs], e.g. TimeZone.getOffset(now)).

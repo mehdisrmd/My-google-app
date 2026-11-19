@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,9 +30,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -44,9 +45,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.ExpandLess
@@ -72,7 +75,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -117,11 +119,16 @@ import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.preferences.UninstallGuard
+import com.example.deviceowner.DeviceOwnerManager
+import com.example.deviceowner.DeviceOwnerPolicy
+import com.example.deviceowner.ShieldDeviceAdminReceiver
 import com.example.ui.components.MotivationalQuoteBannerCard
+import com.example.ui.components.SecureTypeField
 import com.example.ui.components.WeeklyActivityCard
 import com.example.ui.focus.SmartFocusDashboardCard
 import com.example.ui.i18n.AppStrings.tr
-import com.example.ui.security.BiometricAndPrivacyDashboardSection
+import com.example.ui.security.PinAndPrivacyDashboardSection
+import com.example.ui.security.RestrictedSettingsGuideDialog
 import com.example.ui.streak.NoBeepYoutubeResetStreakDialog
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonDark
@@ -157,7 +164,6 @@ fun DashboardScreen(
     sectionRules: List<SectionBlockRule> = emptyList(),
     focusSlots: List<FocusScheduleSlot> = emptyList(),
     isSmartFocusEnabled: Boolean = true,
-    isBiometricLockEnabled: Boolean = false,
     isBlackoutPrivacyShieldEnabled: Boolean = false,
     preferences: ShieldPreferences? = null,
     usageRefreshTrigger: Long = 0L,
@@ -170,7 +176,6 @@ fun DashboardScreen(
     onToggleFocusSlot: (FocusScheduleSlot) -> Unit = {},
     onAddFocusSlot: (FocusScheduleSlot) -> Unit = {},
     onStartFocusSessionNow: (title: String, durationMinutes: Int) -> Unit = { _, _ -> },
-    onToggleBiometricLock: (Boolean) -> Unit = {},
     onLockAppNow: () -> Unit = {},
     onToggleBlackoutShield: (Boolean) -> Unit = {},
     onOpenTestSandbox: () -> Unit = {},
@@ -188,6 +193,14 @@ fun DashboardScreen(
     }
 
     val isPreventUninstallEnabled by effectivePrefs.isPreventUninstallEnabled.collectAsStateWithLifecycle()
+    val isInstallGuardEnabled by effectivePrefs.isInstallGuardEnabled.collectAsStateWithLifecycle()
+    val isDeviceOwnerProtectionEnabled by effectivePrefs.isDeviceOwnerProtectionEnabled.collectAsStateWithLifecycle()
+    // Device Owner standing (#11) is system state, not a preference: read
+    // it live and refresh on every ON_RESUME (see checkPermissions), so
+    // the card flips to ACTIVE the moment provisioning has happened.
+    var deviceOwnerStatus by remember {
+        mutableStateOf(DeviceOwnerManager.status(context))
+    }
     val bestChainDays by effectivePrefs.longestStreakDays.collectAsStateWithLifecycle()
     val quizScorePercent by effectivePrefs.quizScorePercent.collectAsStateWithLifecycle()
     val quizSeverityEn by effectivePrefs.quizSeverityEn.collectAsStateWithLifecycle()
@@ -195,9 +208,6 @@ fun DashboardScreen(
 
     var isAccessibilityEnabled by remember {
         mutableStateOf(ShieldPreferences.isAccessibilityServiceEnabled(context))
-    }
-    var hasOverlayPermission by remember {
-        mutableStateOf(ShieldPreferences.hasOverlayPermission(context))
     }
     var isBatteryOptExempt by remember {
         mutableStateOf(ShieldPreferences.isIgnoringBatteryOptimizations(context))
@@ -207,8 +217,11 @@ fun DashboardScreen(
     }
 
     // The master shield can only be enabled after ALL required system
-    // permissions are granted (Accessibility, Overlay, Battery, Notifications).
-    val allPermissionsGranted = isAccessibilityEnabled && hasOverlayPermission && isBatteryOptExempt && hasNotificationPermission
+    // permissions are granted (Accessibility, Battery, Notifications).
+    // "Display over other apps" is NOT required (#25): the block screen
+    // is a normal Activity, nothing draws overlay windows, and the app
+    // no longer declares SYSTEM_ALERT_WINDOW.
+    val allPermissionsGranted = isAccessibilityEnabled && isBatteryOptExempt && hasNotificationPermission
     var showPermissionsNeededHint by remember { mutableStateOf(false) }
 
     // Uninstall Guard (5-hour wait): the master switch cannot be turned OFF
@@ -234,7 +247,7 @@ fun DashboardScreen(
     var expandUninstallAndLockDropdown by remember { mutableStateOf(false) }
     var expandSmartFocusDropdown by remember { mutableStateOf(false) }
     var expandSecurityAndPermissionsDropdown by remember {
-        mutableStateOf(!isAccessibilityEnabled || !hasOverlayPermission)
+        mutableStateOf(!isAccessibilityEnabled)
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -245,9 +258,9 @@ fun DashboardScreen(
 
     val checkPermissions = {
         isAccessibilityEnabled = ShieldPreferences.isAccessibilityServiceEnabled(context)
-        hasOverlayPermission = ShieldPreferences.hasOverlayPermission(context)
         isBatteryOptExempt = ShieldPreferences.isIgnoringBatteryOptimizations(context)
         hasNotificationPermission = checkNotificationPermission(context)
+        deviceOwnerStatus = DeviceOwnerManager.status(context)
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -506,13 +519,17 @@ fun DashboardScreen(
         }
 
         // 2. Compact Action Strip: Emergency Panic Mode (SOS) + Scientific Addiction Quiz
+        // Batch #3: both cards share one intrinsic height so they always align.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Max),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Card(
                 modifier = Modifier
                     .weight(1.15f)
+                    .fillMaxHeight()
                     .clickable { onOpenPanicMode() }
                     .testTag("dashboard_panic_mode_card"),
                 colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
@@ -573,8 +590,9 @@ fun DashboardScreen(
                             .height(34.dp)
                             .testTag("dashboard_panic_button")
                     ) {
+                        // Batch #3: the panic button is a "Breathe" button now.
                         Text(
-                            text = "SOS",
+                            text = tr("Breathe", "تنفس"),
                             fontWeight = FontWeight.Black,
                             fontSize = 11.sp
                         )
@@ -586,6 +604,7 @@ fun DashboardScreen(
             Card(
                 modifier = Modifier
                     .weight(0.95f)
+                    .fillMaxHeight()
                     .clickable { onOpenAddictionQuiz() }
                     .testTag("dashboard_scientific_quiz_card"),
                 colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
@@ -687,49 +706,40 @@ fun DashboardScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = tr("Reset My Streak (I Slipped)", "ریست روزهای پاک (لغزش داشتم)"),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = ObsidianTextPrimary
-                        )
-                        Text(
-                            text = tr(
-                                "Tap to reset your streak to Day 0 — best chain stays saved",
-                                "برای ریست زنجیره به روز ۰ بزنید — بهترین زنجیره حفظ می‌شود"
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 10.sp,
-                            color = ObsidianTextSecondary
-                        )
-                    }
+                    // Batch #4b: subtitle under the title removed.
+                    Text(
+                        text = tr("Reset My Streak (I Slipped)", "ریست روزهای پاک (لغزش داشتم)"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = CrimsonPrimary.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, CrimsonPrimary.copy(alpha = 0.5f))
+                // Batch #4c: the Reset action is a bigger, solid RED button.
+                Button(
+                    onClick = { showHomeResetStreakYoutubeDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CrimsonPrimary,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("dashboard_reset_streak_action_button")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            tint = CrimsonPrimary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = tr("Reset", "ریست"),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 10.sp,
-                            color = CrimsonPrimary
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = tr("Reset", "ریست"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp
+                    )
                 }
             }
         }
@@ -860,6 +870,224 @@ fun DashboardScreen(
                                 checkedTrackColor = EmeraldShield
                             )
                         )
+                    }
+                }
+
+                // Install Guard Card (#27): new app installs need a PIN
+                // confirmation within 10 seconds, even from Google Play.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isInstallGuardEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(EmeraldShield.copy(alpha = 0.18f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = EmeraldShield,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = tr("Install Guard", "محافظ نصب برنامه"),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Installing a new app (Play Store or APK) asks for your PIN. No PIN within 10 seconds = install blocked.",
+                                        "نصب برنامهٔ جدید (پلی‌استور یا APK) پین می‌خواهد. بدون پین ظرف ۱۰ ثانیه = نصب مسدود است."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isInstallGuardEnabled,
+                            onCheckedChange = { targetEnabled ->
+                                effectivePrefs.setInstallGuardEnabled(targetEnabled)
+                            },
+                            modifier = Modifier.testTag("install_guard_switch"),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = EmeraldShield
+                            )
+                        )
+                    }
+                }
+
+                // Device Owner Card (#11): the DEFINITIVE block against
+                // ADB/computer uninstall. An app cannot make itself Device
+                // Owner, so until one-time provisioning has happened this
+                // card shows the honest setup steps and the switch stays
+                // disabled — it never pretends to work. Once the app IS
+                // Device Owner, the switch drives the real DPM blocks
+                // (own-package uninstall block + ADB/debugging off),
+                // applied by DeviceOwnerManager.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (deviceOwnerStatus == DeviceOwnerPolicy.Status.DEVICE_OWNER &&
+                            isDeviceOwnerProtectionEnabled
+                        ) {
+                            EmeraldShield.copy(alpha = 0.55f)
+                        } else {
+                            ObsidianBorder
+                        }
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(EmeraldShield.copy(alpha = 0.18f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AdminPanelSettings,
+                                        contentDescription = null,
+                                        tint = EmeraldShield,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = tr("Device Owner Protection", "محافظ مالک دستگاه"),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ObsidianTextPrimary
+                                    )
+                                    Text(
+                                        text = tr(
+                                            "The hard block, enforced by Android itself: X Blocker cannot be uninstalled (not even via ADB) and USB debugging stays off.",
+                                            "مسدودسازی قطعی با اجرای خود اندروید: ایکس بلاکر حذف نمی‌شود (حتی با ADB) و اشکال‌زدایی USB خاموش می‌ماند."
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.sp,
+                                        color = ObsidianTextSecondary
+                                    )
+                                }
+                            }
+
+                            Switch(
+                                checked = isDeviceOwnerProtectionEnabled,
+                                onCheckedChange = { targetEnabled ->
+                                    effectivePrefs.setDeviceOwnerProtectionEnabled(targetEnabled)
+                                    DeviceOwnerManager.reconcile(context, targetEnabled)
+                                },
+                                enabled = deviceOwnerStatus == DeviceOwnerPolicy.Status.DEVICE_OWNER,
+                                modifier = Modifier.testTag("device_owner_protection_switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.Black,
+                                    checkedTrackColor = EmeraldShield
+                                )
+                            )
+                        }
+
+                        when (deviceOwnerStatus) {
+                            DeviceOwnerPolicy.Status.DEVICE_OWNER -> Text(
+                                text = tr(
+                                    "Status: ACTIVE — X Blocker is this phone's Device Owner. The switch above turns the Android-level blocks on and off.",
+                                    "وضعیت: فعال — ایکس بلاکر مالک دستگاه این گوشی است. کلید بالا مسدودسازی‌های سطح اندروید را روشن و خاموش می‌کند."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = EmeraldShield
+                            )
+
+                            DeviceOwnerPolicy.Status.PROFILE_OWNER_ONLY -> Text(
+                                text = tr(
+                                    "Status: X Blocker only owns a work profile — that is not enough for the ADB block. Full Device Owner setup (below) is required.",
+                                    "وضعیت: ایکس بلاکر فقط مالک یک پروفایل کاری است — برای مسدودسازی ADB کافی نیست. راه‌اندازی کامل مالک دستگاه (پایین) لازم است."
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = AmberWarning
+                            )
+
+                            DeviceOwnerPolicy.Status.ADMIN_ONLY,
+                            DeviceOwnerPolicy.Status.NOT_PROVISIONED -> Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = tr(
+                                        "Status: NOT SET UP — no app can make itself Device Owner; the switch only starts working after a one-time setup from a computer. Connect the phone with USB debugging ON and run:",
+                                        "وضعیت: راه‌اندازی نشده — هیچ برنامه‌ای نمی‌تواند خودش را مالک دستگاه کند؛ کلید فقط بعد از یک راه‌اندازی یک‌باره از رایانه کار می‌کند. گوشی را با اشکال‌زدایی USB روشن وصل کنید و این دستور را بزنید:"
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = ObsidianTextSecondary
+                                )
+                                Text(
+                                    text = DeviceOwnerPolicy.provisioningCommand(
+                                        context.packageName,
+                                        ShieldDeviceAdminReceiver::class.java.name
+                                    ),
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 11.sp,
+                                    color = CyanTelemetry
+                                )
+                                Text(
+                                    text = tr(
+                                        "⚠ The command FAILS while any Google account is signed in on the phone — remove the accounts first (you can sign back in afterwards). The only other route is QR provisioning during the very first setup screens, right after a factory reset.",
+                                        "⚠ تا وقتی هر حساب گوگلی روی گوشی وارد شده باشد این دستور خطا می‌دهد — اول حساب‌ها را حذف کنید (بعدش می‌توانید دوباره وارد شوید). راه دیگر فقط اسکن QR در صفحه‌های راه‌اندازی اولیه، درست بعد از بازنشانی کارخانه است."
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 11.sp,
+                                    color = AmberWarning
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -1079,16 +1307,16 @@ fun DashboardScreen(
             )
         }
 
-        // DROPDOWN 4: Privacy Shield, Biometrics & System Permissions
+        // DROPDOWN 4: Privacy Shield, PIN Lock & System Permissions
         val allPermsReady = allPermissionsGranted
         M3CollapsibleDropdownSection(
             title = tr(
-                "Privacy Shield, Biometrics & System Setup",
-                "حریم خصوصی، قفل بیومتریک و دسترسی‌های سیستم"
+                "Privacy Shield, PIN Lock & System Setup",
+                "حریم خصوصی، قفل پین و دسترسی‌های سیستم"
             ),
             subtitle = tr(
-                "Screenshot blocker, PIN/Biometric lock, Accessibility & Notification Bar",
-                "مسدودساز اسکرین‌شات، قفل اثرانگشت، دسترسی‌پذیری و نوار اعلان"
+                "Screenshot blocker, PIN lock, Accessibility & Notification Bar",
+                "مسدودساز اسکرین‌شات، قفل پین، دسترسی‌پذیری و نوار اعلان"
             ),
             badgeText = if (allPermsReady) tr("All Ready", "تکمیل") else tr("Setup", "نیاز به تنظیم"),
             icon = Icons.Default.Security,
@@ -1098,11 +1326,9 @@ fun DashboardScreen(
             testTag = "dropdown_security_and_permissions"
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                BiometricAndPrivacyDashboardSection(
+                PinAndPrivacyDashboardSection(
                     preferences = effectivePrefs,
-                    isBiometricLockEnabled = isBiometricLockEnabled,
                     isBlackoutPrivacyShieldEnabled = isBlackoutPrivacyShieldEnabled,
-                    onToggleBiometricLock = onToggleBiometricLock,
                     onLockAppNow = onLockAppNow,
                     onToggleBlackoutShield = onToggleBlackoutShield
                 )
@@ -1110,15 +1336,10 @@ fun DashboardScreen(
                 if (!allPermsReady) {
                     PermissionRequiredCard(
                         isAccessibilityEnabled = isAccessibilityEnabled,
-                        hasOverlayPermission = hasOverlayPermission,
                         isBatteryOptExempt = isBatteryOptExempt,
                         hasNotificationPermission = hasNotificationPermission,
                         onEnableAccessibility = {
                             openAccessibilitySettings(context)
-                            checkPermissions()
-                        },
-                        onEnableOverlay = {
-                            openOverlaySettings(context)
                             checkPermissions()
                         },
                         onDisableBatteryOpt = {
@@ -1613,9 +1834,14 @@ private fun MotivationUnlockGateDialog(
                     )
                 }
 
-                OutlinedTextField(
+                // Secure anti-cheat field (#5, #8, #9): FLAG_SECURE while the
+                // dialog is open, paste/dictation bulk inserts rejected, and an
+                // orange underline marks where the typed text differs from the
+                // target sentence so a disabled Confirm is self-explanatory.
+                SecureTypeField(
                     value = typedPhrase,
                     onValueChange = { typedPhrase = it },
+                    targetSentence = longMotivationalSentence,
                     placeholder = {
                         Text(
                             tr(
@@ -1836,14 +2062,20 @@ fun LockDurationCard(
 @Composable
 fun PermissionRequiredCard(
     isAccessibilityEnabled: Boolean,
-    hasOverlayPermission: Boolean,
     isBatteryOptExempt: Boolean,
     hasNotificationPermission: Boolean,
     onEnableAccessibility: () -> Unit,
-    onEnableOverlay: () -> Unit,
     onDisableBatteryOpt: () -> Unit,
     onEnableNotifications: () -> Unit
 ) {
+    // #25: on Android 13+ a sideloaded app cannot enable its accessibility
+    // service until the user allows "restricted settings" in App info.
+    // The app cannot bypass that system step — it can only explain it.
+    var showRestrictedSettingsGuide by remember { mutableStateOf(false) }
+    if (showRestrictedSettingsGuide) {
+        RestrictedSettingsGuideDialog(onDismiss = { showRestrictedSettingsGuide = false })
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = ObsidianCard),
@@ -1913,49 +2145,22 @@ fun PermissionRequiredCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Overlay permission item
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+            // #25 guide entry: only relevant while the service is still
+            // off — that is exactly when Android 13+'s restricted-settings
+            // wall blocks sideloaded apps from enabling accessibility.
+            if (!isAccessibilityEnabled) {
+                TextButton(
+                    onClick = { showRestrictedSettingsGuide = true },
+                    modifier = Modifier.testTag("restricted_settings_guide_button")
+                ) {
                     Text(
-                        text = tr("2. Display Over Other Apps", "۲. نمایش روی سایر برنامه‌ها"),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ObsidianTextPrimary
-                    )
-                    Text(
-                        text = if (hasOverlayPermission) tr("Active", "فعال") else tr("Required for Block Screen", "لازم برای نمایش صفحه قفل"),
+                        text = tr(
+                            "Can't turn it on? Android may be blocking it — see the fix",
+                            "روشن نمی‌شود؟ شاید اندروید جلوی آن را گرفته — راه‌حل را ببینید"
+                        ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (hasOverlayPermission) EmeraldShield else ObsidianTextSecondary
+                        color = AmberWarning
                     )
-                }
-
-                if (hasOverlayPermission) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Enabled",
-                        tint = EmeraldShield,
-                        modifier = Modifier.size(22.dp)
-                    )
-                } else {
-                    Button(
-                        onClick = onEnableOverlay,
-                        colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.testTag("enable_overlay_button")
-                    ) {
-                        Text(
-                            text = tr("Grant", "اعطا"),
-                            color = Color.Black,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
                 }
             }
 
@@ -1969,7 +2174,7 @@ fun PermissionRequiredCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tr("3. Unrestricted Battery", "۳. لغو بهینه‌سازی باتری"),
+                        text = tr("2. Unrestricted Battery", "۲. لغو بهینه‌سازی باتری"),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         color = ObsidianTextPrimary
@@ -2009,7 +2214,7 @@ fun PermissionRequiredCard(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = tr("4. Notifications", "۴. اعلان‌ها"),
+                            text = tr("3. Notifications", "۳. اعلان‌ها"),
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
                             color = ObsidianTextPrimary
@@ -2151,15 +2356,6 @@ private fun openAccessibilitySettings(context: Context) {
     }
 }
 
-private fun openOverlaySettings(context: Context) {
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${context.packageName}")
-            )
-            context.startActivity(intent)
-        }
-    } catch (_: Exception) {
-    }
-}
+// No openOverlaySettings() anymore (#25): the app declares no
+// SYSTEM_ALERT_WINDOW permission and never asks for it — the block
+// screen is a normal Activity, not an overlay window.

@@ -14,11 +14,13 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.view.accessibility.AccessibilityManager
+import com.example.service.InstallGuardLogic
 import com.example.service.KeywordGraceEpisode
 import com.example.service.KeywordGraceLogic
 import com.example.service.ShieldAccessibilityService
 import com.example.ui.theme.SeasonalTheme
 import com.example.util.DayMath
+import com.example.util.PinSecurity
 import com.example.widget.StreakWidgetProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,8 +72,6 @@ class ShieldPreferences(private val context: Context) {
                 .putString(KEY_LAST_SLIP_REASON, "")
                 .putInt(KEY_URGES_DEFEATED_COUNT, 0)
                 .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
-                .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-                .putString(KEY_SECURITY_PIN_CODE, "0000")
                 .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
                 .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
                 .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
@@ -112,7 +112,6 @@ class ShieldPreferences(private val context: Context) {
                 editor.putBoolean(KEY_STRICT_MODE_ENABLED, false)
                 editor.putBoolean(KEY_PREVENT_UNINSTALL_ENABLED, false)
                 editor.putBoolean(KEY_SMART_FOCUS_ENABLED, false)
-                editor.putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
                 editor.putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
                 needsApply = true
             }
@@ -120,6 +119,37 @@ class ShieldPreferences(private val context: Context) {
                 editor.apply()
             }
         }
+
+        migrateLegacyPinToHash()
+    }
+
+    /**
+     * One-time migration for #7: older versions stored the gate PIN as
+     * PLAINTEXT under KEY_SECURITY_PIN_CODE, with "0000" as the default.
+     * A real user-chosen PIN is hashed in place (fresh salt) so the user
+     * keeps their code; the plaintext copy is then deleted. The legacy
+     * DEFAULT "0000" is NOT migrated — a default code must never become a
+     * valid PIN, so those installs simply have no PIN set and are routed
+     * into the mandatory setup flow.
+     */
+    private fun migrateLegacyPinToHash() {
+        if (prefs.getBoolean(KEY_PIN_V2_MIGRATED, false)) return
+        val editor = prefs.edit()
+        val legacy = prefs.getString(KEY_SECURITY_PIN_CODE, null)
+            ?.filter { it.isDigit() }
+            ?.take(PinSecurity.MAX_PIN_LENGTH)
+        if (legacy != null &&
+            legacy != LEGACY_DEFAULT_PIN &&
+            PinSecurity.isValidPin(legacy) &&
+            !prefs.contains(KEY_PIN_HASH_V2)
+        ) {
+            val salt = PinSecurity.generateSalt()
+            editor.putString(KEY_PIN_SALT_V2, salt)
+            editor.putString(KEY_PIN_HASH_V2, PinSecurity.hashPin(legacy, salt))
+        }
+        editor.remove(KEY_SECURITY_PIN_CODE)
+        editor.putBoolean(KEY_PIN_V2_MIGRATED, true)
+        editor.apply()
     }
 
     private val _isProtectionEnabled = MutableStateFlow(getIsProtectionEnabled())
@@ -134,6 +164,23 @@ class ShieldPreferences(private val context: Context) {
 
     private val _isPreventUninstallEnabled = MutableStateFlow(getIsPreventUninstallEnabled())
     val isPreventUninstallEnabled: StateFlow<Boolean> = _isPreventUninstallEnabled.asStateFlow()
+
+    private val _isInstallGuardEnabled = MutableStateFlow(getIsInstallGuardEnabled())
+    val isInstallGuardEnabled: StateFlow<Boolean> = _isInstallGuardEnabled.asStateFlow()
+
+    private val _isDeviceOwnerProtectionEnabled = MutableStateFlow(getIsDeviceOwnerProtectionEnabled())
+    val isDeviceOwnerProtectionEnabled: StateFlow<Boolean> = _isDeviceOwnerProtectionEnabled.asStateFlow()
+
+    // Adult Site Blocking (#12/#13): the single toggle that replaced the
+    // Adult Preset, plus the status of the downloadable domain list.
+    private val _isAdultBlockEnabled = MutableStateFlow(getIsAdultBlockEnabled())
+    val isAdultBlockEnabled: StateFlow<Boolean> = _isAdultBlockEnabled.asStateFlow()
+
+    private val _adultBlocklistLastUpdatedMs = MutableStateFlow(getAdultBlocklistLastUpdatedMs())
+    val adultBlocklistLastUpdatedMs: StateFlow<Long> = _adultBlocklistLastUpdatedMs.asStateFlow()
+
+    private val _adultBlocklistDomainCount = MutableStateFlow(getAdultBlocklistDomainCount())
+    val adultBlocklistDomainCount: StateFlow<Int> = _adultBlocklistDomainCount.asStateFlow()
 
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
@@ -159,13 +206,12 @@ class ShieldPreferences(private val context: Context) {
     private val _usageRefreshTrigger = MutableStateFlow(0L)
     val usageRefreshTrigger: StateFlow<Long> = _usageRefreshTrigger.asStateFlow()
 
-    // Biometric Lodge / Security Lock State
-    private val _isBiometricLockEnabled = MutableStateFlow(getIsBiometricLockEnabled())
-    val isBiometricLockEnabled: StateFlow<Boolean> = _isBiometricLockEnabled.asStateFlow()
+    // PIN Gate State (#7: mandatory PIN, hash-only storage)
+    private val _isPinSet = MutableStateFlow(isPinSet())
+    val isPinSetFlow: StateFlow<Boolean> = _isPinSet.asStateFlow()
 
-
-    private val _securityPinCode = MutableStateFlow(getSecurityPinCode())
-    val securityPinCode: StateFlow<String> = _securityPinCode.asStateFlow()
+    private val _securityQuestion = MutableStateFlow(getSecurityQuestion())
+    val securityQuestionFlow: StateFlow<String> = _securityQuestion.asStateFlow()
 
     // Anti-Agent Blackout Screen Shield (FLAG_SECURE)
     private val _isBlackoutPrivacyShieldEnabled = MutableStateFlow(getIsBlackoutPrivacyShieldEnabled())
@@ -290,10 +336,14 @@ class ShieldPreferences(private val context: Context) {
             put("lastSlipReason", getLastSlipReason())
             put("urgesDefeatedCount", getUrgesDefeatedCount())
             put("personalPledge", getPersonalPledge())
-            put("isBiometricLockEnabled", getIsBiometricLockEnabled())
-            put("securityPinCode", getSecurityPinCode())
+            // The gate PIN and the security-question answer are device-local
+            // secrets (#7): they are NEVER exported into a backup, and old
+            // backups carrying a plaintext "securityPinCode" field have that
+            // field ignored on import, so a backup can never restore a bypass.
             put("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
             put("isSmartFocusEnabled", getIsSmartFocusEnabled())
+            put("isAdultBlockEnabled", getIsAdultBlockEnabled())
+            put("isDeviceOwnerProtectionEnabled", getIsDeviceOwnerProtectionEnabled())
 
             put("isDarkTheme", getIsDarkTheme())
             put("isPersianLanguage", getIsPersianLanguage())
@@ -333,10 +383,13 @@ class ShieldPreferences(private val context: Context) {
         val slipReason = json.optString("lastSlipReason", getLastSlipReason())
         val urges = json.optInt("urgesDefeatedCount", getUrgesDefeatedCount()).coerceAtLeast(0)
         val pledge = json.optString("personalPledge", getPersonalPledge())
-        val bio = json.optBoolean("isBiometricLockEnabled", getIsBiometricLockEnabled())
-        val pin = json.optString("securityPinCode", getSecurityPinCode()).filter { it.isDigit() }.take(6).ifEmpty { "0000" }
+        // Note: any "securityPinCode" / "isBiometricLockEnabled" fields in
+        // old backups are deliberately ignored — the PIN gate is mandatory
+        // and its credentials never travel through backups (#7).
         val blackout = json.optBoolean("isBlackoutPrivacyShieldEnabled", getIsBlackoutPrivacyShieldEnabled())
         val focus = json.optBoolean("isSmartFocusEnabled", getIsSmartFocusEnabled())
+        val adultBlock = json.optBoolean("isAdultBlockEnabled", getIsAdultBlockEnabled())
+        val deviceOwnerProtection = json.optBoolean("isDeviceOwnerProtectionEnabled", getIsDeviceOwnerProtectionEnabled())
         val dark = json.optBoolean("isDarkTheme", getIsDarkTheme())
         val persian = json.optBoolean("isPersianLanguage", getIsPersianLanguage())
         val seasonalTheme = SeasonalTheme.fromName(
@@ -362,10 +415,10 @@ class ShieldPreferences(private val context: Context) {
             .putInt(KEY_URGES_DEFEATED_COUNT, urges)
 
             .putString(KEY_PERSONAL_PLEDGE, pledge)
-            .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, bio)
-            .putString(KEY_SECURITY_PIN_CODE, pin)
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, blackout)
             .putBoolean(KEY_SMART_FOCUS_ENABLED, focus)
+            .putBoolean(KEY_ADULT_BLOCK_ENABLED, adultBlock)
+            .putBoolean(KEY_DEVICE_OWNER_PROTECTION_ENABLED, deviceOwnerProtection)
             .putBoolean(KEY_IS_DARK_THEME, dark)
             .putBoolean(KEY_IS_PERSIAN_LANGUAGE, persian)
             .putString(KEY_SEASONAL_THEME, seasonalTheme.name)
@@ -387,10 +440,10 @@ class ShieldPreferences(private val context: Context) {
         _lastSlipReason.value = slipReason
         _urgesDefeatedCount.value = urges
         _personalPledge.value = pledge
-        _isBiometricLockEnabled.value = bio
-        _securityPinCode.value = pin
         _isBlackoutPrivacyShieldEnabled.value = blackout
         _isSmartFocusEnabled.value = focus
+        _isAdultBlockEnabled.value = adultBlock
+        _isDeviceOwnerProtectionEnabled.value = deviceOwnerProtection
         _isDarkTheme.value = dark
         _isPersianLanguage.value = persian
 
@@ -501,6 +554,104 @@ class ShieldPreferences(private val context: Context) {
 
     fun getUninstallWaitRemainingMillis(nowMs: Long = System.currentTimeMillis()): Long {
         return UninstallGuard.remainingMillis(getUninstallUnlockDeadline(), nowMs)
+    }
+
+    // Install Guard (#27) — when ON, installing a new app requires a PIN
+    // confirmation within 10 seconds (see InstallGuardLogic).
+    fun getIsInstallGuardEnabled(): Boolean {
+        return prefs.getBoolean(KEY_INSTALL_GUARD_ENABLED, false)
+    }
+
+    fun setInstallGuardEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        val editor = prefs.edit().putBoolean(KEY_INSTALL_GUARD_ENABLED, enabled)
+        if (!enabled) {
+            // Turning the guard off abandons any pending prompt/allowance.
+            editor.putLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, 0L)
+            editor.putLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, 0L)
+            editor.putBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, false)
+        }
+        editor.apply()
+        _isInstallGuardEnabled.value = enabled
+    }
+
+    /**
+     * The install-guard session (pending prompt / one-shot allowance) is
+     * persisted so the accessibility service, its ticker and the PIN
+     * activity all act on the same state even across process death.
+     */
+    fun getInstallGuardState(): InstallGuardLogic.State {
+        return InstallGuardLogic.State(
+            promptDeadlineMs = prefs.getLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, 0L),
+            allowanceUntilMs = prefs.getLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, 0L),
+            allowanceEngaged = prefs.getBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, false)
+        )
+    }
+
+    fun saveInstallGuardState(state: InstallGuardLogic.State) {
+        prefs.edit()
+            .putLong(KEY_INSTALL_GUARD_PROMPT_DEADLINE, state.promptDeadlineMs)
+            .putLong(KEY_INSTALL_GUARD_ALLOWANCE_UNTIL, state.allowanceUntilMs)
+            .putBoolean(KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED, state.allowanceEngaged)
+            .apply()
+    }
+
+    // Device Owner Protection (#11) — the user's on/off choice for the
+    // DevicePolicyManager restrictions (own-package uninstall block +
+    // ADB/debugging restriction). The choice is just a preference:
+    // DeviceOwnerManager APPLIES it only while the app actually is the
+    // device owner, and reconcile() re-applies it at every app/service
+    // start, so the choice survives reboots and process death.
+    fun getIsDeviceOwnerProtectionEnabled(): Boolean {
+        return prefs.getBoolean(KEY_DEVICE_OWNER_PROTECTION_ENABLED, false)
+    }
+
+    fun setDeviceOwnerProtectionEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_DEVICE_OWNER_PROTECTION_ENABLED, enabled).apply()
+        _isDeviceOwnerProtectionEnabled.value = enabled
+    }
+
+    // Adult Site Blocking (#12) — the single "block all adult sites"
+    // toggle that replaced the Adult Preset. It defaults ON, exactly like
+    // the preset rows used to be enabled by default: the moment master
+    // protection is on, adult domains from the #13 list are blocked.
+    fun getIsAdultBlockEnabled(): Boolean {
+        return prefs.getBoolean(KEY_ADULT_BLOCK_ENABLED, true)
+    }
+
+    fun setAdultBlockEnabled(enabled: Boolean) {
+        // Same rule as the other anti-tamper toggles: not OFF mid-lock.
+        if (!enabled && isCurrentlyLocked()) return
+        prefs.edit().putBoolean(KEY_ADULT_BLOCK_ENABLED, enabled).apply()
+        _isAdultBlockEnabled.value = enabled
+    }
+
+    // Adult blocklist status (#13): when the merged list was last fetched
+    // from the internet (0 = never) and how many domains it currently holds
+    // (the fallback seed also records its count, with timestamp 0).
+    fun getAdultBlocklistLastUpdatedMs(): Long {
+        return prefs.getLong(KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS, 0L)
+    }
+
+    fun getAdultBlocklistDomainCount(): Int {
+        return prefs.getInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, 0)
+    }
+
+    fun saveAdultBlocklistUpdate(lastUpdatedMs: Long, domainCount: Int) {
+        prefs.edit()
+            .putLong(KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS, lastUpdatedMs)
+            .putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount)
+            .apply()
+        _adultBlocklistLastUpdatedMs.value = lastUpdatedMs
+        _adultBlocklistDomainCount.value = domainCount
+    }
+
+    fun setAdultBlocklistDomainCount(domainCount: Int) {
+        prefs.edit().putInt(KEY_ADULT_BLOCKLIST_DOMAIN_COUNT, domainCount).apply()
+        _adultBlocklistDomainCount.value = domainCount
     }
 
     /**
@@ -694,28 +845,129 @@ class ShieldPreferences(private val context: Context) {
         return nowMs < whitelistUntil
     }
 
-    // Biometric Lodge Methods
-    fun getIsBiometricLockEnabled(): Boolean {
-        return prefs.getBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-    }
+    // ---- PIN Gate (#7: mandatory PIN, salted-hash storage only) ----
 
-    fun setBiometricLockEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, enabled).apply()
-        _isBiometricLockEnabled.value = enabled
-    }
+    /** True once a PIN exists. An unset PIN means "setup required". */
+    fun isPinSet(): Boolean =
+        !PinSecurity.requiresPinSetup(prefs.getString(KEY_PIN_HASH_V2, null))
 
-    fun getSecurityPinCode(): String {
-        return prefs.getString(KEY_SECURITY_PIN_CODE, "0000") ?: "0000"
-    }
+    /** True once a security question AND its (hashed) answer are stored. */
+    fun hasSecurityQuestion(): Boolean =
+        !prefs.getString(KEY_SECURITY_QUESTION, null).isNullOrBlank() &&
+            !prefs.getString(KEY_SECURITY_ANSWER_HASH, null).isNullOrBlank()
 
-    fun setSecurityPinCode(pin: String) {
-        val clean = pin.filter { it.isDigit() }.take(6).ifEmpty { "0000" }
-        prefs.edit().putString(KEY_SECURITY_PIN_CODE, clean).apply()
-        _securityPinCode.value = clean
-    }
+    fun getSecurityQuestion(): String =
+        prefs.getString(KEY_SECURITY_QUESTION, "") ?: ""
 
+    /** Constant-time verification of an entered PIN against the stored hash. */
     fun verifySecurityPin(inputPin: String): Boolean {
-        return inputPin.trim() == getSecurityPinCode()
+        val storedHash = prefs.getString(KEY_PIN_HASH_V2, null) ?: return false
+        val salt = prefs.getString(KEY_PIN_SALT_V2, null) ?: return false
+        return PinSecurity.hashesEqual(
+            PinSecurity.hashPin(inputPin.trim(), salt),
+            storedHash
+        )
+    }
+
+    /**
+     * First-run setup: stores the new PIN (hashed) together with the
+     * security question and its (normalized, hashed) answer.
+     */
+    fun completePinSetup(pin: String, question: String, answer: String): Boolean {
+        if (!PinSecurity.isValidPin(pin)) return false
+        if (question.isBlank() || PinSecurity.normalizeSecurityAnswer(answer).isEmpty()) return false
+        storePinHash(pin)
+        storeSecurityQuestion(question, answer)
+        clearPinFailures()
+        _isPinSet.value = true
+        return true
+    }
+
+    /** Settings flow: change the PIN after proving the current one. */
+    fun changeSecurityPin(currentPin: String, newPin: String): Boolean {
+        if (!verifySecurityPin(currentPin)) return false
+        if (!PinSecurity.isValidPin(newPin)) return false
+        storePinHash(newPin)
+        clearPinFailures()
+        return true
+    }
+
+    /**
+     * Stores/replaces the security question + answer. Callers are
+     * responsible for authorization: the setup flow, the post-unlock
+     * catch-up for migrated installs, or the PIN-verified settings flow.
+     */
+    fun setSecurityQuestionAndAnswer(question: String, answer: String): Boolean {
+        if (question.isBlank() || PinSecurity.normalizeSecurityAnswer(answer).isEmpty()) return false
+        storeSecurityQuestion(question, answer)
+        return true
+    }
+
+    /** Verifies a recovery answer (normalization-insensitive compare). */
+    fun verifySecurityAnswer(inputAnswer: String): Boolean {
+        val storedHash = prefs.getString(KEY_SECURITY_ANSWER_HASH, null) ?: return false
+        val salt = prefs.getString(KEY_SECURITY_ANSWER_SALT, null) ?: return false
+        return PinSecurity.hashesEqual(
+            PinSecurity.hashSecurityAnswer(inputAnswer, salt),
+            storedHash
+        )
+    }
+
+    /** "Forgot PIN" flow: a correct security answer authorizes a new PIN. */
+    fun resetPinWithSecurityAnswer(answer: String, newPin: String): Boolean {
+        if (!PinSecurity.isValidPin(newPin)) return false
+        if (!verifySecurityAnswer(answer)) return false
+        storePinHash(newPin)
+        clearPinFailures()
+        _isPinSet.value = true
+        return true
+    }
+
+    private fun storePinHash(pin: String) {
+        val salt = PinSecurity.generateSalt()
+        prefs.edit()
+            .putString(KEY_PIN_SALT_V2, salt)
+            .putString(KEY_PIN_HASH_V2, PinSecurity.hashPin(pin, salt))
+            .apply()
+    }
+
+    private fun storeSecurityQuestion(question: String, answer: String) {
+        val salt = PinSecurity.generateSalt()
+        val cleanQuestion = question.trim()
+        prefs.edit()
+            .putString(KEY_SECURITY_QUESTION, cleanQuestion)
+            .putString(KEY_SECURITY_ANSWER_SALT, salt)
+            .putString(KEY_SECURITY_ANSWER_HASH, PinSecurity.hashSecurityAnswer(answer, salt))
+            .apply()
+        _securityQuestion.value = cleanQuestion
+    }
+
+    // ---- PIN brute-force backoff ----
+
+    fun getPinLockoutUntilMs(): Long =
+        prefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+
+    /**
+     * Records one wrong PIN entry and returns the lockout deadline
+     * (epoch ms) now in force — 0 when the failure count is still below
+     * the backoff threshold.
+     */
+    fun recordFailedPinAttempt(nowMs: Long = System.currentTimeMillis()): Long {
+        val failures = prefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+        val backoff = PinSecurity.backoffMillis(failures)
+        val until = if (backoff > 0L) nowMs + backoff else 0L
+        prefs.edit()
+            .putInt(KEY_PIN_FAILED_ATTEMPTS, failures)
+            .putLong(KEY_PIN_LOCKOUT_UNTIL, until)
+            .apply()
+        return until
+    }
+
+    fun clearPinFailures() {
+        prefs.edit()
+            .putInt(KEY_PIN_FAILED_ATTEMPTS, 0)
+            .putLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+            .apply()
     }
 
     // Anti-Agent Blackout Shield (FLAG_SECURE)
@@ -1028,6 +1280,30 @@ class ShieldPreferences(private val context: Context) {
         return "usage_sys_base_${todayDay}_$packageName"
     }
 
+    private fun getTodayLimitWarningKey(packageName: String): String {
+        val todayDay = DayMath.localEpochDay()
+        return "limit_warn_${todayDay}_$packageName"
+    }
+
+    /**
+     * Whether the one-minute-left warning (#26) already fired today for this
+     * limit. Day-keyed like the usage counters, so it re-arms by itself at
+     * the same local midnight that resets the budget.
+     */
+    fun wasDailyLimitWarningShownToday(packageName: String, appName: String = ""): Boolean {
+        val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
+        return equivalents.any { prefs.getBoolean(getTodayLimitWarningKey(it), false) }
+    }
+
+    fun markDailyLimitWarningShownToday(packageName: String, appName: String = "") {
+        val equivalents = com.example.util.AppPackageResolver.getAllEquivalentPackages(packageName, appName)
+        val editor = prefs.edit()
+        for (pkg in equivalents) {
+            editor.putBoolean(getTodayLimitWarningKey(pkg), true)
+        }
+        editor.apply()
+    }
+
     fun getDayAppUsageMinutes(daysAgo: Int, packageNames: List<String>): Int {
         if (packageNames.isEmpty()) return 0
         val targetEpochDay = DayMath.localEpochDay() - daysAgo
@@ -1099,6 +1375,9 @@ class ShieldPreferences(private val context: Context) {
         for (pkg in equivalents) {
             editor.remove(getTodaySecondsKey(pkg))
             editor.remove(getTodayMinutesLegacyKey(pkg))
+            // A manual reset restarts the budget, so the one-minute-left
+            // warning must be allowed to fire again for the fresh budget.
+            editor.remove(getTodayLimitWarningKey(pkg))
             val currentSysSec = freshSystemUsage[pkg] ?: 0
             editor.putInt(getTodaySystemBaselineKey(pkg), currentSysSec)
         }
@@ -1243,8 +1522,6 @@ class ShieldPreferences(private val context: Context) {
             .putString(KEY_LAST_SLIP_REASON, "")
             .putInt(KEY_URGES_DEFEATED_COUNT, 0)
             .putString(KEY_PERSONAL_PLEDGE, defaultPledge)
-            .putBoolean(KEY_BIOMETRIC_LOCK_ENABLED, false)
-            .putString(KEY_SECURITY_PIN_CODE, "0000")
             .putBoolean(KEY_BLACKOUT_PRIVACY_SHIELD, false)
             .putLong(KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL, 0L)
             .putBoolean(KEY_SMART_FOCUS_ENABLED, false)
@@ -1271,8 +1548,12 @@ class ShieldPreferences(private val context: Context) {
         _lastSlipReason.value = ""
         _urgesDefeatedCount.value = 0
         _personalPledge.value = defaultPledge
-        _isBiometricLockEnabled.value = false
-        _securityPinCode.value = "0000"
+        _isPinSet.value = false
+        _securityQuestion.value = ""
+        _isAdultBlockEnabled.value = true
+        _isDeviceOwnerProtectionEnabled.value = false
+        _adultBlocklistLastUpdatedMs.value = 0L
+        _adultBlocklistDomainCount.value = 0
         _isBlackoutPrivacyShieldEnabled.value = false
         _screenshotTemporaryUnlockUntil.value = 0L
         _isSmartFocusEnabled.value = false
@@ -1302,6 +1583,14 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_LOCK_DURATION_MINUTES = "key_lock_duration_minutes"
         private const val KEY_STRICT_MODE_ENABLED = "key_strict_mode_enabled"
         private const val KEY_PREVENT_UNINSTALL_ENABLED = "key_prevent_uninstall_enabled"
+        private const val KEY_INSTALL_GUARD_ENABLED = "key_install_guard_enabled"
+        private const val KEY_INSTALL_GUARD_PROMPT_DEADLINE = "key_install_guard_prompt_deadline"
+        private const val KEY_INSTALL_GUARD_ALLOWANCE_UNTIL = "key_install_guard_allowance_until"
+        private const val KEY_INSTALL_GUARD_ALLOWANCE_ENGAGED = "key_install_guard_allowance_engaged"
+        private const val KEY_DEVICE_OWNER_PROTECTION_ENABLED = "key_device_owner_protection_enabled"
+        private const val KEY_ADULT_BLOCK_ENABLED = "key_adult_block_enabled"
+        private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
+        private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"
@@ -1321,8 +1610,21 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_LAST_SLIP_REASON = "key_last_slip_reason"
         private const val KEY_URGES_DEFEATED_COUNT = "key_urges_defeated_count"
         private const val KEY_PERSONAL_PLEDGE = "key_personal_pledge"
-        private const val KEY_BIOMETRIC_LOCK_ENABLED = "key_biometric_lock_enabled"
+
+        // Legacy plaintext PIN key — read ONLY by the one-time hash
+        // migration above, then removed. Never write to it again.
         private const val KEY_SECURITY_PIN_CODE = "key_security_pin_code"
+        private const val LEGACY_DEFAULT_PIN = "0000"
+
+        // PIN gate v2 (#7): salted hashes only, never the PIN itself.
+        private const val KEY_PIN_HASH_V2 = "key_pin_hash_v2"
+        private const val KEY_PIN_SALT_V2 = "key_pin_salt_v2"
+        private const val KEY_PIN_V2_MIGRATED = "key_pin_v2_migrated"
+        private const val KEY_SECURITY_QUESTION = "key_security_question"
+        private const val KEY_SECURITY_ANSWER_HASH = "key_security_answer_hash"
+        private const val KEY_SECURITY_ANSWER_SALT = "key_security_answer_salt"
+        private const val KEY_PIN_FAILED_ATTEMPTS = "key_pin_failed_attempts"
+        private const val KEY_PIN_LOCKOUT_UNTIL = "key_pin_lockout_until"
         private const val KEY_BLACKOUT_PRIVACY_SHIELD = "key_blackout_privacy_shield_v2"
         private const val KEY_SCREENSHOT_TEMP_UNLOCK_UNTIL = "key_screenshot_temp_unlock_until"
         private const val KEY_SMART_FOCUS_ENABLED = "key_smart_focus_enabled"
@@ -1380,14 +1682,10 @@ class ShieldPreferences(private val context: Context) {
             return false
         }
 
-        fun hasOverlayPermission(context: Context): Boolean {
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Settings.canDrawOverlays(context)
-
-            } else {
-                true
-            }
-        }
+        // No hasOverlayPermission() check exists anymore (#25): the app
+        // never draws overlay windows — the block screen is a normal
+        // Activity — so SYSTEM_ALERT_WINDOW is not declared and no UI
+        // asks for it. See PLAY-PROTECT-NOTES.md.
 
         fun isIgnoringBatteryOptimizations(context: Context): Boolean {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true

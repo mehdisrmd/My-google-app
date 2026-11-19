@@ -101,10 +101,10 @@ jobs:
       - name: Publish Split CPU APKs to GitHub Releases Automatically
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.4.${{ github.run_number }}
-          name: "X Blocker v0.4.${{ github.run_number }} (Split CPU APKs: ARM64 / ARMv7a / Universal)"
+          tag_name: v0.5.${{ github.run_number }}
+          name: "X Blocker v0.5.${{ github.run_number }} (Split CPU APKs: ARM64 / ARMv7a / Universal)"
           body: |
-            ### X Blocker Android Release (v0.4.${{ github.run_number }})
+            ### X Blocker Android Release (v0.5.${{ github.run_number }})
             - **Developer Telegram:** [@mehdisrmd](https://t.me/mehdisrmd)
             - **CPU-Specific APK Downloads (Choose your device architecture):**
               - **`X-Blocker-arm64-v8a.apk`** — Modern 64-bit Android phones (`ARM64 / arm64-v8a`, recommended for most phones)

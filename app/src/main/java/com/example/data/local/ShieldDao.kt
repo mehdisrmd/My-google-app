@@ -45,6 +45,9 @@ interface ShieldDao {
     @Query("DELETE FROM blocked_keywords WHERE id = :id")
     suspend fun deleteKeywordById(id: Long)
 
+    @Query("DELETE FROM blocked_keywords WHERE category IN (:categoryNames)")
+    suspend fun deleteKeywordsByCategoryNames(categoryNames: List<String>)
+
     @Query("SELECT * FROM block_incidents ORDER BY timestamp DESC")
     fun getAllIncidents(): Flow<List<BlockIncident>>
 
@@ -56,6 +59,12 @@ interface ShieldDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIncident(incident: BlockIncident): Long
+
+    @Query("DELETE FROM block_incidents WHERE id = :id")
+    suspend fun deleteIncidentById(id: Long)
+
+    @Query("DELETE FROM block_incidents WHERE id IN (:ids)")
+    suspend fun deleteIncidentsByIds(ids: List<Long>)
 
     @Query("DELETE FROM block_incidents")
     suspend fun clearIncidents()

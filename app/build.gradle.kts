@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.shieldblock.qxtvnz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "0.4"
+    versionCode = 2
+    versionName = "0.5"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -113,6 +113,9 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // WorkManager: the weekly adult-blocklist refresh (#13). The updater
+  // itself uses HttpURLConnection, so no new HTTP stack is pulled in.
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)

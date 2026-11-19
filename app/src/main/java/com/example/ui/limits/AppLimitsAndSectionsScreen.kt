@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -39,6 +42,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +54,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -64,7 +70,9 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,9 +108,15 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import com.example.util.AppPackageResolver
+import com.example.util.ResolvedAppInfo
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppLimitsAndSectionsScreen(
     appLimits: List<AppUsageLimit>,
@@ -130,7 +144,8 @@ fun AppLimitsAndSectionsScreen(
     var showAddSectionDialog by remember { mutableStateOf(false) }
     var showAddFocusSlotDialog by remember { mutableStateOf(false) }
     var cooldownNoticeMessage by remember { mutableStateOf<String?>(null) }
-    var refreshNoticeMessage by remember { mutableStateOf<String?>(null) }
+    var isRefreshing by remember { mutableStateOf(false) }
+    val refreshScope = rememberCoroutineScope()
 
     val usageRefreshTick by preferences.usageRefreshTrigger.collectAsStateWithLifecycle()
     val isSmartFocusEnabled by preferences.isSmartFocusEnabled.collectAsStateWithLifecycle()
@@ -167,47 +182,13 @@ fun AppLimitsAndSectionsScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = tr("App Limits, Sections & Smart Focus", "محدودیت برنامه‌ها، بخش‌ها و تمرکز هوشمند"),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = ObsidianTextPrimary
-                    )
-                    Text(
-                        text = tr(
-                            "Daily app limits (2h cooldown), stop Instagram Reels / Telegram Search, or schedule Deep Work",
-                            "محدودیت روزانه (با قفل ۲ ساعته)، توقف ریلز اینستاگرام و جستجوی تلگرام، یا زمان‌بندی تمرکز"
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ObsidianTextSecondary,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = {
-                        nowMs = System.currentTimeMillis()
-                        preferences.refreshLiveUsageStats()
-                        refreshNoticeMessage = tr(
-                            "Usage counters & timers refreshed!",
-                            "آمار مصرف و تایمرها بروزرسانی شدند!"
-                        )
-                    },
-                    modifier = Modifier.testTag("refresh_all_limits_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh Usage",
-                        tint = CyanTelemetry
-                    )
-                }
-            }
+            Text(
+                text = tr("App Limits, Sections & Smart Focus", "محدودیت برنامه‌ها، بخش‌ها و تمرکز هوشمند"),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = ObsidianTextPrimary,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
 
             TabRow(
                 selectedTabIndex = selectedTab,
@@ -263,37 +244,6 @@ fun AppLimitsAndSectionsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            refreshNoticeMessage?.let { msg ->
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = EmeraldShield.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, EmeraldShield),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp)
-                        .testTag("refresh_notice_banner")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = msg,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = EmeraldShield,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { refreshNoticeMessage = null }) {
-                            Text(tr("OK", "تایید"), color = EmeraldShield, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-
             cooldownNoticeMessage?.let { msg ->
                 Card(
                     modifier = Modifier
@@ -335,64 +285,87 @@ fun AppLimitsAndSectionsScreen(
                 }
             }
 
-            when (selectedTab) {
-                0 -> {
-                    if (!hasUsageStatsPerm) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp),
-                            colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
-                            shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.5f))
+            // Usage-access permission card for the Limits tab. It lives
+            // OUTSIDE the pull-to-refresh box so the box holds exactly one
+            // scrollable child per tab (a Box would overlap stacked children).
+            if (selectedTab == 0 && !hasUsageStatsPerm) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = AmberWarning,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = tr("Sync OS Screen Time (Optional)", "همگام‌سازی زمان مصرف سیستم (اختیاری)"),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = ObsidianTextPrimary
-                                        )
-                                        Text(
-                                            text = tr(
-                                                "Grant Usage Access for system-wide app usage detection alongside Accessibility tracking",
-                                                "اعطای دسترسی Usage Access برای تشخیص دقیق زمان استفاده از برنامه‌ها"
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = ObsidianTextSecondary
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Button(
-                                    onClick = { ShieldPreferences.requestUsageStatsPermission(context) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(tr("Grant", "اعطا"), color = Color.Black, fontWeight = FontWeight.Bold)
-                                }
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = AmberWarning,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = tr("Sync OS Screen Time (Optional)", "همگام‌سازی زمان مصرف سیستم (اختیاری)"),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ObsidianTextPrimary
+                                )
+                                Text(
+                                    text = tr(
+                                        "Grant Usage Access for system-wide app usage detection alongside Accessibility tracking",
+                                        "اعطای دسترسی Usage Access برای تشخیص دقیق زمان استفاده از برنامه‌ها"
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ObsidianTextSecondary
+                                )
                             }
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { ShieldPreferences.requestUsageStatsPermission(context) },
+                            colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(tr("Grant", "اعطا"), color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
                     }
+                }
+            }
 
+            // Pull-to-refresh (#16d) replaces the old top-right refresh
+            // button: pulling the tab content down re-reads the live usage
+            // counters, with the Material3 circular indicator on top.
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    isRefreshing = true
+                    refreshScope.launch {
+                        preferences.refreshLiveUsageStats()
+                        nowMs = System.currentTimeMillis()
+                        // Keep the spinner up briefly so the gesture reads as
+                        // a completed refresh instead of a flicker.
+                        delay(650L)
+                        isRefreshing = false
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("limits_pull_to_refresh")
+            ) {
+            when (selectedTab) {
+                0 -> {
                     AppLimitsList(
                         appLimits = appLimits,
                         preferences = preferences,
@@ -429,12 +402,11 @@ fun AppLimitsAndSectionsScreen(
                             }
                         },
                         onRefreshUsage = { limit ->
+                            // The reset itself is the feedback now: the card
+                            // re-renders at 0m 0s. (The old confirmation
+                            // banner was removed with #16b.)
                             preferences.resetTodayAppUsage(limit.packageName, limit.appName)
                             nowMs = System.currentTimeMillis()
-                            refreshNoticeMessage = tr(
-                                "${limit.appName} usage timer refreshed & reset to 0m 0s!",
-                                "تایمر مصرف ${limit.appName} بروزرسانی و صفر شد (0m 0s)!"
-                            )
                         },
                         onTriggerUsageLockdown = onTriggerUsageLockdown
                     )
@@ -476,6 +448,7 @@ fun AppLimitsAndSectionsScreen(
                         }
                     )
                 }
+            }
             }
         }
 
@@ -557,6 +530,18 @@ fun AppLimitsList(
 ) {
     val context = LocalContext.current
 
+    // Installed-package set, loaded ONCE off the main thread (#10). The old
+    // code called isAppLimitInstalledOnDevice() inside every card's
+    // remember — a full queryIntentActivities sweep per row, on the main
+    // thread, during composition.
+    val installedPackages by produceState<Set<String>?>(initialValue = null, context) {
+        value = withContext(Dispatchers.Default) {
+            AppPackageResolver.queryInstalledApps(context)
+                .map { it.packageName.lowercase(Locale.ROOT) }
+                .toSet()
+        }
+    }
+
     if (appLimits.isEmpty()) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -608,8 +593,16 @@ fun AppLimitsList(
                 val usedSeconds = remember(usageRefreshTick, nowMs, limit.packageName, limit.appName) {
                     preferences.getTodayAppUsageSeconds(limit.packageName, limit.appName)
                 }
-                val isInstalledOnDevice = remember(context, limit.packageName, limit.appName) {
-                    AppPackageResolver.isAppLimitInstalledOnDevice(context, limit.packageName, limit.appName)
+                val loadedInstalled = installedPackages
+                val isInstalledOnDevice = remember(loadedInstalled, limit.packageName, limit.appName) {
+                    if (loadedInstalled != null) {
+                        AppPackageResolver.getAllEquivalentPackages(limit.packageName, limit.appName)
+                            .any { it.lowercase(Locale.ROOT) in loadedInstalled }
+                    } else {
+                        // Set still loading: fall back to a cheap
+                        // single-package probe instead of a full sweep.
+                        AppPackageResolver.isDirectPackageInstalled(context, limit.packageName)
+                    }
                 }
                 val usedMinutes = usedSeconds / 60
                 val progress = if (limit.dailyLimitMinutes > 0) {
@@ -1070,8 +1063,24 @@ fun AddAppLimitDialog(
     onSave: (AppUsageLimit) -> Unit
 ) {
     val context = LocalContext.current
-    val installedApps = remember(context) { AppPackageResolver.queryInstalledApps(context) }
-    val popularApps = remember(context) { AppPackageResolver.getPopularPresetApps(context) }
+    // #10 ANR fix: enumerating ~250 installed apps (two PackageManager
+    // sweeps + a label load per app) must never run synchronously during
+    // composition. Load off the main thread; the dialog opens instantly and
+    // shows a loading row until the lists land. The resolver caches the
+    // result, so later opens are instant too.
+    val installedAppsState by produceState<List<ResolvedAppInfo>?>(initialValue = null, context) {
+        value = withContext(Dispatchers.Default) {
+            AppPackageResolver.queryInstalledApps(context)
+        }
+    }
+    val popularAppsState by produceState<List<ResolvedAppInfo>?>(initialValue = null, context) {
+        value = withContext(Dispatchers.Default) {
+            AppPackageResolver.getPopularPresetApps(context)
+        }
+    }
+    val installedApps = installedAppsState ?: emptyList()
+    val popularApps = popularAppsState ?: emptyList()
+    val appsLoading = installedAppsState == null
 
     val defaultInitialApp = remember(installedApps, popularApps, initialLimit) {
         if (initialLimit != null) {
@@ -1088,8 +1097,11 @@ fun AddAppLimitDialog(
         }
     }
 
-    var selectedAppName by remember { mutableStateOf(defaultInitialApp.first) }
-    var selectedPackage by remember { mutableStateOf(defaultInitialApp.second) }
+    // Keyed on the computed default so the selection follows the app lists
+    // when they finish loading (previously the lists were synchronous, so
+    // the default was already final at first composition).
+    var selectedAppName by remember(defaultInitialApp) { mutableStateOf(defaultInitialApp.first) }
+    var selectedPackage by remember(defaultInitialApp) { mutableStateOf(defaultInitialApp.second) }
     var searchQuery by remember { mutableStateOf("") }
 
     var limitHours by remember {
@@ -1207,6 +1219,26 @@ fun AddAppLimitDialog(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    if (appsLoading) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.testTag("app_list_loading")
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = CyanTelemetry,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = tr("Loading installed apps…", "در حال بارگذاری برنامه‌های نصب‌شده…"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ObsidianTextSecondary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
                     if (filteredInstalledApps.isNotEmpty()) {
                         Text(
                             text = tr("Installed on This Device (${filteredInstalledApps.size}):", "نصب‌شده روی این دستگاه (${filteredInstalledApps.size}):"),
@@ -1216,12 +1248,18 @@ fun AddAppLimitDialog(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
 
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
+                        // Lazy grid with a bounded height (#10): only the
+                        // visible chips compose. The old FlowRow composed
+                        // all ~250 chips at once inside the scroll column.
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 108.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(168.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            filteredInstalledApps.forEach { appInfo ->
+                            items(filteredInstalledApps, key = { it.packageName }) { appInfo ->
                                 val isSelected = selectedPackage == appInfo.packageName && !showCustomInput
                                 Surface(
                                     onClick = {
@@ -1235,7 +1273,9 @@ fun AddAppLimitDialog(
                                         1.dp,
                                         if (isSelected) CrimsonPrimary else EmeraldShield.copy(alpha = 0.4f)
                                     ),
-                                    modifier = Modifier.testTag("app_chip_${appInfo.packageName}")
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("app_chip_${appInfo.packageName}")
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -1251,7 +1291,9 @@ fun AddAppLimitDialog(
                                         Text(
                                             text = appInfo.appName,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = if (isSelected) Color.White else ObsidianTextPrimary
+                                            color = if (isSelected) Color.White else ObsidianTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }

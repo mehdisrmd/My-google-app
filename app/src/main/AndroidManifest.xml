@@ -2,15 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+        Play Protect hygiene (#25): this list is deliberately minimal —
+        every permission below is exercised by a named feature (see
+        PLAY-PROTECT-NOTES.md at the repo root for the per-permission
+        audit). SYSTEM_ALERT_WINDOW was removed in v0.5: nothing in the
+        app draws overlay windows (the block screen is a normal Activity),
+        so the permission was attack surface with no function. Do not add
+        permissions back without a feature that actually calls their APIs.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <queries>
@@ -73,6 +80,15 @@
             android:excludeFromRecents="false"
             android:theme="@style/Theme.MyApplication" />
 
+        <!-- Install Guard (#27): the 10-second PIN-confirm prompt shown
+             when a new app install is attempted while the guard is ON. -->
+        <activity
+            android:name=".ui.security.InstallGuardActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.MyApplication" />
+
         <service
             android:name=".service.ShieldAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -112,6 +128,29 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/streak_widget_info" />
+        </receiver>
+
+        <!--
+            Device Owner protection (item #11): the admin receiver behind
+            the definitive ADB/computer-uninstall block. The app can never
+            grant itself this role — it only becomes Device Owner through
+            one-time provisioning outside the app (adb shell dpm
+            set-device-owner on a phone with no accounts signed in, or QR
+            provisioning during initial setup). This receiver is the
+            component Android binds once that has happened.
+        -->
+        <receiver
+            android:name=".deviceowner.ShieldDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
         </receiver>
     </application>
 

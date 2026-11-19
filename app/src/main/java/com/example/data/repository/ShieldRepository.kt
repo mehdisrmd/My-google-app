@@ -1,6 +1,7 @@
 package com.example.data.repository
 
-import com.example.data.local.DefaultKeywords
+import com.example.data.blocklog.BlockLogPolicy
+import com.example.data.blocklog.ScreenshotStore
 import com.example.data.local.DefaultSectionRules
 import com.example.data.local.ShieldDao
 import com.example.data.model.AppUsageLimit
@@ -29,7 +30,8 @@ data class BackupRestoreSummary(
 
 class ShieldRepository(
     private val dao: ShieldDao,
-    val preferences: ShieldPreferences
+    val preferences: ShieldPreferences,
+    private val screenshotStore: ScreenshotStore? = null
 ) {
     val allKeywords: Flow<List<BlockedKeyword>> = dao.getAllKeywords()
     val allIncidents: Flow<List<BlockIncident>> = dao.getAllIncidents()
@@ -41,7 +43,7 @@ class ShieldRepository(
 
     init {
         CoroutineScope(Dispatchers.IO).launch {
-            seedDefaultKeywordsIfNeeded()
+            removeAdultPresetKeywords()
             seedDefaultSectionRulesIfNeeded()
             removePredefinedExampleLimitsIfAny()
         }
@@ -56,15 +58,22 @@ class ShieldRepository(
         }
     }
 
-    suspend fun seedDefaultKeywordsIfNeeded() {
-        val existingPairs = dao.getAllKeywordsSync()
-            .map { it.text to it.category }
-            .toSet()
-        val missing = DefaultKeywords.getPreloadedKeywords()
-            .filter { (it.text to it.category) !in existingPairs }
-        if (missing.isNotEmpty()) {
-            dao.insertKeywords(missing)
-        }
+    /**
+     * #12 upgrade cleanup: the Adult Preset is gone, replaced by the single
+     * "block all adult sites" toggle backed by the downloadable #13 domain
+     * list. Every row the preset ever seeded (ADULT_EXPLICIT words and
+     * ADULT_DOMAIN domains) is deleted, so stale preset entries can never
+     * keep matching in the scanner. Custom rows are never touched: the
+     * delete is scoped by category, not by text, so a custom rule that
+     * happens to share a string with an old preset entry survives.
+     */
+    suspend fun removeAdultPresetKeywords() {
+        dao.deleteKeywordsByCategoryNames(
+            listOf(
+                BlockedCategory.ADULT_EXPLICIT.name,
+                BlockedCategory.ADULT_DOMAIN.name
+            )
+        )
     }
 
     suspend fun seedDefaultSectionRulesIfNeeded() {
@@ -89,7 +98,6 @@ class ShieldRepository(
         dao.clearAllSectionRules()
         dao.clearAllFocusSlots()
 
-        seedDefaultKeywordsIfNeeded()
         seedDefaultSectionRulesIfNeeded()
     }
 
@@ -186,6 +194,15 @@ class ShieldRepository(
                     val catName = item.optString("category", BlockedCategory.CUSTOM_KEYWORD.name)
                     val category = runCatching { BlockedCategory.valueOf(catName) }
                         .getOrDefault(BlockedCategory.CUSTOM_KEYWORD)
+                    // #12: old backups can carry Adult Preset rows. Those
+                    // categories no longer exist as rules — the domains are
+                    // covered by the downloadable blocklist — so they are
+                    // skipped instead of resurrecting the deleted preset.
+                    if (category == BlockedCategory.ADULT_EXPLICIT ||
+                        category == BlockedCategory.ADULT_DOMAIN
+                    ) {
+                        continue
+                    }
                     restoredKeywords.add(
                         BlockedKeyword(
                             text = text,
@@ -435,17 +452,52 @@ class ShieldRepository(
     suspend fun recordIncident(
         matchedWord: String,
         sourceApp: String,
-        durationMinutes: Int
+        durationMinutes: Int,
+        screenshotPath: String? = null,
+        blockReason: String? = null,
+        blockedUrl: String? = null
     ) {
         val incident = BlockIncident(
             matchedWord = matchedWord,
             sourceApp = sourceApp,
-            lockDurationMinutes = durationMinutes
+            lockDurationMinutes = durationMinutes,
+            screenshotPath = screenshotPath,
+            blockReason = blockReason,
+            blockedUrl = blockedUrl
         )
         dao.insertIncident(incident)
+        pruneBlockLog()
+    }
+
+    /**
+     * #14 retention: keeps at most [BlockLogPolicy.MAX_INCIDENTS] block
+     * records. Victims are the oldest rows; their screenshot files are
+     * deleted with them so private storage cannot grow without bound.
+     * Best-effort by design — a prune failure must never fail the block
+     * that triggered the insert.
+     */
+    private suspend fun pruneBlockLog() {
+        try {
+            val victims = BlockLogPolicy.pruneVictims(dao.getAllIncidentsSync())
+            if (victims.isEmpty()) return
+            dao.deleteIncidentsByIds(victims.map { it.id })
+            victims.forEach { screenshotStore?.delete(it.screenshotPath) }
+        } catch (_: Exception) {
+            // Retention is housekeeping; ignore and move on.
+        }
+    }
+
+    /** #14: deletes the given block records AND their screenshot files. */
+    suspend fun deleteIncidents(incidents: List<BlockIncident>) {
+        if (incidents.isEmpty()) return
+        dao.deleteIncidentsByIds(incidents.map { it.id })
+        incidents.forEach { screenshotStore?.delete(it.screenshotPath) }
     }
 
     suspend fun clearHistory() {
         dao.clearIncidents()
+        // #14: clearing the log also removes every screenshot file, so no
+        // orphaned images of blocked pages linger in private storage.
+        screenshotStore?.deleteAll()
     }
 }
