@@ -1,57 +1,65 @@
 package com.example.data.blocklist
 
 /**
- * One upstream blocklist repository (#13): a display name plus the URLs to
- * try in order — the canonical raw URL first, then mirrors of the same
- * repository, because any single host can be slow or filtered on some
- * networks Mehdi's users are on.
+ * One upstream blocklist repository (#13): a display name, the repository
+ * address (shown in the app, #38), plus the URLs to try in order — the
+ * canonical raw URL first, then mirrors of the same repository, because
+ * any single host can be slow or filtered on some networks Mehdi's users
+ * are on.
  */
 data class BlocklistSource(
     val name: String,
+    val repositoryUrl: String,
     val urls: List<String>
 )
 
 /**
- * The adult domain list source (#12/#13, replaced in batch 2 #38).
+ * The adult domain list sources (#12/#13, replaced in batch 2 #38, and
+ * corrected the same evening after the lists were measured line by line).
  *
- * Batch 1 merged THREE repositories (StevenBlack's porn alternates, The
- * Block List Project, OISD NSFW). That over-blocked: StevenBlack's
- * "alternates/porn" file is the full unified hosts list PLUS porn, so
- * ordinary sites were blocked too. Mehdi's correction: exactly ONE
- * famous, strictly porn-only list.
+ * Mehdi's correction: famous repositories that filter ONLY pornographic
+ * content — the batch-1 merge over-blocked useful sites. Measurement of
+ * the actual lists (2026-11-19) found the over-blocker was The Block List
+ * Project's porn.txt (161,825 *.tumblr.com and 70,275 *.blogspot.com
+ * entries — effectively all of Tumblr and Blogspot) and, to a lesser
+ * degree, the OISD NSFW full list (59,719 *.blogspot.com entries). Both
+ * are dropped. The final set is exactly two curated porn-only lists:
  *
- * The single source is **OISD NSFW** (oisd.nl, by sjhgvr) — one of the
- * most widely used adult-content blocklists (bundled by Mullvad,
- * Technitium, OPNsense and the Pi-hole community), ~488k domains,
- * updated daily, curated specifically to contain ONLY adult content
- * with low collateral damage. StevenBlack's porn variant was the other
- * candidate and was rejected: its "porn" alternate still builds on the
- * unified list, which is what caused the over-blocking.
+ * 1. **StevenBlack hosts — porn alternate** (github.com/StevenBlack/hosts,
+ *    the most widely used hosts-file project): ~152k domains, ZERO
+ *    blogspot entries. It bundles the base unified list (ads/malware/
+ *    tracking subdomains) under the porn set, but never a bare useful
+ *    site.
+ * 2. **HaGeZi NSFW** (github.com/hagezi/dns-blocklists): ~86k domains,
+ *    updated several times a day, a dedicated standalone adult-content
+ *    list; only 322 *.blogspot.com and 3 *.tumblr.com entries, and zero
+ *    hits on probed useful apex domains (github, google, youtube,
+ *    wikipedia, reddit, …).
  *
- * The URLs are formats of the SAME list, tried in order: the official
- * plain-domain build first, then the project's own GitHub mirror
- * (sjhgvr/oisd), then a CDN mirror of that repository.
+ * Merged: ~224k domains (the batch-1 merge had ~1.23M). The user's own
+ * added domains merge on top of these at update time (#38).
  */
 object BlocklistSources {
 
-    /** The one and only list source since #38. */
-    val SOURCE: BlocklistSource = BlocklistSource(
-        name = "OISD NSFW",
-        urls = listOf(
-            "https://nsfw.oisd.nl/domainswild2",
-            "https://raw.githubusercontent.com/sjhgvr/oisd/main/oisd_nsfw.txt",
-            "https://cdn.jsdelivr.net/gh/sjhgvr/oisd@main/oisd_nsfw.txt"
+    /** The list sources since the #38 correction: two, both porn-only. */
+    val SOURCES: List<BlocklistSource> = listOf(
+        BlocklistSource(
+            name = "StevenBlack hosts (porn)",
+            repositoryUrl = "https://github.com/StevenBlack/hosts",
+            urls = listOf(
+                "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
+                "https://cdn.jsdelivr.net/gh/StevenBlack/hosts@master/alternates/porn/hosts"
+            )
+        ),
+        BlocklistSource(
+            name = "HaGeZi NSFW",
+            repositoryUrl = "https://github.com/hagezi/dns-blocklists",
+            urls = listOf(
+                "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
+                "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@main/wildcard/nsfw-onlydomains.txt"
+            )
         )
     )
-
-    /** Kept as a list for the updater's existing source loop: one entry. */
-    val SOURCES: List<BlocklistSource> = listOf(SOURCE)
-
-    /** The repository address, shown in the Adult Block card (#38). */
-    const val SOURCE_REPOSITORY_URL = "https://github.com/sjhgvr/oisd"
-
-    /** The list project's home, shown alongside the repository. */
-    const val SOURCE_HOME_URL = "https://oisd.nl"
 
     /**
      * Tiny built-in fallback used only when the very first download fails

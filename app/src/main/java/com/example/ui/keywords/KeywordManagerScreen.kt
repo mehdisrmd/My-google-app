@@ -556,13 +556,14 @@ private fun AdultBlockCard(
                 }
             }
 
-            // #38 (batch 2): the single list source, shown openly — the
-            // list is OISD NSFW and nothing else is merged into it.
+            // #38 (batch 2, corrected): the list sources, shown openly —
+            // exactly two famous porn-only repositories, nothing else is
+            // merged into the list (plus the user's own additions below).
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = tr(
-                    "List source: OISD NSFW (${BlocklistSources.SOURCE_HOME_URL}) — repository: ${BlocklistSources.SOURCE_REPOSITORY_URL}",
-                    "منبع فهرست: OISD NSFW ‏(${BlocklistSources.SOURCE_HOME_URL}) — مخزن: ${BlocklistSources.SOURCE_REPOSITORY_URL}"
+                    "List sources: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} (${it.repositoryUrl})" },
+                    "منابع فهرست: " + BlocklistSources.SOURCES.joinToString(" · ") { "${it.name} ‏(${it.repositoryUrl})" }
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 color = ObsidianTextSecondary,

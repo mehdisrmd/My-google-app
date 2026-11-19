@@ -23,18 +23,43 @@ object AdultBlocklistParser {
     private val LABEL_REGEX = Regex("""[a-z0-9](?:[a-z0-9-]*[a-z0-9])?""")
     private val WHITESPACE_REGEX = Regex("""\s+""")
 
+    /**
+     * Apex domains that must NEVER land in the blocklist, however they
+     * arrive (#38 correction): a hosts-file inline comment once injected
+     * `github.com` into the merged list (a comment URL tokenised as a
+     * domain), which then blocked GitHub itself. The inline-comment strip
+     * in [parseDomains] is the real fix; this set is defence in depth —
+     * a parsed domain equal to, or a subdomain of, one of these apexes
+     * is always dropped.
+     */
+    private val NEVER_BLOCK_APEXES: Set<String> = setOf(
+        "github.com",
+        "wikipedia.org"
+    )
+
+    private fun isNeverBlocked(domain: String): Boolean =
+        NEVER_BLOCK_APEXES.any { apex -> domain == apex || domain.endsWith(".$apex") }
+
     /** Parses one downloaded list (any supported format) into a domain set. */
     fun parseDomains(content: String): Set<String> {
         val result = LinkedHashSet<String>()
         for (rawLine in content.lineSequence()) {
-            val line = rawLine.trim()
+            var line = rawLine.trim()
             if (line.isEmpty()) continue
             // Comment / header / adblock section lines.
             if (line.startsWith("#") || line.startsWith("!") || line.startsWith("[")) continue
+            // Strip INLINE comments before tokenising: a hosts line like
+            // `0.0.0.0 docs.pipenv.org # https://github.com/…/issues/1635`
+            // must not inject the comment's URL host (github.com) as a
+            // blocked domain — that exact bug blocked GitHub in v0.5.
+            val commentStart = line.indexOf('#')
+            if (commentStart >= 0) line = line.substring(0, commentStart).trim()
+            if (line.isEmpty()) continue
             for (token in line.split(WHITESPACE_REGEX)) {
                 if (token.isEmpty()) continue
                 if (IPV4_REGEX.matches(token)) continue
                 val domain = normalizeDomain(token) ?: continue
+                if (isNeverBlocked(domain)) continue
                 result.add(domain)
             }
         }
