@@ -462,6 +462,7 @@ fun MainContent(
     val isAdultBlockEnabled by preferences.isAdultBlockEnabled.collectAsStateWithLifecycle()
     val blocklistLastUpdatedMs by preferences.adultBlocklistLastUpdatedMs.collectAsStateWithLifecycle()
     val blocklistDomainCount by preferences.adultBlocklistDomainCount.collectAsStateWithLifecycle()
+    val userBlocklistDomains by preferences.userBlocklistDomains.collectAsStateWithLifecycle()
     var isBlocklistUpdating by remember { mutableStateOf(false) }
     var isAppInBackgroundCurtain by remember { mutableStateOf(false) }
 
@@ -834,6 +835,25 @@ fun MainContent(
                                     }
                                 }
                             }
+                        },
+                        userBlocklistDomains = userBlocklistDomains.toList(),
+                        onAddUserBlocklistDomain = { domain ->
+                            val previous = preferences.getUserBlocklistDomains()
+                            val updated = previous + domain
+                            preferences.setUserBlocklistDomains(updated)
+                            app.adultBlocklistStore.rebuildWithUserDomains(updated, previous)
+                            preferences.setAdultBlocklistDomainCount(
+                                app.adultBlocklistStore.readDomains().size
+                            )
+                        },
+                        onRemoveUserBlocklistDomain = { domain ->
+                            val previous = preferences.getUserBlocklistDomains()
+                            val updated = previous - domain
+                            preferences.setUserBlocklistDomains(updated)
+                            app.adultBlocklistStore.rebuildWithUserDomains(updated, previous)
+                            preferences.setAdultBlocklistDomainCount(
+                                app.adultBlocklistStore.readDomains().size
+                            )
                         },
                         incidents = incidents,
                         incidentStreakDays = streakDays,

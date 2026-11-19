@@ -68,8 +68,7 @@ class AdultBlocklistStore(context: Context) {
      * Replaces the stored list with [sortedDomains] in one atomic rename and
      * invalidates the cached index so the next lookup sees the new list.
      */
-    fun writeDomainsAtomically(sortedDomains: List<String>) {
-        directory.mkdirs()
+    fun writeDomainsAtomically(sortedDomains: List<String>) {        directory.mkdirs()
         val serialized = AdultBlocklistParser.serializeDomains(sortedDomains)
         tempFile.writeText(serialized, Charsets.UTF_8)
         if (!tempFile.renameTo(listFile)) {
@@ -82,6 +81,32 @@ class AdultBlocklistStore(context: Context) {
             cachedIndex = null
             cachedStamp = Long.MIN_VALUE
         }
+    }
+
+    /** The currently stored domains (the file's lines), or empty. */
+    fun readDomains(): List<String> {
+        if (!hasList()) return emptyList()
+        return try {
+            listFile.readLines(Charsets.UTF_8)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * #38 (batch 2): re-merge the user's own added domains into the
+     * stored list after they added/removed entries. The base list is the
+     * current file minus the PREVIOUS user set (so removals really
+     * disappear), plus the NEW user set. Downloaded updates merge the
+     * user set themselves (see AdultBlocklistUpdater), so user entries
+     * survive weekly refreshes.
+     */
+    fun rebuildWithUserDomains(userDomains: Set<String>, previousUserDomains: Set<String>) {
+        val base = readDomains().filter { it !in previousUserDomains }
+        val merged = AdultBlocklistParser.mergeDomainSets(listOf(base, userDomains))
+        writeDomainsAtomically(merged)
     }
 
     private fun stampOf(): Long {

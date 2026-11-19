@@ -229,6 +229,12 @@ class ShieldPreferences(private val context: Context) {
     private val _blocklistUpdatePending = MutableStateFlow(isBlocklistUpdatePending())
     val blocklistUpdatePending: StateFlow<Boolean> = _blocklistUpdatePending.asStateFlow()
 
+    // #38 (batch 2): domains the user added to the adult list by hand.
+    // Stored separately from the downloaded list and merged into the
+    // on-disk index, so they survive weekly updates and can be removed.
+    private val _userBlocklistDomains = MutableStateFlow(getUserBlocklistDomains())
+    val userBlocklistDomains: StateFlow<Set<String>> = _userBlocklistDomains.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -774,6 +780,16 @@ class ShieldPreferences(private val context: Context) {
     fun setBlocklistUpdatePending(pending: Boolean) {
         prefs.edit().putBoolean(KEY_BLOCKLIST_UPDATE_PENDING, pending).apply()
         _blocklistUpdatePending.value = pending
+    }
+
+    // #38 (batch 2): the user's own additions to the adult domain list.
+    fun getUserBlocklistDomains(): Set<String> {
+        return prefs.getStringSet(KEY_USER_BLOCKLIST_DOMAINS, emptySet())?.toSet() ?: emptySet()
+    }
+
+    fun setUserBlocklistDomains(domains: Set<String>) {
+        prefs.edit().putStringSet(KEY_USER_BLOCKLIST_DOMAINS, domains).apply()
+        _userBlocklistDomains.value = domains
     }
 
     /**
@@ -1716,6 +1732,7 @@ class ShieldPreferences(private val context: Context) {
         _isClearDataGuardEnabled.value = true
         _isVpnConfigBlockEnabled.value = false
         _blocklistUpdatePending.value = false
+        _userBlocklistDomains.value = emptySet()
         _githubRepoSlug.value = preservedRepo
         _isSectionExitOnlyMode.value = false
         _usageRefreshTrigger.value = now
@@ -1749,6 +1766,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_ADULT_BLOCKLIST_LAST_UPDATED_MS = "key_adult_blocklist_last_updated_ms"
         private const val KEY_ADULT_BLOCKLIST_DOMAIN_COUNT = "key_adult_blocklist_domain_count"
         private const val KEY_BLOCKLIST_UPDATE_PENDING = "key_blocklist_update_pending"
+        private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
         private const val KEY_LAST_NOTIFIED_CLEAN_DAY = "key_last_notified_clean_day"
         private const val KEY_FIRST_INSTALL_EPOCH_DAY = "key_first_install_epoch_day"
         private const val KEY_EMERGENCY_COMM_WHITELIST_UNTIL = "key_emergency_comm_whitelist_until"

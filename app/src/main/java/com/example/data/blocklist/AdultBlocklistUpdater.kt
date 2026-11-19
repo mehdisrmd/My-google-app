@@ -58,7 +58,10 @@ class AdultBlocklistUpdater(
      */
     fun writeFallbackSeed() {
         val seed = AdultBlocklistParser.mergeDomainSets(
-            listOf(BlocklistSources.FALLBACK_SEED_DOMAINS)
+            listOf(
+                BlocklistSources.FALLBACK_SEED_DOMAINS,
+                preferences.getUserBlocklistDomains()
+            )
         )
         store.writeDomainsAtomically(seed)
         preferences.setAdultBlocklistDomainCount(seed.size)
@@ -85,7 +88,9 @@ class AdultBlocklistUpdater(
             )
         }
 
-        val merged = AdultBlocklistParser.mergeDomainSets(parsedSets)
+        val merged = AdultBlocklistParser.mergeDomainSets(
+            parsedSets + listOf(preferences.getUserBlocklistDomains())
+        )
         store.writeDomainsAtomically(merged)
         preferences.saveAdultBlocklistUpdate(
             lastUpdatedMs = System.currentTimeMillis(),
