@@ -383,6 +383,15 @@ class ShieldAccessibilityService : AccessibilityService() {
             Log.w(TAG, "Could not register VPN network callback", e)
         }
 
+        // #53 (batch 4): warm the adult blocklist index NOW, on this IO
+        // scope. The first build parses the whole stored list (hundreds
+        // of thousands of domains); without this, the parse happened
+        // inside the first accessibility event that needed it — on the
+        // main thread, at the exact moment the user opened a browser.
+        launchSafely("blocklistIndex") {
+            adultBlocklistStore.currentIndex()
+        }
+
         // Keep active rules cached in memory for zero-latency scanning
         launchSafely("keywords") {
             repository.allKeywords.collect { list ->
@@ -441,12 +450,16 @@ class ShieldAccessibilityService : AccessibilityService() {
                         null
                     }
                     val rootPkg = rootNode?.packageName?.toString().orEmpty()
-                    val sysPkg = preferences.queryRecentForegroundPackageFromSystem().orEmpty()
+                    // #53 (batch 4): the UsageStats fallback sweeps a
+                    // 60-second event window through a binder call —
+                    // only pay for it when the accessibility root gave
+                    // no usable package, the only case where its result
+                    // can win. Previously it ran on every 1s tick.
                     val activePkg = when {
                         rootPkg.isNotBlank() && !isIgnoredSystemUiPackage(rootPkg) -> rootPkg
-                        sysPkg.isNotBlank() && !isIgnoredSystemUiPackage(sysPkg) -> sysPkg
-                        else -> lastForegroundPackage
-
+                        else -> preferences.queryRecentForegroundPackageFromSystem().orEmpty()
+                            .takeIf { it.isNotBlank() && !isIgnoredSystemUiPackage(it) }
+                            ?: lastForegroundPackage
                     }
 
                     if (activePkg.isNotBlank()) {
