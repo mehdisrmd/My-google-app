@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    #55 (batch 4): usafe adaptive icon. Background is the charcoal
+    sampled from the artwork; the foreground is the artwork itself
+    (glossy crimson shield + padlock), inset to ~86% so the shield
+    stays inside the adaptive safe zone under circle/squircle masks.
+    No <monochrome>: the artwork is a full-color opaque raster, so it
+    cannot serve as a themed-icon silhouette; Android falls back to
+    this regular icon for themed launches.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
+    <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

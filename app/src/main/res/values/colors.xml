@@ -7,4 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- #55 (batch 4): adaptive-icon background, sampled from the
+         usafe artwork's charcoal plate (#1B1A1F). -->
+    <color name="ic_launcher_background">#FF1B1A1F</color>
 </resources>
