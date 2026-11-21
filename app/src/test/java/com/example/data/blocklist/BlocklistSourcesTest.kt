@@ -168,4 +168,22 @@ class BlocklistSourcesTest {
         assertEquals(null, BlocklistSources.sourceFromUserInput("x", ""))
         assertEquals(null, BlocklistSources.sourceFromUserInput("x", "not a url"))
     }
+
+    // ---- #61 (batch 5): the per-source identity key ----
+
+    @Test
+    fun `keyFor is stable, hex, and distinct per list url`() {
+        val a = BlocklistSources.SOURCES[0]
+        val b = BlocklistSources.SOURCES[1]
+        assertEquals(BlocklistSources.keyFor(a), BlocklistSources.keyFor(a))
+        assertTrue(BlocklistSources.keyFor(a) != BlocklistSources.keyFor(b))
+        assertTrue(BlocklistSources.keyFor(a).matches(Regex("[0-9a-f]{40}")))
+    }
+
+    @Test
+    fun `keyFor ignores the display name - it keys on the list url`() {
+        val source = BlocklistSources.SOURCES[0]
+        val renamed = source.copy(name = "A totally different name")
+        assertEquals(BlocklistSources.keyFor(source), BlocklistSources.keyFor(renamed))
+    }
 }

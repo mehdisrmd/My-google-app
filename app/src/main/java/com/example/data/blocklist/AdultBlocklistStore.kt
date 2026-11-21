@@ -115,6 +115,75 @@ class AdultBlocklistStore(context: Context) {
         writeDomainsAtomically(merged)
     }
 
+    // ------------------------------------------------------------------
+    // #61 (batch 5): per-source domain sets.
+    //
+    // Each repository's last successfully downloaded set is stored on
+    // its own — filesDir/blocklist/sources/<key>.txt, one sorted domain
+    // per line, keyed by BlocklistSources.keyFor. The merged
+    // adult_domains.txt stays the ONE list the matcher reads; the
+    // updater rebuilds it from these sets (+ the user's own domains).
+    // Per-source sets are what make per-repo updates exact: updating
+    // one repository replaces only its contribution, and removing a
+    // repository removes exactly its domains from the merged list.
+    // ------------------------------------------------------------------
+
+    private val sourcesDirectory = File(directory, SOURCES_DIR_NAME)
+
+    private fun sourceFile(key: String): File = File(sourcesDirectory, "$key.txt")
+
+    /**
+     * True once per-source mode exists: the sources directory is
+     * created by the first per-source write and never removed, so its
+     * existence is the marker that the merged list is (re)built from
+     * per-source sets — as opposed to a legacy merged file whose
+     * domains cannot be attributed to any repository.
+     */
+    fun hasAnySourceSets(): Boolean {
+        return try {
+            sourcesDirectory.isDirectory
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Stores one repository's downloaded set (sorted, one per line). */
+    fun writeSourceDomains(key: String, sortedDomains: List<String>) {
+        sourcesDirectory.mkdirs()
+        val file = sourceFile(key)
+        val temp = File(sourcesDirectory, "$key.txt.tmp")
+        val serialized = AdultBlocklistParser.serializeDomains(sortedDomains)
+        temp.writeText(serialized, Charsets.UTF_8)
+        if (!temp.renameTo(file)) {
+            file.writeText(serialized, Charsets.UTF_8)
+            temp.delete()
+        }
+    }
+
+    /** One repository's stored set, or null when it was never downloaded. */
+    fun readSourceDomains(key: String): List<String>? {
+        val file = sourceFile(key)
+        if (!file.isFile) return null
+        return try {
+            file.readLines(Charsets.UTF_8)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Drops one repository's stored set (the repository was removed). */
+    fun deleteSourceDomains(key: String) {
+        try {
+            sourceFile(key).delete()
+        } catch (_: Exception) {
+            // A set that cannot be deleted is stale data, not a crash:
+            // the rebuild only reads sets of CURRENT sources, so an
+            // orphaned file is never merged back in.
+        }
+    }
+
     private fun stampOf(): Long {
         return listFile.lastModified() * 31L + listFile.length()
     }
@@ -123,5 +192,6 @@ class AdultBlocklistStore(context: Context) {
         const val BLOCKLIST_DIR_NAME = "blocklist"
         const val LIST_FILE_NAME = "adult_domains.txt"
         const val TEMP_FILE_NAME = "adult_domains.txt.tmp"
+        const val SOURCES_DIR_NAME = "sources"
     }
 }
