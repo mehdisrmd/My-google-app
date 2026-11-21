@@ -1,7 +1,5 @@
 package com.example.util
 
-import com.example.data.DataUsageBudget
-
 /**
  * #63 (batch 5): one app's internet rule for the Per-App Internet
  * section.
