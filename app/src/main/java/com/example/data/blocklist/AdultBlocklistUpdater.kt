@@ -206,7 +206,7 @@ class AdultBlocklistUpdater(
      * toggle never guards an empty list — the same promise the card's
      * empty-state text makes.
      */
-    private fun rebuildMergedFromStoredSets(): Int {
+    internal fun rebuildMergedFromStoredSets(): Int {
         if (!store.hasAnySourceSets()) {
             return store.currentIndex()?.size ?: 0
         }

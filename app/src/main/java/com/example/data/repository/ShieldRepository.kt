@@ -347,7 +347,9 @@ class ShieldRepository(
             if (blocklistObj != null) {
                 val restoredSources = com.example.data.blocklist.BlocklistSources
                     .decodeSources(blocklistObj.optString("sourcesEncoded", ""))
-                preferences.setBlocklistSources(restoredSources)
+                if (restoredSources != null) {
+                    preferences.setBlocklistSources(restoredSources)
+                }
                 val restoredUserDomains = mutableListOf<String>()
                 val userDomainsArr = blocklistObj.optJSONArray("userDomains")
                 if (userDomainsArr != null) {
