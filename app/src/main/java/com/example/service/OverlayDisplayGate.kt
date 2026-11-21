@@ -1,22 +1,31 @@
 package com.example.service
 
 /**
- * Pure decision logic for whether the block (lockdown) overlay may be shown
- * at a given moment — items #17 and #18.
+ * Pure decision logic for whether an overlay page may be shown at a given
+ * moment — items #17 and #18, with #57 (batch 5) splitting the block
+ * screen off from the call rule.
  *
- * The block screen must never fight two system surfaces:
- *  - #17: an incoming / ongoing phone call. The call UI always wins, so the
- *    user can actually answer. The overlay stands down while a call is
- *    ringing or in progress and comes back afterwards (the enforcement loop
- *    re-launches it) if the lock is still running.
- *  - #18: the lock screen. While the keyguard is locked the block screen
- *    must NOT be drawn over it; the launch is deferred until the user has
- *    unlocked the phone, and only then shown if the lock still applies.
+ * Two families of pages use this gate:
  *
- * A call takes precedence over the keyguard: a phone can be locked AND
- * ringing, and in that state the call UI (which has its own
- * show-when-locked presentation) is the one surface that must stay
- * reachable.
+ *  - The BLOCK SCREEN (LockdownActivity and, since #59 unified the site
+ *    blocks onto the same page, BlockWarningActivity) is governed by
+ *    [decideBlockScreen]: it must never fight the lock screen (#18 —
+ *    while the keyguard is locked the launch is deferred until unlock),
+ *    but it NO LONGER stands down for a phone call. #17 originally made
+ *    the call UI win so the user could answer; in practice the two
+ *    surfaces fought — the block screen finished itself for the call,
+ *    the enforcement loop relaunched it, the call UI pushed back — a
+ *    visible flicker war. Mehdi's #57 ruling: the flickering stops and
+ *    the BLOCK SCREEN STAYS. #17 is superseded for the block screen.
+ *
+ *  - The auxiliary pages (AppLimitWarningActivity, DataCapWarningActivity,
+ *    InstallGuardActivity) keep the original [decide] table: a call
+ *    yields (YIELD_TO_CALL — those pages are transient prompts, not the
+ *    block screen, and standing down for a call costs nothing), the
+ *    keyguard defers. A call takes precedence over the keyguard there:
+ *    a phone can be locked AND ringing, and in that state the call UI
+ *    (which has its own show-when-locked presentation) is the one
+ *    surface that must stay reachable.
  *
  * Everything here is plain Kotlin (no Android types) so the whole decision
  * table is unit-testable; the service feeds it live system state.
@@ -40,6 +49,19 @@ object OverlayDisplayGate {
             keyguardLocked -> Decision.DEFER_UNTIL_UNLOCK
             else -> Decision.SHOW
         }
+    }
+
+    /**
+     * #57 (batch 5): the BLOCK SCREEN's table. A call is deliberately
+     * not an input: whether or not a call is ringing, the block screen
+     * stays — it never finishes itself for the call UI and the service
+     * never stands its launch down, so the two surfaces cannot enter
+     * the finish/relaunch fight #17 produced. Only the keyguard still
+     * defers the launch (#18 unchanged: never draw over the lock
+     * screen; the parked launch fires on unlock while the lock runs).
+     */
+    fun decideBlockScreen(keyguardLocked: Boolean): Decision {
+        return if (keyguardLocked) Decision.DEFER_UNTIL_UNLOCK else Decision.SHOW
     }
 
     // AudioManager mode values, mirrored as plain ints so this file stays

@@ -105,6 +105,10 @@ fun LockdownScreen(
     sourceApp: String,
     onLockExpired: () -> Unit,
     graceAvailable: Boolean = false,
+    // #56 (batch 5): the Phone Call / SMS options on this screen are
+    // shown only while Strict Lock Mode is on; with Strict off they do
+    // not exist here at all.
+    strictModeEnabled: Boolean = false,
     onGraceFreeRequested: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -271,9 +275,14 @@ fun LockdownScreen(
                             "Voluntary Panic Mode lock active. Only Calls & Texts are allowed.",
                             "قفل اضطراری فعال است. فقط تماس تلفنی و پیامک مجاز است."
                         )
-                        else -> tr(
+                        else -> if (strictModeEnabled) tr(
                             "All other apps are blocked until the timer ends. Only Calls & Texts are accessible.",
                             "تمام برنامه‌های دیگر تا پایان تایمر مسدودند. فقط تماس و پیامک در دسترس است."
+                        ) else tr(
+                            // #56: with Strict Lock Mode off there are no
+                            // call/SMS options to point at.
+                            "All other apps are blocked until the timer ends.",
+                            "تمام برنامه‌های دیگر تا پایان تایمر مسدودند."
                         )
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -353,6 +362,10 @@ fun LockdownScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Emergency Phone Calls & SMS Texting Access Buttons (Item 8)
+                // #56 (batch 5): the whole card exists only under Strict
+                // Lock Mode — while Strict is off, the call & SMS options
+                // are not shown at all.
+                if (strictModeEnabled) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = ObsidianSurface),
@@ -512,6 +525,7 @@ fun LockdownScreen(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // One-Time 10-Second Grace (keyword blocks only, once per
                 // continuous trigger episode). After the 10 seconds the

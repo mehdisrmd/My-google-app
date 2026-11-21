@@ -4,7 +4,6 @@ import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -114,15 +113,11 @@ class BlockWarningActivity : ComponentActivity() {
         } catch (_: Exception) {
             false
         }
-        val audioMode = try {
-            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
-                ?: AudioManager.MODE_NORMAL
-        } catch (_: Exception) {
-            AudioManager.MODE_NORMAL
-        }
-        return OverlayDisplayGate.decide(
-            keyguardLocked = keyguardLocked,
-            callActive = OverlayDisplayGate.isCallAudioMode(audioMode)
+        // #57 (batch 5): this page is a presentation of the block
+        // screen, so it follows the block-screen table — it stands
+        // down only for the lock screen (#18), never for a call.
+        return OverlayDisplayGate.decideBlockScreen(
+            keyguardLocked = keyguardLocked
         ) != OverlayDisplayGate.Decision.SHOW
     }
 

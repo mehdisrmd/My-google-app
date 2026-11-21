@@ -296,11 +296,24 @@ class ShieldAccessibilityService : AccessibilityService() {
             OverlayDisplayGate.isCallUiPackage(lastForegroundPackage)
     }
 
-    /** #17/#18: may the block overlay be shown right now? */
+    /** #17/#18: may an auxiliary overlay page be shown right now? */
     private fun overlayGateDecision(): OverlayDisplayGate.Decision {
         return OverlayDisplayGate.decide(
             keyguardLocked = isKeyguardLockedNow(),
             callActive = isCallActiveNow()
+        )
+    }
+
+    /**
+     * #57 (batch 5): may the BLOCK SCREEN be shown right now? Unlike
+     * the auxiliary pages, the block screen never stands down for a
+     * call — #17's yield made the block screen and the call UI fight
+     * (finish → relaunch → pushback), and Mehdi ruled the block screen
+     * stays. Only the keyguard still defers it (#18).
+     */
+    private fun blockScreenGateDecision(): OverlayDisplayGate.Decision {
+        return OverlayDisplayGate.decideBlockScreen(
+            keyguardLocked = isKeyguardLockedNow()
         )
     }
 
@@ -1228,9 +1241,9 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         // #17: while a call is ringing / in progress, do not yank the
         // user around with BACK/HOME — on some OEMs that buries the call
-        // screen. The lock above is already recorded; the overlay gate
-        // stands the block screen down until the call ends, and the
-        // enforcement loop then surfaces it if the lock is still running.
+        // screen. The lock above is already recorded; the block screen
+        // itself is launched regardless (#57: it no longer stands down
+        // for calls), but the BACK/HOME yank still waits for the call.
         if (!isCallActiveNow()) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             performGlobalAction(GLOBAL_ACTION_HOME)
@@ -1784,12 +1797,14 @@ class ShieldAccessibilityService : AccessibilityService() {
         endTimeEpoch: Long,
         force: Boolean = false
     ) {
-        // #17/#18 gate (see OverlayDisplayGate): never launch the block
-        // screen over an incoming/ongoing call, and never over the lock
-        // screen. A call needs no parking — the enforcement loop retries
-        // on its own once the call ends. A locked phone parks the launch
-        // in deferredOverlay; flushDeferredOverlay() fires it on unlock.
-        when (overlayGateDecision()) {
+        // #18/#57 gate (see OverlayDisplayGate.decideBlockScreen):
+        // never launch the block screen over the lock screen — a locked
+        // phone parks the launch in deferredOverlay and
+        // flushDeferredOverlay() fires it on unlock. A phone call does
+        // NOT stand the block screen down anymore (#57 supersedes #17
+        // for this screen): the block screen stays, so there is no
+        // finish/relaunch flicker war with the call UI.
+        when (blockScreenGateDecision()) {
             OverlayDisplayGate.Decision.YIELD_TO_CALL -> return
             OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
                 deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
@@ -1815,9 +1830,10 @@ class ShieldAccessibilityService : AccessibilityService() {
             if (!preferences.isCurrentlyLocked()) return@post
 
             // The gate may also have flipped while this runnable sat in the
-            // queue (a call started ringing, the phone got locked): stand
-            // down the same way as a fresh launch would.
-            when (overlayGateDecision()) {
+            // queue (the phone got locked): stand down the same way as a
+            // fresh launch would. (A call starting to ring does NOT stand
+            // the block screen down — #57.)
+            when (blockScreenGateDecision()) {
                 OverlayDisplayGate.Decision.YIELD_TO_CALL -> return@post
                 OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
                     deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
