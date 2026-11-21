@@ -452,6 +452,20 @@ class ShieldPreferences(private val context: Context) {
             put("quizScorePercent", getAddictionQuizScore())
             put("quizSeverityEn", getAddictionQuizSeverityEn())
             put("quizSeverityFa", getAddictionQuizSeverityFa())
+            // #62 (batch 5, backup format v2): the settings that grew
+            // after v1 — data caps, the tamper guards, the uninstall
+            // wait — join the export so a backup really is the WHOLE
+            // app's settings. (Blocklist sources/user domains and the
+            // per-app internet rules travel as their own sections of
+            // the full backup; see ShieldRepository.)
+            put("dataLimitWifiMb", getDataLimitWifiMb())
+            put("dataLimitMobileMb", getDataLimitMobileMb())
+            put("dataCapProgressNotificationEnabled", isDataCapProgressNotificationEnabled())
+            put("isVpnConfigBlockEnabled", getIsVpnConfigBlockEnabled())
+            put("isClearDataGuardEnabled", getIsClearDataGuardEnabled())
+            put("isForceStopGuardEnabled", getIsForceStopGuardEnabled())
+            put("isInstallGuardEnabled", getIsInstallGuardEnabled())
+            put("uninstallWaitMinutes", getUninstallWaitMinutes())
         }
     }
 
@@ -553,6 +567,32 @@ class ShieldPreferences(private val context: Context) {
         _quizSeverityEn.value = quizSevEn
         _quizSeverityFa.value = quizSevFa
         _usageRefreshTrigger.value = now
+
+        // #62 (batch 5): restore the v2 settings through their own
+        // setters (which also refresh their flows). Every read falls
+        // back to the CURRENT value, so importing a v1 backup leaves
+        // these exactly as they are.
+        setDataLimitWifiMb(json.optInt("dataLimitWifiMb", getDataLimitWifiMb()))
+        setDataLimitMobileMb(json.optInt("dataLimitMobileMb", getDataLimitMobileMb()))
+        setDataCapProgressNotificationEnabled(
+            json.optBoolean(
+                "dataCapProgressNotificationEnabled",
+                isDataCapProgressNotificationEnabled()
+            )
+        )
+        setVpnConfigBlockEnabled(
+            json.optBoolean("isVpnConfigBlockEnabled", getIsVpnConfigBlockEnabled())
+        )
+        setClearDataGuardEnabled(
+            json.optBoolean("isClearDataGuardEnabled", getIsClearDataGuardEnabled())
+        )
+        setForceStopGuardEnabled(
+            json.optBoolean("isForceStopGuardEnabled", getIsForceStopGuardEnabled())
+        )
+        setInstallGuardEnabled(
+            json.optBoolean("isInstallGuardEnabled", getIsInstallGuardEnabled())
+        )
+        setUninstallWaitMinutes(json.optInt("uninstallWaitMinutes", getUninstallWaitMinutes()))
 
         StreakWidgetProvider.updateAllWidgets(context)
     }

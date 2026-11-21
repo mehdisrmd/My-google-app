@@ -31,7 +31,10 @@ data class BackupRestoreSummary(
 class ShieldRepository(
     private val dao: ShieldDao,
     val preferences: ShieldPreferences,
-    private val screenshotStore: ScreenshotStore? = null
+    private val screenshotStore: ScreenshotStore? = null,
+    // #62 (batch 5): lets a backup restore rebuild the merged
+    // blocklist file from the restored user domains / stored sets.
+    private val adultBlocklistStore: com.example.data.blocklist.AdultBlocklistStore? = null
 ) {
     val allKeywords: Flow<List<BlockedKeyword>> = dao.getAllKeywords()
     val allIncidents: Flow<List<BlockIncident>> = dao.getAllIncidents()
@@ -107,10 +110,48 @@ class ShieldRepository(
      */
     suspend fun exportFullBackupJson(): String {
         val root = JSONObject()
-        root.put("backupFormatVersion", 1)
+        // #62 (batch 5): format v2 — the export now covers the WHOLE
+        // app: v1 sections (preferences, keywords, app limits,
+        // section rules, focus slots) plus the blocklist
+        // configuration and the per-app internet rules below, and
+        // the v2 preference keys (data caps, guards, uninstall
+        // wait). v1 backups remain importable.
+        root.put("backupFormatVersion", 2)
         root.put("appName", "usafe")
         root.put("exportedAtEpochMs", System.currentTimeMillis())
         root.put("preferences", preferences.exportPreferencesToJson())
+
+        // #62: blocklist CONFIGURATION (not the downloaded lists
+        // themselves — those are re-fetched by an update): the
+        // repository sources and the user's own domains.
+        val blocklistObj = JSONObject()
+        blocklistObj.put(
+            "sourcesEncoded",
+            com.example.data.blocklist.BlocklistSources.encodeSources(
+                preferences.getBlocklistSources()
+            )
+        )
+        val userDomainsArr = JSONArray()
+        for (domain in preferences.getUserBlocklistDomains()) {
+            userDomainsArr.put(domain)
+        }
+        blocklistObj.put("userDomains", userDomainsArr)
+        blocklistObj.put("lastUpdatedMs", preferences.getAdultBlocklistLastUpdatedMs())
+        root.put("blocklist", blocklistObj)
+
+        // #62: the per-app internet rules (#63).
+        val perAppArr = JSONArray()
+        for (rule in preferences.getPerAppInternetRules()) {
+            perAppArr.put(
+                JSONObject().apply {
+                    put("packageName", rule.packageName)
+                    put("blockOnWifi", rule.blockOnWifi)
+                    put("blockOnMobile", rule.blockOnMobile)
+                    put("dailyCapMb", rule.dailyCapMb)
+                }
+            )
+        }
+        root.put("perAppInternetRules", perAppArr)
 
         val keywordsArr = JSONArray()
         for (kw in dao.getAllKeywordsSync()) {
@@ -297,6 +338,60 @@ class ShieldRepository(
                     dao.insertFocusSlots(restoredFocus)
                     focusCount = restoredFocus.size
                 }
+            }
+
+            // #62 (batch 5, format v2 sections; absent in v1 backups,
+            // which then leave these untouched): blocklist
+            // configuration + per-app internet rules.
+            val blocklistObj = root.optJSONObject("blocklist")
+            if (blocklistObj != null) {
+                val restoredSources = com.example.data.blocklist.BlocklistSources
+                    .decodeSources(blocklistObj.optString("sourcesEncoded", ""))
+                preferences.setBlocklistSources(restoredSources)
+                val restoredUserDomains = mutableListOf<String>()
+                val userDomainsArr = blocklistObj.optJSONArray("userDomains")
+                if (userDomainsArr != null) {
+                    for (i in 0 until userDomainsArr.length()) {
+                        val domain = userDomainsArr.optString(i, "").trim()
+                        if (domain.isNotEmpty()) restoredUserDomains.add(domain)
+                    }
+                }
+                preferences.setUserBlocklistDomains(restoredUserDomains.toSet())
+                val store = adultBlocklistStore
+                if (store != null) {
+                    // Rebuild the merged file from this device's
+                    // stored per-repo sets plus the restored user
+                    // domains. The exported last-updated time is
+                    // restored ONLY when downloaded sets exist here —
+                    // on a fresh device the #50 activation gate must
+                    // still demand a first real update rather than
+                    // trust a timestamp whose lists never arrived.
+                    val mergedCount = com.example.data.blocklist.AdultBlocklistUpdater(
+                        store, preferences
+                    ).rebuildMergedFromStoredSets()
+                    val exportedMs = blocklistObj.optLong("lastUpdatedMs", 0L)
+                    if (exportedMs > 0L && store.hasAnySourceSets()) {
+                        preferences.saveAdultBlocklistUpdate(exportedMs, mergedCount)
+                    }
+                }
+            }
+            val perAppArr = root.optJSONArray("perAppInternetRules")
+            if (perAppArr != null) {
+                val restoredRules = mutableListOf<com.example.util.PerAppInternetRule>()
+                for (i in 0 until perAppArr.length()) {
+                    val item = perAppArr.optJSONObject(i) ?: continue
+                    val pkg = item.optString("packageName", "").trim()
+                    if (pkg.isEmpty()) continue
+                    restoredRules.add(
+                        com.example.util.PerAppInternetRule(
+                            packageName = pkg,
+                            blockOnWifi = item.optBoolean("blockOnWifi", false),
+                            blockOnMobile = item.optBoolean("blockOnMobile", false),
+                            dailyCapMb = item.optInt("dailyCapMb", 0).coerceAtLeast(0)
+                        )
+                    )
+                }
+                preferences.setPerAppInternetRules(restoredRules)
             }
 
             BackupRestoreSummary(

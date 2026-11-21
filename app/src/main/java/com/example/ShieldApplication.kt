@@ -39,12 +39,19 @@ class ShieldApplication : Application() {
         // store is created before the repository so record deletion and
         // retention pruning can remove the files together with the rows.
         screenshotStore = ScreenshotStore(this)
-        repository = ShieldRepository(database.shieldDao(), preferences, screenshotStore)
 
         // Adult site blocking (#12/#13): the on-disk domain list, its
-        // updater, and the weekly self-refresh schedule.
+        // updater, and the weekly self-refresh schedule. The store is
+        // created before the repository so a backup restore (#62) can
+        // rebuild the merged list file.
         adultBlocklistStore = AdultBlocklistStore(this)
         adultBlocklistUpdater = AdultBlocklistUpdater(adultBlocklistStore, preferences)
+        repository = ShieldRepository(
+            database.shieldDao(),
+            preferences,
+            screenshotStore,
+            adultBlocklistStore
+        )
         BlocklistUpdateScheduler.enqueueWeekly(this)
 
         // Device Owner protection (#11): re-apply (or clear) the DPM
