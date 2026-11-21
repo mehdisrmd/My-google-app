@@ -1037,6 +1037,14 @@ class ShieldAccessibilityService : AccessibilityService() {
                 triggerLockdown(
                     triggerWord = "Adult Site Blocked: $blockedHost",
                     sourceApp = resolveReadableAppName(activeRootPkg),
+                    // #59 (batch 5): site blocks carry the one-time
+                    // 10-second free button on the (now unified) block
+                    // page — the stored grace flag is what makes the
+                    // button appear AND work (beginKeywordGracePeriod
+                    // is a no-op without it). After the free window the
+                    // browser sits on the Google homepage, so no
+                    // re-block episode follows from this path.
+                    graceAvailable = true,
                     blockReason = "Adult site",
                     blockedUrl = blockedHost,
                     lockPackage = activeRootPkg,
