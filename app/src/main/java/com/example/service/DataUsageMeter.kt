@@ -32,6 +32,49 @@ object DataUsageMeter {
         }
     }
 
+    /**
+     * #63 (batch 5): today's usage for ONE app (by UID), split by
+     * transport — the per-app volume caps' meter. NetworkStatsManager
+     * only (there is no per-UID TrafficStats); any failure reads as
+     * zero usage, so a stats hiccup never blocks an app by itself.
+     */
+    fun todayUsageBytesForUid(context: Context, uid: Int): Usage {
+        return try {
+            val manager = context.getSystemService(Context.NETWORK_STATS_SERVICE)
+                as? NetworkStatsManager ?: return Usage(0L, 0L)
+            val start = startOfTodayMs()
+            val end = System.currentTimeMillis()
+            Usage(
+                wifiBytes = sumUidBytes(manager, ConnectivityManager.TYPE_WIFI, start, end, uid),
+                mobileBytes = sumUidBytes(manager, ConnectivityManager.TYPE_MOBILE, start, end, uid)
+            )
+        } catch (_: Exception) {
+            Usage(0L, 0L)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sumUidBytes(
+        manager: NetworkStatsManager,
+        networkType: Int,
+        start: Long,
+        end: Long,
+        uid: Int
+    ): Long {
+        val stats = manager.queryDetailsForUid(networkType, null, start, end, uid)
+        var total = 0L
+        try {
+            val bucket = android.app.usage.NetworkStats.Bucket()
+            while (stats.hasNextBucket()) {
+                stats.getNextBucket(bucket)
+                total += bucket.rxBytes + bucket.txBytes
+            }
+        } finally {
+            stats.close()
+        }
+        return total
+    }
+
     private fun networkStatsUsage(context: Context): Usage? {
         val manager = context.getSystemService(Context.NETWORK_STATS_SERVICE)
             as? NetworkStatsManager ?: return null

@@ -194,6 +194,9 @@ class ShieldAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastDataCapWarningLaunchMs = 0L
 
+    /** #63 (batch 5): throttle for the per-app firewall evaluation. */
+    private var lastPerAppFirewallEvalMs = 0L
+
     /**
      * #47 (batch 3) Scope A: the package whose over-limit warning is
      * currently engaged — the warning page is up, or the app has not
@@ -542,6 +545,20 @@ class ShieldAccessibilityService : AccessibilityService() {
                         continue
                     }
                     maybeKnockForeignVpn()
+
+                    // #63 (batch 5): the per-app internet firewall
+                    // follows the same toggle, re-evaluated on the
+                    // data-cap cadence (its evaluation reads usage
+                    // stats). Independent of master protection, like
+                    // the VPN guard itself; skipped while a lockdown
+                    // pins the phone (the ticker continues above).
+                    if (now - lastPerAppFirewallEvalMs >= 15_000L) {
+                        lastPerAppFirewallEvalMs = now
+                        PerAppFirewall.evaluateAndApply(
+                            this@ShieldAccessibilityService,
+                            preferences
+                        )
+                    }
 
                     // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
@@ -2023,6 +2040,13 @@ class ShieldAccessibilityService : AccessibilityService() {
         try {
             if (!preferences.getIsVpnConfigBlockEnabled()) return
             if (VpnService.prepare(this) != null) return
+            // #63 (batch 5): while our per-app FIREWALL is up, the VPN
+            // transport on the device is OURS — never knock it down.
+            // (When a foreign VPN displaces it, isActive flips false
+            // and this knock path fires; the VPN service then
+            // re-establishes the firewall instead of a momentary TUN,
+            // because a desired set exists.)
+            if (PerAppFirewall.isActive) return
             val now = System.currentTimeMillis()
             val ownActive = VpnKnockdownPolicy.isOwnSessionActive(now, vpnKnockStartedMs)
             if (!VpnKnockdownPolicy.isForeignVpn(hasVpnTransportNow(), ownActive)) return

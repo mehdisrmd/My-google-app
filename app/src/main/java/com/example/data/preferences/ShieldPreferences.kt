@@ -261,6 +261,13 @@ class ShieldPreferences(private val context: Context) {
     val dataCapProgressNotificationEnabled: StateFlow<Boolean> =
         _dataCapProgressNotificationEnabled.asStateFlow()
 
+    // #63 (batch 5): per-app internet rules (Per-App Internet
+    // section). Active only while the Block VPN guard is on.
+    private val _perAppInternetRules =
+        MutableStateFlow(getPerAppInternetRules())
+    val perAppInternetRules: StateFlow<List<com.example.util.PerAppInternetRule>> =
+        _perAppInternetRules.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -874,6 +881,21 @@ class ShieldPreferences(private val context: Context) {
     fun setDataCapProgressNotificationEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_DATA_CAP_PROGRESS_NOTIFICATION, enabled).apply()
         _dataCapProgressNotificationEnabled.value = enabled
+    }
+
+    // #63 (batch 5): per-app internet rules, persisted as one encoded
+    // string (see PerAppInternetCodec). The firewall that enforces
+    // them runs only while the Block VPN guard (#42/#51) is on.
+    fun getPerAppInternetRules(): List<com.example.util.PerAppInternetRule> =
+        com.example.util.PerAppInternetCodec.decode(
+            prefs.getString(KEY_PER_APP_INTERNET_RULES, null)
+        )
+
+    fun setPerAppInternetRules(rules: List<com.example.util.PerAppInternetRule>) {
+        prefs.edit()
+            .putString(KEY_PER_APP_INTERNET_RULES, com.example.util.PerAppInternetCodec.encode(rules))
+            .apply()
+        _perAppInternetRules.value = rules
     }
 
     // #46 (batch 3): the data-cap WARNING state. The warning is its own
@@ -1983,6 +2005,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
         private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
         private const val KEY_DATA_CAP_PROGRESS_NOTIFICATION = "key_data_cap_progress_notification"
+        private const val KEY_PER_APP_INTERNET_RULES = "key_per_app_internet_rules"
         private const val KEY_DATA_CAP_WARNING_TRANSPORTS = "key_data_cap_warning_transports"
         private const val KEY_DATA_CAP_WARNING_DAY = "key_data_cap_warning_day"
         private const val KEY_DATA_CAP_WIFI_RESOLVED_DAY = "key_data_cap_wifi_resolved_day"
