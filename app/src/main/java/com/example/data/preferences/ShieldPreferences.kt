@@ -255,6 +255,12 @@ class ShieldPreferences(private val context: Context) {
     private val _dataLimitMobileMb = MutableStateFlow(getDataLimitMobileMb())
     val dataLimitMobileMb: StateFlow<Int> = _dataLimitMobileMb.asStateFlow()
 
+    // #60 (batch 5): the data-cap progress notification's own toggle.
+    private val _dataCapProgressNotificationEnabled =
+        MutableStateFlow(isDataCapProgressNotificationEnabled())
+    val dataCapProgressNotificationEnabled: StateFlow<Boolean> =
+        _dataCapProgressNotificationEnabled.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -854,6 +860,20 @@ class ShieldPreferences(private val context: Context) {
     fun setDataLimitMobileMb(mb: Int) {
         prefs.edit().putInt(KEY_DATA_LIMIT_MOBILE_MB, mb).apply()
         _dataLimitMobileMb.value = mb
+    }
+
+    // #60 (batch 5): the progress notification for the data-cap
+    // section — shows how much of each cap is used and how much
+    // remains. It is OFF by default and only ever posts while this
+    // toggle is on; the accessibility service refreshes it on the
+    // same throttled cadence as the cap evaluation and cancels it
+    // the moment the toggle (or every cap) goes off.
+    fun isDataCapProgressNotificationEnabled(): Boolean =
+        prefs.getBoolean(KEY_DATA_CAP_PROGRESS_NOTIFICATION, false)
+
+    fun setDataCapProgressNotificationEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DATA_CAP_PROGRESS_NOTIFICATION, enabled).apply()
+        _dataCapProgressNotificationEnabled.value = enabled
     }
 
     // #46 (batch 3): the data-cap WARNING state. The warning is its own
@@ -1962,6 +1982,7 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
         private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
         private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
+        private const val KEY_DATA_CAP_PROGRESS_NOTIFICATION = "key_data_cap_progress_notification"
         private const val KEY_DATA_CAP_WARNING_TRANSPORTS = "key_data_cap_warning_transports"
         private const val KEY_DATA_CAP_WARNING_DAY = "key_data_cap_warning_day"
         private const val KEY_DATA_CAP_WIFI_RESOLVED_DAY = "key_data_cap_wifi_resolved_day"

@@ -55,4 +55,57 @@ class DataUsageBudgetTest {
             DataUsageBudget.PRESET_CAPS_MB
         )
     }
+
+    // ---- #58 (batch 5): the slider scale, 50 MB to 20 GB ----
+
+    @Test
+    fun `slider scale spans off, 50 MB and 20 GB, strictly growing`() {
+        val scale = DataUsageBudget.SLIDER_CAPS_MB
+        assertEquals(0, scale.first())
+        assertEquals(50, scale[1])
+        assertEquals(20480, scale.last())
+        assertEquals(scale.sorted(), scale)
+        assertEquals(scale.distinct(), scale)
+    }
+
+    @Test
+    fun `slider index round-trips every stop`() {
+        for ((index, cap) in DataUsageBudget.SLIDER_CAPS_MB.withIndex()) {
+            assertEquals(cap, DataUsageBudget.capForSliderIndex(index))
+            assertEquals(index, DataUsageBudget.sliderIndexFor(cap))
+        }
+    }
+
+    @Test
+    fun `slider index snaps stored values to the nearest stop`() {
+        assertEquals(0, DataUsageBudget.sliderIndexFor(0))
+        assertEquals(0, DataUsageBudget.sliderIndexFor(-10))
+        // 5000 MB sits between 4096 and 6144 — closer to 4096.
+        assertEquals(
+            DataUsageBudget.SLIDER_CAPS_MB.indexOf(4096),
+            DataUsageBudget.sliderIndexFor(5000)
+        )
+        // Above the top stop clamps to it.
+        assertEquals(
+            DataUsageBudget.SLIDER_CAPS_MB.lastIndex,
+            DataUsageBudget.sliderIndexFor(999_999)
+        )
+        // Index clamping mirrors on the way back out.
+        assertEquals(0, DataUsageBudget.capForSliderIndex(-3))
+        assertEquals(20480, DataUsageBudget.capForSliderIndex(10_000))
+    }
+
+    // ---- #60 (batch 5): chart fraction / percent ----
+
+    @Test
+    fun `used fraction and percent are bounded`() {
+        val cap = DataUsageBudget.mbToBytes(1024)
+        assertEquals(0f, DataUsageBudget.usedFraction(0L, cap), 0.0001f)
+        assertEquals(0.5f, DataUsageBudget.usedFraction(cap / 2, cap), 0.0001f)
+        assertEquals(1f, DataUsageBudget.usedFraction(cap * 3, cap), 0.0001f)
+        assertEquals(0f, DataUsageBudget.usedFraction(123L, 0L), 0.0001f)
+        assertEquals(50, DataUsageBudget.usedPercent(cap / 2, cap))
+        assertEquals(100, DataUsageBudget.usedPercent(cap * 3, cap))
+        assertEquals(0, DataUsageBudget.usedPercent(123L, 0L))
+    }
 }

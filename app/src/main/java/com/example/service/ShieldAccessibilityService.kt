@@ -40,6 +40,7 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.deviceowner.DeviceOwnerManager
+import com.example.notification.LockdownNotificationManager
 import com.example.ui.lockdown.AppLimitWarningActivity
 import com.example.ui.lockdown.BlockWarningActivity
 import com.example.ui.lockdown.DataCapWarningActivity
@@ -48,6 +49,7 @@ import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
 import com.example.util.BlockEscalationPolicy
 import com.example.util.DataCapEnforcer
+import com.example.util.DataCapProgressText
 import com.example.util.TransportStateReader
 import com.example.util.VpnKnockdownPolicy
 import kotlinx.coroutines.CancellationException
@@ -1465,26 +1467,38 @@ class ShieldAccessibilityService : AccessibilityService() {
             lastDataUsageCheckMs = now
             val wifiCapMb = preferences.getDataLimitWifiMb()
             val mobileCapMb = preferences.getDataLimitMobileMb()
-            if (wifiCapMb > 0 || mobileCapMb > 0) {
+            // #60 (batch 5): the progress notification rides the same
+            // throttled evaluation — it needs the usage read even when
+            // no cap is set (to know there is nothing to report).
+            val progressNotificationOn = preferences.isDataCapProgressNotificationEnabled()
+            if (wifiCapMb > 0 || mobileCapMb > 0 || progressNotificationOn) {
                 val usage = DataUsageMeter.todayUsageBytes(
                     this@ShieldAccessibilityService,
                     preferences
                 )
-                val exceeded = DataCapEnforcer.exceededTransports(
-                    wifiUsedBytes = usage.wifiBytes,
-                    wifiCapMb = wifiCapMb,
-                    mobileUsedBytes = usage.mobileBytes,
-                    mobileCapMb = mobileCapMb
-                )
-                val resolvedDays = mapOf(
-                    DataCapEnforcer.Transport.WIFI to preferences.getDataCapWifiResolvedDay(),
-                    DataCapEnforcer.Transport.MOBILE to preferences.getDataCapMobileResolvedDay()
-                )
-                val fresh = DataCapEnforcer.newWarnings(exceeded, active, resolvedDays, today)
-                for (transport in fresh) {
-                    activateDataCapWarning(transport, today)
+                if (wifiCapMb > 0 || mobileCapMb > 0) {
+                    val exceeded = DataCapEnforcer.exceededTransports(
+                        wifiUsedBytes = usage.wifiBytes,
+                        wifiCapMb = wifiCapMb,
+                        mobileUsedBytes = usage.mobileBytes,
+                        mobileCapMb = mobileCapMb
+                    )
+                    val resolvedDays = mapOf(
+                        DataCapEnforcer.Transport.WIFI to preferences.getDataCapWifiResolvedDay(),
+                        DataCapEnforcer.Transport.MOBILE to preferences.getDataCapMobileResolvedDay()
+                    )
+                    val fresh = DataCapEnforcer.newWarnings(exceeded, active, resolvedDays, today)
+                    for (transport in fresh) {
+                        activateDataCapWarning(transport, today)
+                    }
+                    active = dataCapWarningTransports()
                 }
-                active = dataCapWarningTransports()
+                refreshDataCapProgressNotification(
+                    usage = usage,
+                    wifiCapMb = wifiCapMb,
+                    mobileCapMb = mobileCapMb,
+                    enabled = progressNotificationOn
+                )
             }
         }
 
@@ -1501,6 +1515,52 @@ class ShieldAccessibilityService : AccessibilityService() {
         // time, for the next still-on transport that has not had its
         // trip this episode.
         progressDataCapAutomation(now, active)
+    }
+
+    // #60 (batch 5): the last progress-notification body posted, so
+    // the standing notification is only re-posted when its text
+    // actually changes (usage moved), not on every evaluation tick.
+    @Volatile
+    private var lastDataCapNotificationText: String? = null
+
+    /**
+     * #60 (batch 5): keeps the standing data-cap progress notification
+     * in step with reality. Toggle off → cancel (once). Toggle on →
+     * post/update with the per-transport used/remaining lines; no cap
+     * on either transport → cancel (nothing to report).
+     */
+    private fun refreshDataCapProgressNotification(
+        usage: DataUsageMeter.Usage,
+        wifiCapMb: Int,
+        mobileCapMb: Int,
+        enabled: Boolean
+    ) {
+        if (!enabled) {
+            if (lastDataCapNotificationText != null) {
+                lastDataCapNotificationText = null
+                LockdownNotificationManager.cancelDataCapProgressNotification(this)
+            }
+            return
+        }
+        val lines = DataCapProgressText.lines(
+            wifiUsedBytes = usage.wifiBytes,
+            wifiCapMb = wifiCapMb,
+            mobileUsedBytes = usage.mobileBytes,
+            mobileCapMb = mobileCapMb,
+            isPersian = preferences.getIsPersianLanguage()
+        )
+        val key = lines.joinToString("\n")
+        if (key == lastDataCapNotificationText) return
+        lastDataCapNotificationText = key
+        if (lines.isEmpty()) {
+            LockdownNotificationManager.cancelDataCapProgressNotification(this)
+        } else {
+            LockdownNotificationManager.showDataCapProgressNotification(
+                context = this,
+                lines = lines,
+                isPersian = preferences.getIsPersianLanguage()
+            )
+        }
     }
 
     private fun activateDataCapWarning(transport: DataCapEnforcer.Transport, today: Long) {
