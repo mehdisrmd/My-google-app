@@ -40,6 +40,7 @@ import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
 import com.example.data.repository.ShieldRepository
 import com.example.deviceowner.DeviceOwnerManager
+import com.example.notification.LockdownNotificationManager
 import com.example.ui.lockdown.AppLimitWarningActivity
 import com.example.ui.lockdown.BlockWarningActivity
 import com.example.ui.lockdown.DataCapWarningActivity
@@ -48,6 +49,7 @@ import com.example.ui.security.InstallGuardActivity
 import com.example.util.AppPackageResolver
 import com.example.util.BlockEscalationPolicy
 import com.example.util.DataCapEnforcer
+import com.example.util.DataCapProgressText
 import com.example.util.TransportStateReader
 import com.example.util.VpnKnockdownPolicy
 import kotlinx.coroutines.CancellationException
@@ -192,6 +194,9 @@ class ShieldAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastDataCapWarningLaunchMs = 0L
 
+    /** #63 (batch 5): throttle for the per-app firewall evaluation. */
+    private var lastPerAppFirewallEvalMs = 0L
+
     /**
      * #47 (batch 3) Scope A: the package whose over-limit warning is
      * currently engaged — the warning page is up, or the app has not
@@ -296,11 +301,24 @@ class ShieldAccessibilityService : AccessibilityService() {
             OverlayDisplayGate.isCallUiPackage(lastForegroundPackage)
     }
 
-    /** #17/#18: may the block overlay be shown right now? */
+    /** #17/#18: may an auxiliary overlay page be shown right now? */
     private fun overlayGateDecision(): OverlayDisplayGate.Decision {
         return OverlayDisplayGate.decide(
             keyguardLocked = isKeyguardLockedNow(),
             callActive = isCallActiveNow()
+        )
+    }
+
+    /**
+     * #57 (batch 5): may the BLOCK SCREEN be shown right now? Unlike
+     * the auxiliary pages, the block screen never stands down for a
+     * call — #17's yield made the block screen and the call UI fight
+     * (finish → relaunch → pushback), and Mehdi ruled the block screen
+     * stays. Only the keyguard still defers it (#18).
+     */
+    private fun blockScreenGateDecision(): OverlayDisplayGate.Decision {
+        return OverlayDisplayGate.decideBlockScreen(
+            keyguardLocked = isKeyguardLockedNow()
         )
     }
 
@@ -527,6 +545,20 @@ class ShieldAccessibilityService : AccessibilityService() {
                         continue
                     }
                     maybeKnockForeignVpn()
+
+                    // #63 (batch 5): the per-app internet firewall
+                    // follows the same toggle, re-evaluated on the
+                    // data-cap cadence (its evaluation reads usage
+                    // stats). Independent of master protection, like
+                    // the VPN guard itself; skipped while a lockdown
+                    // pins the phone (the ticker continues above).
+                    if (now - lastPerAppFirewallEvalMs >= 15_000L) {
+                        lastPerAppFirewallEvalMs = now
+                        PerAppFirewall.evaluateAndApply(
+                            this@ShieldAccessibilityService,
+                            preferences
+                        )
+                    }
 
                     // 2b. Tamper Guard (ticker path): even between accessibility
                     //     events, cover Settings app-manager / package-uninstaller
@@ -1024,6 +1056,14 @@ class ShieldAccessibilityService : AccessibilityService() {
                 triggerLockdown(
                     triggerWord = "Adult Site Blocked: $blockedHost",
                     sourceApp = resolveReadableAppName(activeRootPkg),
+                    // #59 (batch 5): site blocks carry the one-time
+                    // 10-second free button on the (now unified) block
+                    // page — the stored grace flag is what makes the
+                    // button appear AND work (beginKeywordGracePeriod
+                    // is a no-op without it). After the free window the
+                    // browser sits on the Google homepage, so no
+                    // re-block episode follows from this path.
+                    graceAvailable = true,
                     blockReason = "Adult site",
                     blockedUrl = blockedHost,
                     lockPackage = activeRootPkg,
@@ -1228,9 +1268,9 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         // #17: while a call is ringing / in progress, do not yank the
         // user around with BACK/HOME — on some OEMs that buries the call
-        // screen. The lock above is already recorded; the overlay gate
-        // stands the block screen down until the call ends, and the
-        // enforcement loop then surfaces it if the lock is still running.
+        // screen. The lock above is already recorded; the block screen
+        // itself is launched regardless (#57: it no longer stands down
+        // for calls), but the BACK/HOME yank still waits for the call.
         if (!isCallActiveNow()) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             performGlobalAction(GLOBAL_ACTION_HOME)
@@ -1444,26 +1484,38 @@ class ShieldAccessibilityService : AccessibilityService() {
             lastDataUsageCheckMs = now
             val wifiCapMb = preferences.getDataLimitWifiMb()
             val mobileCapMb = preferences.getDataLimitMobileMb()
-            if (wifiCapMb > 0 || mobileCapMb > 0) {
+            // #60 (batch 5): the progress notification rides the same
+            // throttled evaluation — it needs the usage read even when
+            // no cap is set (to know there is nothing to report).
+            val progressNotificationOn = preferences.isDataCapProgressNotificationEnabled()
+            if (wifiCapMb > 0 || mobileCapMb > 0 || progressNotificationOn) {
                 val usage = DataUsageMeter.todayUsageBytes(
                     this@ShieldAccessibilityService,
                     preferences
                 )
-                val exceeded = DataCapEnforcer.exceededTransports(
-                    wifiUsedBytes = usage.wifiBytes,
-                    wifiCapMb = wifiCapMb,
-                    mobileUsedBytes = usage.mobileBytes,
-                    mobileCapMb = mobileCapMb
-                )
-                val resolvedDays = mapOf(
-                    DataCapEnforcer.Transport.WIFI to preferences.getDataCapWifiResolvedDay(),
-                    DataCapEnforcer.Transport.MOBILE to preferences.getDataCapMobileResolvedDay()
-                )
-                val fresh = DataCapEnforcer.newWarnings(exceeded, active, resolvedDays, today)
-                for (transport in fresh) {
-                    activateDataCapWarning(transport, today)
+                if (wifiCapMb > 0 || mobileCapMb > 0) {
+                    val exceeded = DataCapEnforcer.exceededTransports(
+                        wifiUsedBytes = usage.wifiBytes,
+                        wifiCapMb = wifiCapMb,
+                        mobileUsedBytes = usage.mobileBytes,
+                        mobileCapMb = mobileCapMb
+                    )
+                    val resolvedDays = mapOf(
+                        DataCapEnforcer.Transport.WIFI to preferences.getDataCapWifiResolvedDay(),
+                        DataCapEnforcer.Transport.MOBILE to preferences.getDataCapMobileResolvedDay()
+                    )
+                    val fresh = DataCapEnforcer.newWarnings(exceeded, active, resolvedDays, today)
+                    for (transport in fresh) {
+                        activateDataCapWarning(transport, today)
+                    }
+                    active = dataCapWarningTransports()
                 }
-                active = dataCapWarningTransports()
+                refreshDataCapProgressNotification(
+                    usage = usage,
+                    wifiCapMb = wifiCapMb,
+                    mobileCapMb = mobileCapMb,
+                    enabled = progressNotificationOn
+                )
             }
         }
 
@@ -1480,6 +1532,52 @@ class ShieldAccessibilityService : AccessibilityService() {
         // time, for the next still-on transport that has not had its
         // trip this episode.
         progressDataCapAutomation(now, active)
+    }
+
+    // #60 (batch 5): the last progress-notification body posted, so
+    // the standing notification is only re-posted when its text
+    // actually changes (usage moved), not on every evaluation tick.
+    @Volatile
+    private var lastDataCapNotificationText: String? = null
+
+    /**
+     * #60 (batch 5): keeps the standing data-cap progress notification
+     * in step with reality. Toggle off → cancel (once). Toggle on →
+     * post/update with the per-transport used/remaining lines; no cap
+     * on either transport → cancel (nothing to report).
+     */
+    private fun refreshDataCapProgressNotification(
+        usage: DataUsageMeter.Usage,
+        wifiCapMb: Int,
+        mobileCapMb: Int,
+        enabled: Boolean
+    ) {
+        if (!enabled) {
+            if (lastDataCapNotificationText != null) {
+                lastDataCapNotificationText = null
+                LockdownNotificationManager.cancelDataCapProgressNotification(this)
+            }
+            return
+        }
+        val lines = DataCapProgressText.lines(
+            wifiUsedBytes = usage.wifiBytes,
+            wifiCapMb = wifiCapMb,
+            mobileUsedBytes = usage.mobileBytes,
+            mobileCapMb = mobileCapMb,
+            isPersian = preferences.getIsPersianLanguage()
+        )
+        val key = lines.joinToString("\n")
+        if (key == lastDataCapNotificationText) return
+        lastDataCapNotificationText = key
+        if (lines.isEmpty()) {
+            LockdownNotificationManager.cancelDataCapProgressNotification(this)
+        } else {
+            LockdownNotificationManager.showDataCapProgressNotification(
+                context = this,
+                lines = lines,
+                isPersian = preferences.getIsPersianLanguage()
+            )
+        }
     }
 
     private fun activateDataCapWarning(transport: DataCapEnforcer.Transport, today: Long) {
@@ -1784,12 +1882,14 @@ class ShieldAccessibilityService : AccessibilityService() {
         endTimeEpoch: Long,
         force: Boolean = false
     ) {
-        // #17/#18 gate (see OverlayDisplayGate): never launch the block
-        // screen over an incoming/ongoing call, and never over the lock
-        // screen. A call needs no parking — the enforcement loop retries
-        // on its own once the call ends. A locked phone parks the launch
-        // in deferredOverlay; flushDeferredOverlay() fires it on unlock.
-        when (overlayGateDecision()) {
+        // #18/#57 gate (see OverlayDisplayGate.decideBlockScreen):
+        // never launch the block screen over the lock screen — a locked
+        // phone parks the launch in deferredOverlay and
+        // flushDeferredOverlay() fires it on unlock. A phone call does
+        // NOT stand the block screen down anymore (#57 supersedes #17
+        // for this screen): the block screen stays, so there is no
+        // finish/relaunch flicker war with the call UI.
+        when (blockScreenGateDecision()) {
             OverlayDisplayGate.Decision.YIELD_TO_CALL -> return
             OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
                 deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
@@ -1815,9 +1915,10 @@ class ShieldAccessibilityService : AccessibilityService() {
             if (!preferences.isCurrentlyLocked()) return@post
 
             // The gate may also have flipped while this runnable sat in the
-            // queue (a call started ringing, the phone got locked): stand
-            // down the same way as a fresh launch would.
-            when (overlayGateDecision()) {
+            // queue (the phone got locked): stand down the same way as a
+            // fresh launch would. (A call starting to ring does NOT stand
+            // the block screen down — #57.)
+            when (blockScreenGateDecision()) {
                 OverlayDisplayGate.Decision.YIELD_TO_CALL -> return@post
                 OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK -> {
                     deferredOverlay = Triple(triggerWord, sourceApp, endTimeEpoch)
@@ -1939,6 +2040,13 @@ class ShieldAccessibilityService : AccessibilityService() {
         try {
             if (!preferences.getIsVpnConfigBlockEnabled()) return
             if (VpnService.prepare(this) != null) return
+            // #63 (batch 5): while our per-app FIREWALL is up, the VPN
+            // transport on the device is OURS — never knock it down.
+            // (When a foreign VPN displaces it, isActive flips false
+            // and this knock path fires; the VPN service then
+            // re-establishes the firewall instead of a momentary TUN,
+            // because a desired set exists.)
+            if (PerAppFirewall.isActive) return
             val now = System.currentTimeMillis()
             val ownActive = VpnKnockdownPolicy.isOwnSessionActive(now, vpnKnockStartedMs)
             if (!VpnKnockdownPolicy.isForeignVpn(hasVpnTransportNow(), ownActive)) return

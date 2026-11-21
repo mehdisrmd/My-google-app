@@ -187,6 +187,20 @@ object BlocklistSources {
     }
 
     /**
+     * #61 (batch 5): a source's stable identity — the SHA-1 of its
+     * first (canonical) list URL, hex-encoded. Per-source state (the
+     * stored domain set on disk, the UI's per-repo update status) is
+     * keyed by this, so renaming a repository in the UI never orphans
+     * its stored set, while two repositories sharing one list URL are
+     * the same source (the add form already deduplicates on it).
+     */
+    fun keyFor(source: BlocklistSource): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-1")
+            .digest(source.urls.first().toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
      * Builds a source from the Adult Block card's add-repository form
      * (#49), or null when the URL is not a usable list address. A blank
      * name falls back to the URL's host; the repository address shown

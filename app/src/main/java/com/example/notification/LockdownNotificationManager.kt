@@ -23,6 +23,11 @@ import java.util.Calendar
  * local time by an AlarmManager-scheduled broadcast
  * (see [DailyStreakAlarmReceiver]).
  *
+ * The single exception is #60 (batch 5): the data-cap section's standing
+ * progress notification, which exists ONLY while the user has its toggle
+ * on — it is a readout the user asked for, on a silent low-importance
+ * channel, and it is cancelled the moment the toggle goes off.
+ *
  * Removed completely:
  * - The always-on persistent PANIC SOS notification bar.
  * - The per-second lockdown countdown notification.
@@ -35,7 +40,13 @@ import java.util.Calendar
 object LockdownNotificationManager {
     private const val CHANNEL_ID_MILESTONE = "x_blocker_streak_milestone_channel_v1"
 
+    // #60 (batch 5): the data-cap progress notification has its own
+    // low-importance channel — it is a standing progress readout the
+    // user explicitly toggled on, not an alert, so it must never buzz.
+    private const val CHANNEL_ID_DATA_CAP = "usafe_data_cap_progress_channel_v1"
+
     private const val NOTIFICATION_ID_MILESTONE = 4003
+    private const val NOTIFICATION_ID_DATA_CAP = 4004
     private const val REQUEST_CODE_DAILY_STREAK_ALARM = 9001
 
     const val ACTION_OPEN_MAIN_DASHBOARD = "com.example.action.OPEN_MAIN_DASHBOARD"
@@ -70,6 +81,90 @@ object LockdownNotificationManager {
             }
 
             nm.createNotificationChannel(milestoneChannel)
+
+            val dataCapChannel = NotificationChannel(
+                CHANNEL_ID_DATA_CAP,
+                "usafe Data Usage Progress",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Standing readout of today's data-cap usage (only while you enable it)"
+                setShowBadge(false)
+                enableVibration(false)
+            }
+
+            nm.createNotificationChannel(dataCapChannel)
+        }
+    }
+
+    /**
+     * #60 (batch 5): posts or updates the standing data-cap progress
+     * notification. [lines] holds one pre-formatted line per capped
+     * transport ("Wi-Fi: 1.2 GB of 2 GB used · 800 MB left"); the
+     * caller (ShieldAccessibilityService) rebuilds them on its
+     * throttled usage-evaluation cadence and only while the section's
+     * toggle is on. Posting under a fixed ID updates the existing
+     * notification in place. An empty [lines] cancels instead — there
+     * is nothing to report without a cap.
+     */
+    fun showDataCapProgressNotification(
+        context: Context,
+        lines: List<String>,
+        isPersian: Boolean = false
+    ): Boolean {
+        if (lines.isEmpty()) {
+            cancelDataCapProgressNotification(context)
+            return false
+        }
+        createNotificationChannel(context)
+        if (!hasNotificationPermission(context)) return false
+
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return false
+
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_MAIN_DASHBOARD
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val openPendingIntent = PendingIntent.getActivity(
+                context,
+                211,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = if (isPersian) "مصرف امروز اینترنت" else "Today's data usage"
+            val body = lines.joinToString("\n")
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID_DATA_CAP)
+                .setSmallIcon(R.drawable.ic_stat_x_shield)
+                .setContentTitle(title)
+                .setContentText(lines.first())
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setContentIntent(openPendingIntent)
+                .build()
+
+            nm.notify(NOTIFICATION_ID_DATA_CAP, notification)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** #60: removes the standing data-cap progress notification. */
+    fun cancelDataCapProgressNotification(context: Context) {
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return
+            nm.cancel(NOTIFICATION_ID_DATA_CAP)
+        } catch (_: Exception) {
         }
     }
 

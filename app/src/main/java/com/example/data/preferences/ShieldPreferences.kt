@@ -255,6 +255,19 @@ class ShieldPreferences(private val context: Context) {
     private val _dataLimitMobileMb = MutableStateFlow(getDataLimitMobileMb())
     val dataLimitMobileMb: StateFlow<Int> = _dataLimitMobileMb.asStateFlow()
 
+    // #60 (batch 5): the data-cap progress notification's own toggle.
+    private val _dataCapProgressNotificationEnabled =
+        MutableStateFlow(isDataCapProgressNotificationEnabled())
+    val dataCapProgressNotificationEnabled: StateFlow<Boolean> =
+        _dataCapProgressNotificationEnabled.asStateFlow()
+
+    // #63 (batch 5): per-app internet rules (Per-App Internet
+    // section). Active only while the Block VPN guard is on.
+    private val _perAppInternetRules =
+        MutableStateFlow(getPerAppInternetRules())
+    val perAppInternetRules: StateFlow<List<com.example.util.PerAppInternetRule>> =
+        _perAppInternetRules.asStateFlow()
+
     private val _activeLockEndTime = MutableStateFlow(getActiveLockEndTime())
     val activeLockEndTime: StateFlow<Long> = _activeLockEndTime.asStateFlow()
 
@@ -439,6 +452,20 @@ class ShieldPreferences(private val context: Context) {
             put("quizScorePercent", getAddictionQuizScore())
             put("quizSeverityEn", getAddictionQuizSeverityEn())
             put("quizSeverityFa", getAddictionQuizSeverityFa())
+            // #62 (batch 5, backup format v2): the settings that grew
+            // after v1 — data caps, the tamper guards, the uninstall
+            // wait — join the export so a backup really is the WHOLE
+            // app's settings. (Blocklist sources/user domains and the
+            // per-app internet rules travel as their own sections of
+            // the full backup; see ShieldRepository.)
+            put("dataLimitWifiMb", getDataLimitWifiMb())
+            put("dataLimitMobileMb", getDataLimitMobileMb())
+            put("dataCapProgressNotificationEnabled", isDataCapProgressNotificationEnabled())
+            put("isVpnConfigBlockEnabled", getIsVpnConfigBlockEnabled())
+            put("isClearDataGuardEnabled", getIsClearDataGuardEnabled())
+            put("isForceStopGuardEnabled", getIsForceStopGuardEnabled())
+            put("isInstallGuardEnabled", getIsInstallGuardEnabled())
+            put("uninstallWaitMinutes", getUninstallWaitMinutes())
         }
     }
 
@@ -540,6 +567,32 @@ class ShieldPreferences(private val context: Context) {
         _quizSeverityEn.value = quizSevEn
         _quizSeverityFa.value = quizSevFa
         _usageRefreshTrigger.value = now
+
+        // #62 (batch 5): restore the v2 settings through their own
+        // setters (which also refresh their flows). Every read falls
+        // back to the CURRENT value, so importing a v1 backup leaves
+        // these exactly as they are.
+        setDataLimitWifiMb(json.optInt("dataLimitWifiMb", getDataLimitWifiMb()))
+        setDataLimitMobileMb(json.optInt("dataLimitMobileMb", getDataLimitMobileMb()))
+        setDataCapProgressNotificationEnabled(
+            json.optBoolean(
+                "dataCapProgressNotificationEnabled",
+                isDataCapProgressNotificationEnabled()
+            )
+        )
+        setVpnConfigBlockEnabled(
+            json.optBoolean("isVpnConfigBlockEnabled", getIsVpnConfigBlockEnabled())
+        )
+        setClearDataGuardEnabled(
+            json.optBoolean("isClearDataGuardEnabled", getIsClearDataGuardEnabled())
+        )
+        setForceStopGuardEnabled(
+            json.optBoolean("isForceStopGuardEnabled", getIsForceStopGuardEnabled())
+        )
+        setInstallGuardEnabled(
+            json.optBoolean("isInstallGuardEnabled", getIsInstallGuardEnabled())
+        )
+        setUninstallWaitMinutes(json.optInt("uninstallWaitMinutes", getUninstallWaitMinutes()))
 
         StreakWidgetProvider.updateAllWidgets(context)
     }
@@ -854,6 +907,35 @@ class ShieldPreferences(private val context: Context) {
     fun setDataLimitMobileMb(mb: Int) {
         prefs.edit().putInt(KEY_DATA_LIMIT_MOBILE_MB, mb).apply()
         _dataLimitMobileMb.value = mb
+    }
+
+    // #60 (batch 5): the progress notification for the data-cap
+    // section — shows how much of each cap is used and how much
+    // remains. It is OFF by default and only ever posts while this
+    // toggle is on; the accessibility service refreshes it on the
+    // same throttled cadence as the cap evaluation and cancels it
+    // the moment the toggle (or every cap) goes off.
+    fun isDataCapProgressNotificationEnabled(): Boolean =
+        prefs.getBoolean(KEY_DATA_CAP_PROGRESS_NOTIFICATION, false)
+
+    fun setDataCapProgressNotificationEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DATA_CAP_PROGRESS_NOTIFICATION, enabled).apply()
+        _dataCapProgressNotificationEnabled.value = enabled
+    }
+
+    // #63 (batch 5): per-app internet rules, persisted as one encoded
+    // string (see PerAppInternetCodec). The firewall that enforces
+    // them runs only while the Block VPN guard (#42/#51) is on.
+    fun getPerAppInternetRules(): List<com.example.util.PerAppInternetRule> =
+        com.example.util.PerAppInternetCodec.decode(
+            prefs.getString(KEY_PER_APP_INTERNET_RULES, null)
+        )
+
+    fun setPerAppInternetRules(rules: List<com.example.util.PerAppInternetRule>) {
+        prefs.edit()
+            .putString(KEY_PER_APP_INTERNET_RULES, com.example.util.PerAppInternetCodec.encode(rules))
+            .apply()
+        _perAppInternetRules.value = rules
     }
 
     // #46 (batch 3): the data-cap WARNING state. The warning is its own
@@ -1962,6 +2044,8 @@ class ShieldPreferences(private val context: Context) {
         private const val KEY_USER_BLOCKLIST_DOMAINS = "key_user_blocklist_domains"
         private const val KEY_DATA_LIMIT_WIFI_MB = "key_data_limit_wifi_mb"
         private const val KEY_DATA_LIMIT_MOBILE_MB = "key_data_limit_mobile_mb"
+        private const val KEY_DATA_CAP_PROGRESS_NOTIFICATION = "key_data_cap_progress_notification"
+        private const val KEY_PER_APP_INTERNET_RULES = "key_per_app_internet_rules"
         private const val KEY_DATA_CAP_WARNING_TRANSPORTS = "key_data_cap_warning_transports"
         private const val KEY_DATA_CAP_WARNING_DAY = "key_data_cap_warning_day"
         private const val KEY_DATA_CAP_WIFI_RESOLVED_DAY = "key_data_cap_wifi_resolved_day"

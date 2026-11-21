@@ -95,6 +95,7 @@ import com.example.data.model.AppUsageLimit
 import com.example.data.model.FocusScheduleSlot
 import com.example.data.model.SectionBlockRule
 import com.example.data.preferences.ShieldPreferences
+import com.example.notification.LockdownNotificationManager
 import com.example.service.DataUsageMeter
 import com.example.ui.focus.AddFocusSlotDialog
 import com.example.ui.focus.SmartFocusSlotsList
@@ -112,7 +113,9 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import com.example.util.AppPackageResolver
+import com.example.util.DataCapProgressText
 import com.example.util.ResolvedAppInfo
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -545,6 +548,9 @@ private fun DataUsageLimitsCard(
     val context = LocalContext.current
     val wifiCapMb by preferences.dataLimitWifiMb.collectAsStateWithLifecycle()
     val mobileCapMb by preferences.dataLimitMobileMb.collectAsStateWithLifecycle()
+    // #60 (batch 5): the progress notification's toggle.
+    val progressNotificationEnabled by preferences
+        .dataCapProgressNotificationEnabled.collectAsStateWithLifecycle()
     val usage = remember(nowMs) {
         DataUsageMeter.todayUsageBytes(context, preferences)
     }
@@ -589,6 +595,77 @@ private fun DataUsageLimitsCard(
                 onSelectCap = { preferences.setDataLimitMobileMb(it) },
                 testTagPrefix = "data_limit_mobile"
             )
+
+            // #60 (batch 5): the standing progress notification for
+            // this section. Turning it on posts the notification right
+            // away (with the usage this card is already showing) and
+            // the accessibility service keeps it updated on its
+            // usage-evaluation cadence; turning it off cancels it
+            // immediately.
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tr("Usage progress notification", "اعلان پیشرفت مصرف"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = ObsidianTextPrimary
+                    )
+                    Text(
+                        text = tr(
+                            "Shows how much of each cap is used and how much is left.",
+                            "نشان می‌دهد چقدر از هر سقف مصرف شده و چقدر مانده است."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    if (progressNotificationEnabled &&
+                        !LockdownNotificationManager.hasNotificationPermission(context)
+                    ) {
+                        Text(
+                            text = tr(
+                                "Notification permission is needed — grant it in the permissions section.",
+                                "اجازه‌ی اعلان لازم است — از بخش دسترسی‌ها فعالش کنید."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AmberWarning,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+                Switch(
+                    checked = progressNotificationEnabled,
+                    onCheckedChange = { enabled ->
+                        preferences.setDataCapProgressNotificationEnabled(enabled)
+                        if (enabled) {
+                            LockdownNotificationManager.showDataCapProgressNotification(
+                                context = context,
+                                lines = DataCapProgressText.lines(
+                                    wifiUsedBytes = usage.wifiBytes,
+                                    wifiCapMb = wifiCapMb,
+                                    mobileUsedBytes = usage.mobileBytes,
+                                    mobileCapMb = mobileCapMb,
+                                    isPersian = preferences.getIsPersianLanguage()
+                                ),
+                                isPersian = preferences.getIsPersianLanguage()
+                            )
+                        } else {
+                            LockdownNotificationManager
+                                .cancelDataCapProgressNotification(context)
+                        }
+                    },
+                    modifier = Modifier.testTag("data_cap_progress_notification_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = CrimsonPrimary
+                    )
+                )
+            }
         }
     }
 }
@@ -627,46 +704,112 @@ private fun DataCapRow(
         } else {
             ObsidianTextSecondary
         },
-        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        DataUsageBudget.PRESET_CAPS_MB.forEach { presetMb ->
-            val selected = presetMb == capMb
+    // #60 (batch 5): the consumption chart — a bar of the cap used,
+    // with the percent and the remaining amount spelled out. Only
+    // meaningful with a cap; without one the row above already says
+    // "no cap".
+    if (capMb > 0) {
+        val fraction = DataUsageBudget.usedFraction(usedBytes, capBytes)
+        val percent = DataUsageBudget.usedPercent(usedBytes, capBytes)
+        val barColor = when {
+            fraction >= 1f -> CrimsonPrimary
+            fraction >= 0.8f -> AmberWarning
+            else -> EmeraldShield
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(50))
+                .background(ObsidianCard)
+                .testTag("${testTagPrefix}_usage_bar")
+        ) {
             Box(
                 modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(10.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(if (selected) CrimsonPrimary else ObsidianCard)
-                    .border(
-                        1.dp,
-                        if (selected) CrimsonPrimary else ObsidianBorder,
-                        RoundedCornerShape(50)
-                    )
-                    .clickable { onSelectCap(presetMb) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .testTag("${testTagPrefix}_$presetMb")
-            ) {
-                Text(
-                    text = dataCapLabel(presetMb),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (selected) Color.White else ObsidianTextSecondary
-                )
-            }
+                    .background(barColor)
+            )
         }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = tr("$percent% used", "$percent٪ مصرف شده"),
+                style = MaterialTheme.typography.labelSmall,
+                color = barColor,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = tr(
+                    "${DataUsageBudget.formatBytes(DataUsageBudget.remainingBytes(usedBytes, capBytes))} left",
+                    "${DataUsageBudget.formatBytes(DataUsageBudget.remainingBytes(usedBytes, capBytes))} باقی مانده"
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = ObsidianTextSecondary
+            )
+        }
+    }
+    // #58 (batch 5): the cap is set with a SLIDER — 50 MB to 20 GB
+    // (plus Off at the start). The stops live in
+    // DataUsageBudget.SLIDER_CAPS_MB; the stored value stays Int MB.
+    var sliderPosition by remember(capMb) {
+        mutableFloatStateOf(DataUsageBudget.sliderIndexFor(capMb).toFloat())
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Slider(
+            value = sliderPosition,
+            onValueChange = { newPosition ->
+                sliderPosition = newPosition
+                onSelectCap(
+                    DataUsageBudget.capForSliderIndex(newPosition.roundToInt())
+                )
+            },
+            valueRange = 0f..(DataUsageBudget.SLIDER_CAPS_MB.size - 1).toFloat(),
+            steps = DataUsageBudget.SLIDER_CAPS_MB.size - 2,
+            colors = SliderDefaults.colors(
+                thumbColor = CrimsonPrimary,
+                activeTrackColor = CrimsonPrimary,
+                inactiveTrackColor = ObsidianBorder
+            ),
+            modifier = Modifier
+                .weight(1f)
+                .testTag("${testTagPrefix}_slider")
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = dataCapLabel(capMb),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (capMb > 0) ObsidianTextPrimary else ObsidianTextSecondary,
+            modifier = Modifier.testTag("${testTagPrefix}_value")
+        )
     }
 }
 
 private fun dataCapLabel(capMb: Int): String = when (capMb) {
     0 -> tr("Off", "خاموش")
     1024 -> "1 GB"
+    1536 -> "1.5 GB"
     2048 -> "2 GB"
+    3072 -> "3 GB"
+    4096 -> "4 GB"
     5120 -> "5 GB"
+    6144 -> "6 GB"
+    8192 -> "8 GB"
     10240 -> "10 GB"
+    12288 -> "12 GB"
+    15360 -> "15 GB"
+    20480 -> "20 GB"
     else -> "$capMb MB"
 }
 

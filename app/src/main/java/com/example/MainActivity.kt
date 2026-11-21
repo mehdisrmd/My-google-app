@@ -102,6 +102,7 @@ import com.example.data.blocklist.BlocklistActivationGate
 import com.example.data.blocklist.BlocklistSources
 import com.example.ui.keywords.BlocklistWaitScreen
 import com.example.ui.keywords.KeywordManagerScreen
+import com.example.ui.keywords.SourceUpdateUiState
 import com.example.ui.limits.AppLimitsAndSectionsScreen
 import com.example.ui.lockdown.LockdownActivity
 import com.example.ui.panic.PanicModeDialog
@@ -128,8 +129,10 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
 import com.example.util.ShakeDetector
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class ScreenTab {
     DASHBOARD,
@@ -464,6 +467,11 @@ fun MainContent(
     val blocklistDomainCount by preferences.adultBlocklistDomainCount.collectAsStateWithLifecycle()
     val userBlocklistDomains by preferences.userBlocklistDomains.collectAsStateWithLifecycle()
     var isBlocklistUpdating by remember { mutableStateOf(false) }
+    // #61 (batch 5): per-repository update states for the Adult Block
+    // card, keyed by BlocklistSources.keyFor.
+    var blocklistSourceUpdateStates by remember {
+        mutableStateOf<Map<String, SourceUpdateUiState>>(emptyMap())
+    }
     var isAppInBackgroundCurtain by remember { mutableStateOf(false) }
 
     LaunchedEffect(isBlackoutPrivacyShieldEnabled, screenshotTempUnlockUntil) {
@@ -840,15 +848,63 @@ fun MainContent(
                         blocklistLastUpdatedMs = blocklistLastUpdatedMs,
                         isBlocklistUpdating = isBlocklistUpdating,
                         onUpdateBlocklistNow = {
+                            // #61 (batch 5): UPDATE ALL — the updater
+                            // walks the repositories in order; each
+                            // repo's spinner starts when its turn comes
+                            // and its row turns red if it fails.
                             if (!isBlocklistUpdating) {
                                 isBlocklistUpdating = true
+                                val orderedSources = preferences.getBlocklistSources()
                                 coroutineScope.launch {
                                     try {
-                                        app.adultBlocklistUpdater.updateNow()
+                                        if (orderedSources.isNotEmpty()) {
+                                            blocklistSourceUpdateStates =
+                                                blocklistSourceUpdateStates +
+                                                    (BlocklistSources.keyFor(orderedSources.first()) to SourceUpdateUiState.UPDATING)
+                                        }
+                                        app.adultBlocklistUpdater.updateNow { source, ok ->
+                                            val finishedKey = BlocklistSources.keyFor(source)
+                                            var next = blocklistSourceUpdateStates +
+                                                (finishedKey to if (ok) SourceUpdateUiState.IDLE else SourceUpdateUiState.FAILED)
+                                            val finishedIndex = orderedSources.indexOf(source)
+                                            val nextSource = orderedSources.getOrNull(finishedIndex + 1)
+                                            if (nextSource != null) {
+                                                next = next +
+                                                    (BlocklistSources.keyFor(nextSource) to SourceUpdateUiState.UPDATING)
+                                            }
+                                            blocklistSourceUpdateStates = next
+                                        }
                                     } finally {
                                         isBlocklistUpdating = false
                                     }
                                 }
+                            }
+                        },
+                        sourceUpdateStates = blocklistSourceUpdateStates,
+                        onUpdateBlocklistSource = { source ->
+                            // #61: one repository's own update button.
+                            val key = BlocklistSources.keyFor(source)
+                            if (!isBlocklistUpdating &&
+                                blocklistSourceUpdateStates[key] != SourceUpdateUiState.UPDATING
+                            ) {
+                                blocklistSourceUpdateStates =
+                                    blocklistSourceUpdateStates + (key to SourceUpdateUiState.UPDATING)
+                                coroutineScope.launch {
+                                    val ok = app.adultBlocklistUpdater.updateSourceNow(source)
+                                    blocklistSourceUpdateStates =
+                                        blocklistSourceUpdateStates +
+                                            (key to if (ok) SourceUpdateUiState.IDLE else SourceUpdateUiState.FAILED)
+                                }
+                            }
+                        },
+                        onSearchBlocklistDomains = { query ->
+                            // #61: search across the whole merged list
+                            // (the file the matcher reads), capped so
+                            // the UI never renders thousands of rows.
+                            withContext(Dispatchers.IO) {
+                                app.adultBlocklistStore.readDomains()
+                                    .filter { it.contains(query, ignoreCase = true) }
+                                    .take(100)
                             }
                         },
                         userBlocklistDomains = userBlocklistDomains.toList(),
@@ -857,6 +913,11 @@ fun MainContent(
                             preferences.setBlocklistSources(
                                 preferences.getBlocklistSources() - source
                             )
+                            // #61: the removed repository's domains
+                            // leave the merged list with it.
+                            coroutineScope.launch {
+                                app.adultBlocklistUpdater.onSourceRemoved(source)
+                            }
                         },
                         onAddBlocklistSource = { source ->
                             val current = preferences.getBlocklistSources()

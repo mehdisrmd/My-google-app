@@ -57,6 +57,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +90,14 @@ import com.example.ui.theme.ObsidianTextSecondary
 import java.text.DateFormat
 import java.util.Date
 
+/**
+ * #61 (batch 5): one repository's update state in the Adult Block
+ * card — IDLE normally, UPDATING while its own download runs (the row
+ * shows a spinner), FAILED after a failed update (the row turns red
+ * until a later update succeeds).
+ */
+enum class SourceUpdateUiState { IDLE, UPDATING, FAILED }
+
 @Composable
 fun KeywordManagerScreen(
     keywords: List<BlockedKeyword>,
@@ -107,6 +117,10 @@ fun KeywordManagerScreen(
     onRemoveBlocklistSource: (BlocklistSource) -> Unit = {},
     onAddBlocklistSource: (BlocklistSource) -> Unit = {},
     onRestoreDefaultBlocklistSources: () -> Unit = {},
+    // #61 (batch 5): per-repo update controls + merged-list search.
+    sourceUpdateStates: Map<String, SourceUpdateUiState> = emptyMap(),
+    onUpdateBlocklistSource: (BlocklistSource) -> Unit = {},
+    onSearchBlocklistDomains: suspend (String) -> List<String> = { emptyList() },
     incidents: List<BlockIncident> = emptyList(),
     incidentStreakDays: Int = 0,
     incidentAppLimits: List<AppUsageLimit> = emptyList(),
@@ -210,7 +224,10 @@ fun KeywordManagerScreen(
                 blocklistSources = blocklistSources,
                 onRemoveBlocklistSource = onRemoveBlocklistSource,
                 onAddBlocklistSource = onAddBlocklistSource,
-                onRestoreDefaultBlocklistSources = onRestoreDefaultBlocklistSources
+                onRestoreDefaultBlocklistSources = onRestoreDefaultBlocklistSources,
+                sourceUpdateStates = sourceUpdateStates,
+                onUpdateBlocklistSource = onUpdateBlocklistSource,
+                onSearchBlocklistDomains = onSearchBlocklistDomains
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -423,7 +440,11 @@ private fun AdultBlockCard(
     blocklistSources: List<BlocklistSource> = BlocklistSources.SOURCES,
     onRemoveBlocklistSource: (BlocklistSource) -> Unit = {},
     onAddBlocklistSource: (BlocklistSource) -> Unit = {},
-    onRestoreDefaultBlocklistSources: () -> Unit = {}
+    onRestoreDefaultBlocklistSources: () -> Unit = {},
+    // #61 (batch 5): per-repo update controls + merged-list search.
+    sourceUpdateStates: Map<String, SourceUpdateUiState> = emptyMap(),
+    onUpdateBlocklistSource: (BlocklistSource) -> Unit = {},
+    onSearchBlocklistDomains: suspend (String) -> List<String> = { emptyList() }
 ) {
     val lastUpdatedText = remember(blocklistLastUpdatedMs) {
         if (blocklistLastUpdatedMs > 0L) {
@@ -562,7 +583,10 @@ private fun AdultBlockCard(
                     }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = tr("Update list now", "به‌روزرسانی فهرست"),
+                        // #61 (batch 5): this is now the UPDATE ALL
+                        // action — each repository also has its own
+                        // update button below.
+                        text = tr("Update all", "به‌روزرسانی همه"),
                         color = CrimsonPrimary,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -593,6 +617,12 @@ private fun AdultBlockCard(
                 )
             } else {
                 blocklistSources.forEachIndexed { index, source ->
+                    // #61 (batch 5): each repository carries its own
+                    // update state — spinner while ITS download runs,
+                    // red after a failed update until one succeeds.
+                    val sourceState = sourceUpdateStates[BlocklistSources.keyFor(source)]
+                        ?: SourceUpdateUiState.IDLE
+                    val failed = sourceState == SourceUpdateUiState.FAILED
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -607,13 +637,40 @@ private fun AdultBlockCard(
                                 text = source.name,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White
+                                color = if (failed) CrimsonPrimary else Color.White
                             )
                             Text(
-                                text = source.repositoryUrl,
+                                text = if (failed) {
+                                    tr(
+                                        "Update failed — the previous list from this repository is still active.",
+                                        "به‌روزرسانی ناموفق بود — فهرست قبلی این مخزن همچنان فعال است."
+                                    )
+                                } else {
+                                    source.repositoryUrl
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = ObsidianTextSecondary
+                                color = if (failed) CrimsonPrimary else ObsidianTextSecondary
                             )
+                        }
+                        IconButton(
+                            onClick = { onUpdateBlocklistSource(source) },
+                            enabled = sourceState != SourceUpdateUiState.UPDATING && !isBlocklistUpdating,
+                            modifier = Modifier.testTag("blocklist_source_update_$index")
+                        ) {
+                            if (sourceState == SourceUpdateUiState.UPDATING) {
+                                CircularProgressIndicator(
+                                    color = CrimsonPrimary,
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = tr("Update this repository", "به‌روزرسانی این مخزن"),
+                                    tint = if (failed) CrimsonPrimary else EmeraldShield,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                         IconButton(
                             onClick = { onRemoveBlocklistSource(source) },
@@ -741,6 +798,101 @@ private fun AdultBlockCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = CrimsonPrimary
                 )
+            }
+
+            // #61 (batch 5): the TOTAL number of filtered domains in
+            // the merged list, and a search across the whole merged
+            // list (every repository's domains together).
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = tr(
+                    "Total filtered domains: $blocklistDomainCount",
+                    "مجموع دامنه‌های فیلترشده: $blocklistDomainCount"
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                modifier = Modifier.testTag("blocklist_total_domains_count")
+            )
+            var blocklistSearchQuery by remember { mutableStateOf("") }
+            var blocklistSearchResults by remember { mutableStateOf<List<String>>(emptyList()) }
+            var blocklistSearchDone by remember { mutableStateOf(false) }
+            LaunchedEffect(blocklistSearchQuery) {
+                val query = blocklistSearchQuery.trim()
+                if (query.length < 2) {
+                    blocklistSearchResults = emptyList()
+                    blocklistSearchDone = false
+                } else {
+                    // Small debounce: the merged list is ~224k lines;
+                    // the search itself runs off the main thread in
+                    // the supplied callback.
+                    kotlinx.coroutines.delay(300)
+                    blocklistSearchResults = onSearchBlocklistDomains(query)
+                    blocklistSearchDone = true
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = blocklistSearchQuery,
+                onValueChange = { blocklistSearchQuery = it },
+                placeholder = {
+                    Text(
+                        tr("Search all filtered domains…", "جستجو در همه دامنه‌های فیلترشده…"),
+                        color = ObsidianTextSecondary
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = ObsidianTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CrimsonPrimary,
+                    unfocusedBorderColor = ObsidianBorder,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = CrimsonPrimary,
+                    focusedContainerColor = ObsidianSurface,
+                    unfocusedContainerColor = ObsidianSurface
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("blocklist_search_input")
+            )
+            if (blocklistSearchDone) {
+                if (blocklistSearchResults.isEmpty()) {
+                    Text(
+                        text = tr(
+                            "No matching domain in the filtered list.",
+                            "دامنه‌ای مطابق جستجو در فهرست فیلترشده نیست."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .padding(top = 6.dp)
+                            .verticalScroll(rememberScrollState())
+                            .testTag("blocklist_search_results")
+                    ) {
+                        blocklistSearchResults.forEach { domain ->
+                            Text(
+                                text = domain,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             // #38 (batch 2): the user's own additions to the list. They

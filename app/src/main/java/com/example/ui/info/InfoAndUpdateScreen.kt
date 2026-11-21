@@ -640,8 +640,8 @@ fun InfoAndUpdateScreen(
                         )
                         Text(
                             text = tr(
-                                "Export or import your Clean Streak, Best Chain, Limits & Rules",
-                                "پشتیبان‌گیری و بازیابی روزهای پاک، بهترین زنجیره، محدودیت‌ها و قوانین"
+                                "Export or import ALL app settings & data: streak, limits, rules, guards, data caps, blocklist sources and per-app internet rules (the gate PIN is never exported)",
+                                "خروجی یا ورود همه تنظیمات و داده‌های برنامه: زنجیره پاکی، محدودیت‌ها، قوانین، گاردها، سقف‌های داده، مخازن بلاک‌لیست و قوانین اینترنت برنامه‌ها (رمز ورود هرگز خروجی گرفته نمی‌شود)"
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = ObsidianTextSecondary
@@ -839,7 +839,7 @@ fun InfoAndUpdateScreen(
                     OutlinedTextField(
                         value = pastedJson,
                         onValueChange = { pastedJson = it },
-                        placeholder = { Text("{\"backupFormatVersion\": 1, ...}") },
+                        placeholder = { Text("{\"backupFormatVersion\": 2, ...}") },
                         maxLines = 8,
                         modifier = Modifier
                             .fillMaxWidth()

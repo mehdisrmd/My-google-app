@@ -4,7 +4,6 @@ import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -34,12 +33,17 @@ class LockdownActivity : ComponentActivity() {
     private var lockSourceAppState by mutableStateOf("System")
     private var lockGraceAvailableState by mutableStateOf(false)
 
-    // #17/#18 yield check (armed in onResume): polls once a second while
-    // this screen is resumed and finishes it if a call takes over or the
-    // phone locks, so neither surface is ever buried under the block
-    // screen. The lock stays in preferences throughout; the accessibility
-    // service re-shows this screen after the call / unlock if the lock is
-    // still running.
+    // #18 yield check (armed in onResume): polls once a second while
+    // this screen is resumed and finishes it if the phone locks, so the
+    // block screen is never buried under the lock screen. The lock stays
+    // in preferences throughout; the accessibility service re-shows this
+    // screen after the unlock if the lock is still running.
+    //
+    // #57 (batch 5): a phone call NO LONGER finishes this screen. #17
+    // used to stand the block screen down so the call UI could come
+    // over it; the two surfaces then fought (finish → relaunch → call
+    // UI → finish …) in a visible flicker. Mehdi's ruling: the block
+    // screen stays. See OverlayDisplayGate.decideBlockScreen.
     private val yieldCheckHandler = Handler(Looper.getMainLooper())
     private val yieldCheckRunnable = object : Runnable {
         override fun run() {
@@ -57,15 +61,8 @@ class LockdownActivity : ComponentActivity() {
         } catch (_: Exception) {
             false
         }
-        val audioMode = try {
-            (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.mode
-                ?: AudioManager.MODE_NORMAL
-        } catch (_: Exception) {
-            AudioManager.MODE_NORMAL
-        }
-        return OverlayDisplayGate.decide(
-            keyguardLocked = keyguardLocked,
-            callActive = OverlayDisplayGate.isCallAudioMode(audioMode)
+        return OverlayDisplayGate.decideBlockScreen(
+            keyguardLocked = keyguardLocked
         ) != OverlayDisplayGate.Decision.SHOW
     }
 
@@ -82,6 +79,9 @@ class LockdownActivity : ComponentActivity() {
             val isDarkTheme = prefs.isDarkTheme.collectAsStateWithLifecycle().value
             val isPersian = prefs.isPersianLanguage.collectAsStateWithLifecycle().value
             val seasonalThemeName = prefs.seasonalThemeName.collectAsStateWithLifecycle().value
+            // #56 (batch 5): the call & SMS options on the block screen
+            // exist only while Strict Lock Mode is on.
+            val strictModeEnabled = prefs.strictModeEnabled.collectAsStateWithLifecycle().value
 
             MyApplicationTheme(
                 darkTheme = isDarkTheme,
@@ -94,6 +94,7 @@ class LockdownActivity : ComponentActivity() {
                     triggerWord = lockTriggerState,
                     sourceApp = lockSourceAppState,
                     graceAvailable = lockGraceAvailableState,
+                    strictModeEnabled = strictModeEnabled,
                     onGraceFreeRequested = {
                         // Opens the 10-second free window and ends this lock;
                         // the accessibility service re-blocks without the
@@ -178,10 +179,11 @@ class LockdownActivity : ComponentActivity() {
             finish()
             return
         }
-        // #17/#18: while this screen is up, stand down the moment a call
-        // rings / connects or the phone gets locked. The lock itself
-        // stays in preferences; the accessibility service re-shows this
-        // screen after the call / unlock if the lock is still running.
+        // #18 (+ #57): while this screen is up, stand down only when
+        // the phone gets locked — never for a call (#57: the block
+        // screen stays). The lock itself stays in preferences; the
+        // accessibility service re-shows this screen after the unlock
+        // if the lock is still running.
         yieldCheckHandler.removeCallbacks(yieldCheckRunnable)
         yieldCheckHandler.postDelayed(yieldCheckRunnable, YIELD_CHECK_INTERVAL_MS)
     }

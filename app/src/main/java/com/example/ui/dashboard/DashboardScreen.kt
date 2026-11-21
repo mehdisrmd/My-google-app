@@ -47,6 +47,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
@@ -69,6 +71,7 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,7 +82,9 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -147,9 +152,16 @@ import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianTextPrimary
 import com.example.ui.theme.ObsidianTextSecondary
+import com.example.service.PerAppFirewall
+import com.example.util.AppPackageResolver
+import com.example.util.DataUsageBudget
 import com.example.util.JalaliCalendar
+import com.example.util.PerAppInternetRule
+import com.example.util.ResolvedAppInfo
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 private enum class PendingAntiTamperAction {
     DISABLE_MASTER_SHIELD,
@@ -1123,6 +1135,12 @@ fun DashboardScreen(
                                     vpnConsentDenied = false
                                     effectivePrefs.setVpnConfigBlockEnabled(false)
                                     DeviceOwnerManager.reconcile(context)
+                                    // #63 (batch 5): the per-app
+                                    // firewall lives only while this
+                                    // guard is on — stop it at once
+                                    // instead of waiting for the next
+                                    // evaluation.
+                                    PerAppFirewall.requestStop(context)
                                 }
                             },
                             modifier = Modifier.testTag("vpn_config_block_switch"),
@@ -1148,6 +1166,17 @@ fun DashboardScreen(
                     }
                     }
                 }
+
+                // Per-App Internet Access Card (#63, batch 5): each
+                // app can be blocked on Wi-Fi and/or mobile data and
+                // given its own daily volume cap. The section is
+                // ACTIVE only while the Block VPN guard above is on
+                // (its firewall is usafe's own VPN); the global daily
+                // cap always wins over these per-app limits.
+                PerAppInternetCard(
+                    preferences = effectivePrefs,
+                    vpnGuardEnabled = isVpnConfigBlockEnabled
+                )
 
                 // Force Stop Guard Card (#45, batch 2): force-stopping
                 // X Blocker from Settings kills every guard at once, so
@@ -1696,6 +1725,402 @@ fun DashboardScreen(
             onDismiss = { showHomeResetStreakYoutubeDialog = false }
         )
     }
+}
+
+/**
+ * #63 (batch 5): the Per-App Internet Access card. Rules are edited
+ * here and enforced by usafe's own VPN firewall (see PerAppFirewall)
+ * — but ONLY while the Block VPN guard is on: with the guard off the
+ * card is inactive and the firewall does not run. The global daily
+ * cap (#43/#46) always takes precedence over these per-app limits.
+ */
+@Composable
+private fun PerAppInternetCard(
+    preferences: ShieldPreferences,
+    vpnGuardEnabled: Boolean
+) {
+    val rules by preferences.perAppInternetRules.collectAsStateWithLifecycle()
+    var showPicker by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = ObsidianCard),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(
+            1.dp,
+            if (vpnGuardEnabled) EmeraldShield.copy(alpha = 0.55f) else ObsidianBorder
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.WifiOff,
+                    contentDescription = null,
+                    tint = if (vpnGuardEnabled) EmeraldShield else ObsidianTextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = tr("Per-App Internet Access", "دسترسی اینترنت برنامه‌ها"),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = tr(
+                            "Block an app on Wi-Fi or mobile data, or give it a daily cap.",
+                            "اینترنت یک برنامه را روی وای‌فای یا داده موبایل ببندید، یا برایش سقف روزانه بگذارید."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ObsidianTextSecondary
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (!vpnGuardEnabled) {
+                Text(
+                    text = tr(
+                        "Inactive — this section works only while Block VPN Setup (above) is ON.",
+                        "غیرفعال است — این بخش فقط وقتی کار می‌کند که «مسدود کردن تنظیم VPN» (بالا) روشن باشد."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AmberWarning
+                )
+            } else {
+                Text(
+                    text = tr(
+                        "The overall daily cap always wins over per-app limits.",
+                        "سقف کلی روزانه همیشه بر محدودیت‌های تک‌برنامه‌ای اولویت دارد."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary
+                )
+            }
+            rules.forEach { rule ->
+                PerAppRuleRow(
+                    rule = rule,
+                    enabled = vpnGuardEnabled,
+                    onChange = { updated ->
+                        preferences.setPerAppInternetRules(
+                            rules.map { if (it.packageName == rule.packageName) updated else it }
+                        )
+                    },
+                    onRemove = {
+                        preferences.setPerAppInternetRules(rules - rule)
+                    }
+                )
+            }
+            if (rules.isEmpty()) {
+                Text(
+                    text = tr(
+                        "No apps added yet.",
+                        "هنوز برنامه‌ای اضافه نشده است."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ObsidianTextSecondary,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { showPicker = true },
+                enabled = vpnGuardEnabled,
+                colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.testTag("per_app_add_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(tr("Add app", "افزودن برنامه"), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    if (showPicker) {
+        PerAppPickerDialog(
+            existingPackages = rules.map { it.packageName }.toSet(),
+            onPick = { info ->
+                preferences.setPerAppInternetRules(
+                    rules + PerAppInternetRule(
+                        packageName = info.packageName,
+                        blockOnWifi = true,
+                        blockOnMobile = true
+                    )
+                )
+                showPicker = false
+            },
+            onDismiss = { showPicker = false }
+        )
+    }
+}
+
+/** #63: one app's rule row — name, Wi-Fi / mobile block switches, a
+ *  daily-cap slider (same 50 MB–20 GB scale as the global caps),
+ *  and remove. */
+@Composable
+private fun PerAppRuleRow(
+    rule: PerAppInternetRule,
+    enabled: Boolean,
+    onChange: (PerAppInternetRule) -> Unit,
+    onRemove: () -> Unit
+) {
+    val context = LocalContext.current
+    val appLabel = remember(rule.packageName) {
+        try {
+            val pm = context.packageManager
+            pm.getApplicationInfo(rule.packageName, 0).loadLabel(pm).toString()
+        } catch (_: Exception) {
+            rule.packageName
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
+                Text(
+                    text = appLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+                Text(
+                    text = rule.packageName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = ObsidianTextSecondary
+                )
+            }
+            IconButton(
+                onClick = onRemove,
+                enabled = enabled,
+                modifier = Modifier.testTag("per_app_remove_${rule.packageName}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = tr("Remove", "حذف"),
+                    tint = CrimsonPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = tr("Block on Wi-Fi", "مسدود روی وای‌فای"),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White
+            )
+            Switch(
+                checked = rule.blockOnWifi,
+                onCheckedChange = { onChange(rule.copy(blockOnWifi = it)) },
+                enabled = enabled,
+                modifier = Modifier.testTag("per_app_block_wifi_${rule.packageName}"),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.Black,
+                    checkedTrackColor = EmeraldShield
+                )
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = tr("Block on mobile data", "مسدود روی داده موبایل"),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White
+            )
+            Switch(
+                checked = rule.blockOnMobile,
+                onCheckedChange = { onChange(rule.copy(blockOnMobile = it)) },
+                enabled = enabled,
+                modifier = Modifier.testTag("per_app_block_mobile_${rule.packageName}"),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.Black,
+                    checkedTrackColor = EmeraldShield
+                )
+            )
+        }
+        val capStops = DataUsageBudget.SLIDER_CAPS_MB
+        var capIndex by remember(rule.packageName, rule.dailyCapMb) {
+            mutableStateOf(DataUsageBudget.sliderIndexFor(rule.dailyCapMb).toFloat())
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = tr("Daily cap", "سقف روزانه"),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White
+            )
+            Text(
+                text = if (rule.dailyCapMb <= 0) {
+                    tr("No cap", "بدون سقف")
+                } else {
+                    DataUsageBudget.formatBytes(DataUsageBudget.mbToBytes(rule.dailyCapMb))
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = if (rule.dailyCapMb > 0) EmeraldShield else ObsidianTextSecondary,
+                modifier = Modifier.testTag("per_app_cap_label_${rule.packageName}")
+            )
+        }
+        Slider(
+            value = capIndex,
+            onValueChange = { capIndex = it },
+            onValueChangeFinished = {
+                onChange(
+                    rule.copy(
+                        dailyCapMb = DataUsageBudget.capForSliderIndex(capIndex.roundToInt())
+                    )
+                )
+            },
+            valueRange = 0f..(capStops.size - 1).toFloat(),
+            steps = capStops.size - 2,
+            enabled = enabled,
+            colors = SliderDefaults.colors(
+                thumbColor = EmeraldShield,
+                activeTrackColor = EmeraldShield
+            ),
+            modifier = Modifier.testTag("per_app_cap_slider_${rule.packageName}")
+        )
+    }
+}
+
+/** #63: pick an installed app to add a rule for. */
+@Composable
+private fun PerAppPickerDialog(
+    existingPackages: Set<String>,
+    onPick: (ResolvedAppInfo) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var installedApps by remember { mutableStateOf<List<ResolvedAppInfo>>(emptyList()) }
+    var query by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        installedApps = withContext(Dispatchers.IO) {
+            AppPackageResolver.queryInstalledApps(context)
+        }
+    }
+    val visible = installedApps
+        .filter { it.isInstalled && it.packageName != context.packageName }
+        .filter { it.packageName !in existingPackages }
+        .filter {
+            query.isBlank() ||
+                it.appName.contains(query, ignoreCase = true) ||
+                it.packageName.contains(query, ignoreCase = true)
+        }
+        .sortedBy { it.appName.lowercase() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = tr("Add app", "افزودن برنامه"),
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = {
+                        Text(
+                            tr("Search apps…", "جستجوی برنامه‌ها…"),
+                            color = ObsidianTextSecondary
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = ObsidianTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CrimsonPrimary,
+                        unfocusedBorderColor = ObsidianBorder,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = CrimsonPrimary,
+                        focusedContainerColor = ObsidianSurface,
+                        unfocusedContainerColor = ObsidianSurface
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    visible.take(80).forEach { info ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(info) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = info.appName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = info.packageName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ObsidianTextSecondary
+                                )
+                            }
+                        }
+                    }
+                    if (visible.isEmpty()) {
+                        Text(
+                            text = tr(
+                                "No apps to add.",
+                                "برنامه‌ای برای افزودن نیست."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ObsidianTextSecondary
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(tr("Cancel", "لغو"), color = CrimsonPrimary)
+            }
+        },
+        containerColor = ObsidianCard
+    )
 }
 
 @Composable

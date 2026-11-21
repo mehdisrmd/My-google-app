@@ -7,8 +7,9 @@ import org.junit.Test
 
 /**
  * Decision-table tests for [OverlayDisplayGate] — items #17 (incoming call
- * over the block screen) and #18 (no block screen while the phone is
- * locked).
+ * yields the auxiliary pages), #18 (no block screen while the phone is
+ * locked) and #57 (batch 5: the block screen itself no longer yields to
+ * a call — it stays).
  */
 class OverlayDisplayGateTest {
 
@@ -45,6 +46,41 @@ class OverlayDisplayGateTest {
         assertEquals(
             OverlayDisplayGate.Decision.YIELD_TO_CALL,
             OverlayDisplayGate.decide(keyguardLocked = true, callActive = true)
+        )
+    }
+
+    // ---- decideBlockScreen(): #57 (batch 5) — the block screen stays ----
+
+    @Test
+    fun blockScreen_unlocked_shows() {
+        assertEquals(
+            OverlayDisplayGate.Decision.SHOW,
+            OverlayDisplayGate.decideBlockScreen(keyguardLocked = false)
+        )
+    }
+
+    @Test
+    fun blockScreen_lockedPhone_stillDefersUntilUnlock() {
+        // #18 is unchanged for the block screen: never draw over the
+        // lock screen.
+        assertEquals(
+            OverlayDisplayGate.Decision.DEFER_UNTIL_UNLOCK,
+            OverlayDisplayGate.decideBlockScreen(keyguardLocked = true)
+        )
+    }
+
+    @Test
+    fun blockScreen_neverYieldsToCall_unlikeTheAuxiliaryPages() {
+        // The whole point of #57: for the same inputs where decide()
+        // yields to a call, the block-screen table has no call input
+        // at all — its only non-SHOW outcome is the keyguard defer.
+        assertEquals(
+            OverlayDisplayGate.Decision.YIELD_TO_CALL,
+            OverlayDisplayGate.decide(keyguardLocked = false, callActive = true)
+        )
+        assertEquals(
+            OverlayDisplayGate.Decision.SHOW,
+            OverlayDisplayGate.decideBlockScreen(keyguardLocked = false)
         )
     }
 
